@@ -14,6 +14,8 @@
     <!-- Staying reachable in the background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Reconnecting after the phone restarts. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Sharing the screen with a PC (each time, after Android's prompt). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- Keeping the phone awake while mirroring its screen to a PC. -->
@@ -190,6 +192,16 @@
         <receiver
             android:name=".update.AppUpdater$InstallResult"
             android:exported="false" />
+
+        <!-- Reconnects after the phone restarts or Nectarlink updates. -->
+        <receiver
+            android:name=".service.StartupReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- The PC media notification's buttons (Android 12 and earlier). -->
         <receiver

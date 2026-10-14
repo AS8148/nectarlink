@@ -222,7 +222,11 @@ class MainActivity : ComponentActivity() {
         if (app.core.state.value.status is CoreStatus.Ready) {
             app.core.refreshNotificationAccess()
         }
-        if (app.updater.enabled) lifecycleScope.launch { app.updater.updateIfDue() }
+        if (app.updater.enabled) {
+            // Back from allowing installs: the update the user started carries on.
+            app.updater.onAppResumed()
+            lifecycleScope.launch { app.updater.updateIfDue() }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

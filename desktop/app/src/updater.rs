@@ -352,8 +352,8 @@ fn spawn_relauncher(exe: &Path, version: &str, shown: bool) -> Result<(), String
     if !version.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-')) {
         return Err("unusual version".into());
     }
-    let arguments = if shown { "" } else { "--minimized" };
-    let script = relauncher_script(exe, version, arguments);
+    let arguments = if shown { UPDATED_ARG.to_owned() } else { format!("--minimized {UPDATED_ARG}") };
+    let script = relauncher_script(exe, version, &arguments);
     let encoded: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"])
@@ -544,6 +544,56 @@ fn install_with_prompt() -> Result<(), String> {
     Ok(())
 }
 
+/// The flag the relauncher passes to the new version.
+pub const UPDATED_ARG: &str = "--updated";
+
+/// The file that remembers which version last ran, to notice an update
+/// however it was installed (the task, the installer, or setup by hand).
+const LAST_VERSION_FILE: &str = "last-version";
+
+/// Records this version as the one that ran, and returns the one before it
+/// when this one is newer: the app was just updated.
+pub fn note_running_version(data_dir: &Path) -> Option<String> {
+    let path = data_dir.join(LAST_VERSION_FILE);
+    let previous = std::fs::read_to_string(&path).ok().map(|v| v.trim().to_owned());
+    let current = env!("CARGO_PKG_VERSION");
+    if previous.as_deref() != Some(current)
+        && let Err(e) = std::fs::write(&path, current)
+    {
+        tracing::warn!(error = %e, "can't note the running version");
+    }
+    previous.filter(|p| is_newer(current, p))
+}
+
+/// Just updated: says so, and when the window was asked for, brings it to
+/// the front. Started from the background, Windows would otherwise leave
+/// the new window behind whatever the user has open.
+pub fn announce_update(previous: Option<String>, shown: bool) {
+    let current = env!("CARGO_PKG_VERSION");
+    tracing::info!(from = previous.as_deref().unwrap_or("?"), to = current, "updated");
+    std::thread::spawn(move || {
+        // Once the window exists.
+        std::thread::sleep(Duration::from_millis(1500));
+        if shown {
+            crate::bridge::app::request_activation();
+        }
+        toast::show(toast::Toast {
+            device: TOAST_GROUP.into(),
+            key: "updated".into(),
+            title: format!("Nectarlink is updated to {current}"),
+            body: "Your phone reconnects on its own.".into(),
+            attribution: "Nectarlink".into(),
+            icon: None,
+            image: None,
+            actions: Vec::new(),
+            reply: None,
+            silent: true,
+            progress: None,
+            call: false,
+        });
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,15 +631,35 @@ mod tests {
 
     #[test]
     fn the_relauncher_waits_for_the_version_then_opens_the_app() {
-        let script =
-            relauncher_script(r"C:\Program Files\Nectarlink\nectarlink-desktop.exe", "0.2.0", "--minimized");
+        let script = relauncher_script(
+            r"C:\Program Files\Nectarlink\nectarlink-desktop.exe",
+            "0.2.0",
+            "--minimized --updated",
+        );
         assert!(script.contains("$installed -eq '0.2.0'"));
         assert!(script.contains("Nectarlink-*-setup"));
         assert!(script.contains(
-            r"Start-Process -FilePath 'C:\Program Files\Nectarlink\nectarlink-desktop.exe' -ArgumentList '--minimized'"
+            r"Start-Process -FilePath 'C:\Program Files\Nectarlink\nectarlink-desktop.exe' -ArgumentList '--minimized --updated'"
         ));
         let shown = relauncher_script(r"C:\Program Files\Nectarlink\nectarlink-desktop.exe", "0.2.0", "");
         assert!(!shown.contains("-ArgumentList"));
+    }
+
+    #[test]
+    fn notices_a_newer_version_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let current = env!("CARGO_PKG_VERSION");
+        // A first run, then the same version again: no update.
+        assert_eq!(note_running_version(dir.path()), None);
+        assert_eq!(note_running_version(dir.path()), None);
+        // An older version ran before this one: updated, said once.
+        std::fs::write(dir.path().join(LAST_VERSION_FILE), "0.0.1\n").unwrap();
+        assert_eq!(note_running_version(dir.path()).as_deref(), Some("0.0.1"));
+        assert_eq!(note_running_version(dir.path()), None);
+        assert_eq!(std::fs::read_to_string(dir.path().join(LAST_VERSION_FILE)).unwrap(), current);
+        // Going back to an older build isn't an update.
+        std::fs::write(dir.path().join(LAST_VERSION_FILE), "999.0.0").unwrap();
+        assert_eq!(note_running_version(dir.path()), None);
     }
 
     #[test]

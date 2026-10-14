@@ -4,6 +4,46 @@ All notable changes to Nectarlink. Versions follow
 [semantic versioning](https://semver.org); before 1.0, a minor version may
 change things that need a step from you, and its notes say so.
 
+## 0.1.2 (2026-10-15)
+
+A smoother update on both devices, and the phone reconnects on its own after
+an update or a restart.
+
+### Downloads
+
+| Download | For | Needs |
+|---|---|---|
+| [Nectarlink-0.1.2-x64-setup.exe](https://github.com/thtbee/nectarlink/releases/download/v0.1.2/Nectarlink-0.1.2-x64-setup.exe) | Windows | Windows 11, 64-bit |
+| [Nectarlink-0.1.2-android.apk](https://github.com/thtbee/nectarlink/releases/download/v0.1.2/Nectarlink-0.1.2-android.apk) | Android | Android 8.0 or newer |
+
+Both are listed with their SHA-256 hashes in [SHA256SUMS.txt](https://github.com/thtbee/nectarlink/releases/download/v0.1.2/SHA256SUMS.txt).
+Installed copies update themselves.
+
+### Fixed
+
+- **The phone reconnects after an update or a restart.** Android closes an
+  app while it updates, and nothing brought Nectarlink's connection back until
+  the app was opened again, so the PC showed the phone as gone. The connection
+  now comes back on its own, after an update and after the phone restarts. A
+  notification says the update is done; tapping it opens the app.
+- **Check for updates in the phone's Settings shows what it found**: that
+  Nectarlink is up to date, or the update with its **Update** button and
+  progress, or why it couldn't check. Before, the button greyed out and nothing
+  appeared.
+- **Allowing installs continues the update.** When Android first asks to let
+  Nectarlink install updates, coming back from that screen now carries on with
+  the update instead of staying on **Allow**.
+- **Phone downloads resume.** A dropped or changed connection no longer fails
+  the update: the download waits for the network and continues where it
+  stopped, also after the app restarts. Progress shows the size downloaded.
+- **Updates keep going in the background.** Leaving the screen no longer stops
+  a phone update that's downloading. Saying no to Android's install prompt
+  leaves the update ready to install instead of reporting an error.
+- **The PC app comes to the front after updating.** It reopened behind other
+  windows; now it comes forward and a notification says it's updated. The same
+  fix brings the window forward when Nectarlink is opened while already
+  running.
+
 ## 0.1.1 (2026-10-15)
 
 Fewer steps when sharing from the phone, clearer setup on phones that hold

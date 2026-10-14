@@ -198,6 +198,8 @@ struct Options {
     data_dir: Option<PathBuf>,
     /// Start in the tray without opening the window (autostart).
     minimized: bool,
+    /// Started by the updater's relauncher, as the new version.
+    updated: bool,
     /// `--send-to <device> <files…>`: Explorer's "Send to" menu.
     send_to: Option<(String, Vec<PathBuf>)>,
     /// `--share <targets…>`: Windows Share sheet or CLI share invocation.
@@ -271,6 +273,10 @@ fn parse_options_from<I: IntoIterator<Item = std::ffi::OsString>>(iter: I) -> Op
             Some(updater::SERVICE_ARG) => {
                 in_share = false;
                 options.update_service = true;
+            }
+            Some(updater::UPDATED_ARG) => {
+                in_share = false;
+                options.updated = true;
             }
             Some(win::vcam::REGISTER_ARG) => {
                 in_share = false;
@@ -545,6 +551,10 @@ fn main() -> ExitCode {
         updater::set_auto(settings.auto_update);
         updater::set_auto_install(settings.install_updates);
         updater::start();
+        let previous = updater::note_running_version(&data_dir);
+        if previous.is_some() || options.updated {
+            updater::announce_update(previous, !options.minimized);
+        }
     }
     // Requests left while no instance was running, then this launch's own.
     for waiting in launch::drain(&data_dir) {

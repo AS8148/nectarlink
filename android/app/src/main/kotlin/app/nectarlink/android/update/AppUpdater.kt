@@ -10,7 +10,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -20,14 +23,21 @@ import androidx.core.net.toUri
 import app.nectarlink.android.BuildConfig
 import app.nectarlink.android.NectarlinkApplication
 import app.nectarlink.android.R
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -38,11 +48,18 @@ import java.security.MessageDigest
  * Android only installs it over this app when it's signed with the same
  * key, so only release builds update themselves (debug builds are signed
  * differently).
+ *
+ * Downloads resume where they stopped: across a dropped or changed network
+ * (it waits for one to come back), and across restarts of the app.
  */
 @androidx.compose.runtime.Stable
 class AppUpdater(context: Context) {
     private val context = context.applicationContext
     internal val prefs = context.getSharedPreferences("updates", Context.MODE_PRIVATE)
+
+    /** Installs outlive the screen that started them. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val busy = Mutex()
 
     /** A newer release. */
     @androidx.compose.runtime.Immutable
@@ -51,14 +68,23 @@ class AppUpdater(context: Context) {
     sealed interface State {
         data object Idle : State
         data object Checking : State
+
+        /** A check found nothing newer. */
+        data object UpToDate : State
         data class Available(val update: Update) : State
-        data class Downloading(val update: Update) : State
+
+        /** Waiting for the user to let Nectarlink install apps; continues when they have. */
+        data class NeedsPermission(val update: Update) : State
+
+        /** `total` is 0 until the size is known. */
+        data class Downloading(val update: Update, val done: Long, val total: Long, val waitingForNetwork: Boolean) : State
+
         /** Waiting for Android (and the user) to install it. */
         data class Installing(val update: Update) : State
         data class Failed(val update: Update?, val reason: Reason) : State
     }
 
-    enum class Reason { Offline, Damaged, NotAllowed, Install }
+    enum class Reason { Offline, Damaged, Install }
 
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
@@ -82,9 +108,7 @@ class AppUpdater(context: Context) {
      * itself before; otherwise a notification asks for one tap.
      */
     suspend fun updateIfDue() {
-        if (!enabled) return
-        // Not while one is already on its way.
-        if (_state.value is State.Downloading || _state.value is State.Installing) return
+        if (!enabled || isBusy()) return
         checkIfDue()
         val available = (_state.value as? State.Available)?.update ?: return
         if (_autoInstall.value && canInstall()) install(available, automatic = true)
@@ -97,19 +121,28 @@ class AppUpdater(context: Context) {
         check()
     }
 
-    /** Checks now; returns whether an update is available. */
+    /** Checks now; returns whether an update is available. Leaves an install in progress alone. */
     suspend fun check(): Boolean {
-        if (!enabled) return false
+        if (!enabled || isBusy()) return _state.value is State.Available
         _state.value = State.Checking
         val found = withContext(Dispatchers.IO) {
             runCatching { latest() }.onFailure { Log.i(TAG, "couldn't check for updates", it) }
         }
         prefs.edit { putLong(LAST_CHECK, System.currentTimeMillis()) }
         _state.value = found.fold(
-            onSuccess = { update -> update?.let { State.Available(it) } ?: State.Idle },
+            onSuccess = { update -> update?.let { State.Available(it) } ?: State.UpToDate },
             onFailure = { State.Failed(null, Reason.Offline) },
         )
         return _state.value is State.Available
+    }
+
+    /** Checks now, from a button. */
+    fun checkNow() {
+        scope.launch { check() }
+    }
+
+    private fun isBusy(): Boolean = _state.value.let {
+        it is State.Downloading || it is State.Installing || it is State.Checking
     }
 
     private fun latest(): Update? {
@@ -151,55 +184,173 @@ class AppUpdater(context: Context) {
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${context.packageName}".toUri())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
+    /**
+     * The user tapped Update. Starts the install, or, when Android first needs
+     * the user to allow installs, returns the screen for that; the update then
+     * continues by itself once they come back ([onAppResumed]).
+     */
+    fun requestInstall(update: Update): Intent? {
+        if (!canInstall()) {
+            _state.value = State.NeedsPermission(update)
+            return allowInstallsIntent()
+        }
+        scope.launch { install(update) }
+        return null
+    }
+
+    /** The app is in front again: carries on an update the user was allowing. */
+    fun onAppResumed() {
+        val waiting = (_state.value as? State.NeedsPermission)?.update ?: return
+        if (canInstall()) scope.launch { install(waiting) }
+    }
+
     /** Downloads, checks and hands the update to Android's installer. */
     suspend fun install(update: Update, automatic: Boolean = false) {
-        prefs.edit { putBoolean(LAST_AUTOMATIC, automatic) }
-        if (!canInstall()) {
-            _state.value = State.Failed(update, Reason.NotAllowed)
-            return
-        }
-        _state.value = State.Downloading(update)
-        val apk = withContext(Dispatchers.IO) { runCatching { download(update) } }.getOrElse {
-            Log.w(TAG, "update download failed", it)
-            _state.value = State.Failed(update, if (it is DamagedException) Reason.Damaged else Reason.Offline)
-            return
-        }
-        _state.value = State.Installing(update)
-        withContext(Dispatchers.IO) { runCatching { commit(apk) } }.onFailure {
-            Log.w(TAG, "couldn't start the install", it)
-            _state.value = State.Failed(update, Reason.Install)
+        if (!busy.tryLock()) return
+        try {
+            prefs.edit { putBoolean(LAST_AUTOMATIC, automatic) }
+            if (!canInstall()) {
+                _state.value = State.NeedsPermission(update)
+                return
+            }
+            _state.value = State.Downloading(update, 0, 0, waitingForNetwork = false)
+            val apk = withContext(Dispatchers.IO) { runCatching { download(update) } }.getOrElse {
+                Log.w(TAG, "update download failed", it)
+                _state.value = State.Failed(update, if (it is DamagedException) Reason.Damaged else Reason.Offline)
+                return
+            }
+            _state.value = State.Installing(update)
+            withContext(Dispatchers.IO) { runCatching { commit(apk) } }.onFailure {
+                Log.w(TAG, "couldn't start the install", it)
+                _state.value = State.Failed(update, Reason.Install)
+            }
+        } finally {
+            busy.unlock()
         }
     }
 
     private class DamagedException : Exception("checksum mismatch")
 
-    private fun download(update: Update): File {
-        val sums = String(get(update.sumsUrl, 64 * 1024))
+    /**
+     * The verified APK. Kept under a name taken from its expected hash, so a
+     * partial download only ever continues into the same file.
+     */
+    private suspend fun download(update: Update): File {
+        val sums = retrying(update) { String(get(update.sumsUrl, 64 * 1024)) }
         val expected = listedHash(sums, update.apkName) ?: throw DamagedException()
-        val dir = File(context.cacheDir, "updates").apply { deleteRecursively(); mkdirs() }
-        // A fixed name: the release's asset name is not trusted as a path.
-        val file = File(dir, "update.apk")
-        val digest = MessageDigest.getInstance("SHA-256")
-        open(update.apkUrl).inputStream.use { input ->
-            file.outputStream().use { output ->
-                val buffer = ByteArray(256 * 1024)
-                var total = 0L
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    total += read
-                    if (total > MAX_APK) throw DamagedException()
-                    digest.update(buffer, 0, read)
-                    output.write(buffer, 0, read)
-                }
-            }
-        }
-        val actual = digest.digest().joinToString("") { "%02x".format(it) }
-        if (actual != expected) {
-            file.delete()
+        val dir = File(context.cacheDir, UPDATES_DIR).apply { mkdirs() }
+        val name = "nectarlink-${expected.take(16)}.apk"
+        val apk = File(dir, name)
+        val part = File(dir, "$name.part")
+        dir.listFiles()?.filter { it != apk && it != part }?.forEach { it.deleteRecursively() }
+        if (apk.isFile && sha256(apk) == expected) return apk
+        apk.delete()
+
+        retrying(update) { fetchInto(update, part) }
+        if (sha256(part) != expected) {
+            part.delete()
             throw DamagedException()
         }
-        return file
+        if (!part.renameTo(apk)) throw IOException("can't keep the download")
+        return apk
+    }
+
+    /**
+     * Runs [block], and after a network error waits for a connection and
+     * tries again. Gives up after [MAX_ATTEMPTS] tries in a row that got
+     * nowhere; any progress resets the count.
+     */
+    private suspend fun <T> retrying(update: Update, block: suspend () -> T): T {
+        var failures = 0
+        var lastDone = downloaded()
+        while (true) {
+            try {
+                return block()
+            } catch (e: DamagedException) {
+                throw e
+            } catch (e: HttpStatus) {
+                if (e.code in 400..499 && e.code != 408 && e.code != 429) throw e
+                failures = nextFailure(failures, lastDone).also { lastDone = downloaded() }
+                if (failures > MAX_ATTEMPTS) throw e
+            } catch (e: IOException) {
+                failures = nextFailure(failures, lastDone).also { lastDone = downloaded() }
+                if (failures > MAX_ATTEMPTS) throw e
+            }
+            setWaiting(update, true)
+            awaitNetwork()
+            delay(BACKOFF_MS[(failures - 1).coerceIn(0, BACKOFF_MS.lastIndex)])
+            setWaiting(update, false)
+        }
+    }
+
+    private fun downloaded(): Long = (_state.value as? State.Downloading)?.done ?: 0
+
+    private fun nextFailure(failures: Int, lastDone: Long): Int = if (downloaded() > lastDone) 1 else failures + 1
+
+    private fun setWaiting(update: Update, waiting: Boolean) {
+        _state.update { s ->
+            if (s is State.Downloading && s.update == update) s.copy(waitingForNetwork = waiting) else s
+        }
+    }
+
+    /** Waits (up to two minutes) for a network that reaches the internet. */
+    private suspend fun awaitNetwork() {
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return
+        val deadline = SystemClock.elapsedRealtime() + NETWORK_WAIT_MS
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val caps = manager.getNetworkCapabilities(manager.activeNetwork)
+            if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true) return
+            delay(1_000)
+        }
+    }
+
+    /** Downloads into `part`, continuing from what it already holds. */
+    private fun fetchInto(update: Update, part: File) {
+        val have = part.length()
+        val connection = connect(update.apkUrl, from = have)
+        try {
+            val append = when (val code = connection.responseCode) {
+                HttpURLConnection.HTTP_PARTIAL -> true
+                HttpURLConnection.HTTP_OK -> false
+                // Asked for bytes past the end: it's all here already.
+                416 -> return
+                else -> throw HttpStatus(code)
+            }
+            val total = if (append) {
+                rangeTotal(connection.getHeaderField("Content-Range")) ?: (have + connection.contentLengthLong)
+            } else {
+                connection.contentLengthLong
+            }
+            if (total > MAX_APK) throw DamagedException()
+            var done = if (append) have else 0L
+            var lastReport = 0L
+            report(update, done, total)
+            FileOutputStream(part, append).use { output ->
+                connection.inputStream.use { input ->
+                    val buffer = ByteArray(256 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        done += read
+                        if (done > MAX_APK) throw DamagedException()
+                        output.write(buffer, 0, read)
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastReport > PROGRESS_EVERY_MS) {
+                            lastReport = now
+                            report(update, done, total)
+                        }
+                    }
+                }
+            }
+            report(update, done, total)
+            if (total > 0 && done < total) throw IOException("download ended early")
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun report(update: Update, done: Long, total: Long) {
+        _state.value = State.Downloading(update, done, maxOf(total, 0), waitingForNetwork = false)
     }
 
     private fun commit(apk: File) {
@@ -231,6 +382,7 @@ class AppUpdater(context: Context) {
     /** Android's answer: ask the user to confirm, or it's done (or failed). */
     class InstallResult : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            val updater = (context.applicationContext as NectarlinkApplication).updater
             when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
                 PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                     val confirm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -239,35 +391,41 @@ class AppUpdater(context: Context) {
                         @Suppress("DEPRECATION")
                         intent.getParcelableExtra(Intent.EXTRA_INTENT)
                     }?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) ?: return
-                    val updater = (context.applicationContext as NectarlinkApplication).updater
                     // Started by the user: Android's prompt opens now. In the background it
                     // can't, so a notification waits for the tap.
                     if (updater.prefs.getBoolean(LAST_AUTOMATIC, false)) {
                         updater.notifyReady(confirm)
                     } else {
-                        context.startActivity(confirm)
+                        runCatching { context.startActivity(confirm) }.onFailure { updater.notifyReady(confirm) }
                     }
                 }
-                PackageInstaller.STATUS_SUCCESS -> Unit // The new version starts fresh.
+                // This process is replaced; the new version says it's updated (onUpdated).
+                PackageInstaller.STATUS_SUCCESS -> Unit
+                // The user said no to Android's prompt: the update is still there to install.
+                PackageInstaller.STATUS_FAILURE_ABORTED -> updater.installCancelled()
                 else -> {
                     Log.w(TAG, "install failed: ${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)}")
-                    (context.applicationContext as NectarlinkApplication).updater.installFailed()
+                    updater.installFailed()
                 }
             }
         }
     }
 
-    /** "Nectarlink 0.2.0 is ready", opening Android's install prompt when tapped. */
-    internal fun notifyReady(confirm: Intent) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-        val manager = context.getSystemService(NotificationManager::class.java)
+    private fun channel(manager: NotificationManager) {
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL, context.getString(R.string.channel_updates), NotificationManager.IMPORTANCE_DEFAULT),
         )
+    }
+
+    private fun mayNotify(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    /** "Nectarlink 0.2.0 is ready", opening Android's install prompt when tapped. */
+    internal fun notifyReady(confirm: Intent) {
+        if (!mayNotify()) return
+        val manager = context.getSystemService(NotificationManager::class.java)
+        channel(manager)
         val version = (_state.value as? State.Installing)?.update?.version.orEmpty()
         val tap = PendingIntent.getActivity(context, READY_ID, confirm, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = NotificationCompat.Builder(context, CHANNEL)
@@ -280,9 +438,42 @@ class AppUpdater(context: Context) {
         manager.notify(READY_ID, notification)
     }
 
+    /**
+     * The new version's first run after an update (StartupReceiver): clears
+     * the download and says so. Android doesn't let an app open its own window
+     * from the background, so the notification opens it.
+     */
+    fun onUpdated() {
+        runCatching { File(context.cacheDir, UPDATES_DIR).deleteRecursively() }
+        if (!mayNotify()) return
+        val manager = context.getSystemService(NotificationManager::class.java)
+        channel(manager)
+        manager.cancel(READY_ID)
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
+        val tap = PendingIntent.getActivity(
+            context,
+            UPDATED_ID,
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(context.getString(R.string.update_done_title, BuildConfig.VERSION_NAME))
+            .setContentText(context.getString(R.string.update_done_text))
+            .setContentIntent(tap)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .build()
+        manager.notify(UPDATED_ID, notification)
+    }
+
     /** Android didn't install it. */
     internal fun installFailed() {
         _state.update { s -> State.Failed((s as? State.Installing)?.update, Reason.Install) }
+    }
+
+    internal fun installCancelled() {
+        _state.update { s -> (s as? State.Installing)?.update?.let { State.Available(it) } ?: s }
     }
 
     companion object {
@@ -291,42 +482,75 @@ class AppUpdater(context: Context) {
         private const val LAST_CHECK = "lastCheck"
         private const val AUTO_INSTALL = "autoInstall"
         private const val LAST_AUTOMATIC = "lastAutomatic"
+        private const val UPDATES_DIR = "updates"
         private const val CHANNEL = "updates"
         private const val READY_ID = 0x0D47
+        private const val UPDATED_ID = 0x0D48
         private const val CHECK_EVERY_MS = 24L * 3600 * 1000
         private const val MAX_APK = 300L * 1024 * 1024
+        private const val MAX_ATTEMPTS = 6
+        private const val NETWORK_WAIT_MS = 2L * 60 * 1000
+        private const val PROGRESS_EVERY_MS = 150L
+        private val BACKOFF_MS = longArrayOf(1_000, 2_000, 4_000, 8_000, 15_000, 30_000)
 
-        /** A response other than 200 OK. */
-        private class HttpStatus(val code: Int) : java.io.IOException("HTTP $code")
+        /** A response other than the one expected. */
+        private class HttpStatus(val code: Int) : IOException("HTTP $code")
 
-        private fun open(url: String): HttpURLConnection {
-            if (!url.startsWith("https://")) throw java.io.IOException("only https")
+        /** A connection for `url`, asking for the bytes from `from` on when that's past 0. */
+        private fun connect(url: String, from: Long = 0): HttpURLConnection {
+            if (!url.startsWith("https://")) throw IOException("only https")
             return (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 10_000
-                readTimeout = 60_000
+                connectTimeout = 15_000
+                // A stalled connection fails soon, so the download resumes on a fresh one.
+                readTimeout = 20_000
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "Nectarlink/${BuildConfig.VERSION_NAME} (Android)")
                 setRequestProperty("Accept", "application/vnd.github+json, application/octet-stream")
-                if (responseCode != 200) throw HttpStatus(responseCode)
+                if (from > 0) setRequestProperty("Range", "bytes=$from-")
                 // Redirects stay on https (HttpURLConnection never follows one to another
                 // protocol); checked again in case that ever changes.
-                if (this.url.protocol != "https") throw java.io.IOException("only https")
+                responseCode
+                if (this.url.protocol != "https") throw IOException("only https")
             }
         }
 
         /** The body, up to `limit` bytes; never buffers more than that. */
-        private fun get(url: String, limit: Int): ByteArray =
-            open(url).inputStream.use { input ->
-                val out = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(16 * 1024)
+        private fun get(url: String, limit: Int): ByteArray {
+            val connection = connect(url)
+            try {
+                if (connection.responseCode != HttpURLConnection.HTTP_OK) throw HttpStatus(connection.responseCode)
+                return connection.inputStream.use { input ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(16 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        if (out.size() + read > limit) throw IOException("too large")
+                        out.write(buffer, 0, read)
+                    }
+                    out.toByteArray()
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }
+
+        private fun sha256(file: File): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(256 * 1024)
                 while (true) {
                     val read = input.read(buffer)
                     if (read < 0) break
-                    if (out.size() + read > limit) throw java.io.IOException("too large")
-                    out.write(buffer, 0, read)
+                    digest.update(buffer, 0, read)
                 }
-                out.toByteArray()
             }
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
+
+        /** The full size from a `Content-Range: bytes 100-199/200` header. */
+        fun rangeTotal(header: String?): Long? =
+            header?.substringAfterLast('/', "")?.trim()?.toLongOrNull()?.takeIf { it > 0 }
 
         /** The SHA-256 a sums file lists for `name` (`<hex>  <name>` lines). */
         fun listedHash(sums: String, name: String): String? = sums.lineSequence().firstNotNullOfOrNull { line ->

@@ -142,8 +142,24 @@ void NativeWindow::bringToFront()
         showNormal();
     raise();
     requestActivate();
-    if (handle())
-        SetForegroundWindow(hwndOf(this));
+    if (!handle())
+        return;
+    const HWND hwnd = hwndOf(this);
+    if (SetForegroundWindow(hwnd) || GetForegroundWindow() == hwnd)
+        return;
+    // Windows only lets the process the user is working in change the
+    // foreground window, so a copy opened from the background (after an
+    // update, or by another instance) would stay behind. Sharing the
+    // foreground thread's input state for a moment lets it come forward.
+    const HWND foreground = GetForegroundWindow();
+    const DWORD foregroundThread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+    const DWORD thisThread = GetCurrentThreadId();
+    const bool attached = foregroundThread != 0 && foregroundThread != thisThread
+        && AttachThreadInput(thisThread, foregroundThread, TRUE);
+    BringWindowToTop(hwnd);
+    SetForegroundWindow(hwnd);
+    if (attached)
+        AttachThreadInput(thisThread, foregroundThread, FALSE);
 }
 
 void NativeWindow::flash()

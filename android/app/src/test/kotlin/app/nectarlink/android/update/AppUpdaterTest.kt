@@ -27,4 +27,12 @@ class AppUpdaterTest {
         assertNull(AppUpdater.listedHash(sums, "missing.apk"))
         assertEquals("c".repeat(64), AppUpdater.listedHash("${"C".repeat(64)} *x.apk", "x.apk"))
     }
+
+    @Test
+    fun readsTheFullSizeFromContentRange() {
+        assertEquals(49_362_916L, AppUpdater.rangeTotal("bytes 1048576-49362915/49362916"))
+        assertNull(AppUpdater.rangeTotal("bytes 0-99/*"))
+        assertNull(AppUpdater.rangeTotal(null))
+        assertNull(AppUpdater.rangeTotal("garbage"))
+    }
 }
