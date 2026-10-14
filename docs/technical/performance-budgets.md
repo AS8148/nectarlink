@@ -19,17 +19,20 @@ Nectarlink treats startup latency, idle resource consumption, UI frame pacing, a
 | Phone-to-PC screen mirror glass-to-glass latency | `< 45 ms` | **`22 ms - 31 ms`** (`60 fps` 1080p H.264) | High-speed camera timestamp delta over LAN/USB |
 | PC-to-phone audio streaming latency | `< 40 ms` | **`22 ms - 36 ms`** (`48 kHz` stereo) | WASAPI loopback capture → `NLPA` QUIC datagrams → Android `AudioTrack` |
 
-### Transport and Scale Benchmarks (`nectarlink-core`)
+### Scale Benchmarks (`nectarlink-core`)
 
-| Metric | Budget | Measured | Verification Method |
-|---|---|---|---|
-| Bulk file transfer throughput (100 MiB) | `> 80 MB/s` | **`215 MB/s`** (`0.46 s` for 100 MiB) | `cargo test -p nectarlink-core --release --test two_devices file_transfer_100mb_throughput` |
-| 4 GiB transfer + mid-stream pause/resume + BLAKE3 | `< 5.0 s` | **`1.42 s`** | `cargo test -p nectarlink-core --release --test scale_tests scale_4gb_transfer_pause_resume` |
-| 10,000-file directory batch transfer | `< 30 s` | **`2.19 s`** | `cargo test -p nectarlink-core --release --test scale_tests scale_10k_small_files_batch` |
-| 50,000-entry SQLite timeline insert + query + search | `< 500 ms` query | **`817 ms`** insert / **`0.46 ms`** page query / **`15.42 ms`** substring search | `cargo test -p nectarlink-core --release --test scale_tests scale_50k_timeline_entries` |
-| 10,000-contact synchronization + lookup | `< 5.0 s` | **`0.55 s`** | `cargo test -p nectarlink-core --release --test scale_tests scale_10k_contacts_sync` |
-| 5,000-photo gallery index + pagination | `< 2.0 s` | **`0.18 s`** | `cargo test -p nectarlink-core --release --test scale_tests scale_5k_photos_pagination` |
-| 2-hour continuous multi-feature soak test | `0` disconnects, `< 5 MB` RSS delta | **`0` disconnects**, **`+1.8 MB`** RSS delta | Continuous notifications, clipboard, media state, and periodic file transfers |
+The scale benchmarks move gigabytes of data and hold timing limits, so they are opt-in rather than part of every CI run. Measured with a release build on Windows 11 x64 (DPAPI key protection) on 2026-10-14:
+
+```powershell
+cargo test -p nectarlink-core --release --test scale_tests -- --ignored --nocapture
+```
+
+| Benchmark (`tests/scale_tests.rs`) | Limit in the test | Measured |
+|---|---|---|
+| `scale_4gb_file_transfer_with_pause_resume_interruption_and_blake3`: a 4 GiB file between two paired nodes, paused and resumed twice mid-stream, then BLAKE3 verified | Transfer `< 180 s` | **`16.0 s`** transfer, **`1.74 s`** BLAKE3 verify |
+| `scale_10000_notifications_in_history_and_search`: 10,000 notifications ingested, a 200-item page listed and searched | List and search `< 100 ms` | **`13.8 ms`** ingest, **`0.15 ms`** list, **`2.43 ms`** search |
+| `scale_5000_timeline_entries_and_200_chat_threads`: 5,000 timeline entries and 200 chat threads | Page and thread queries `< 50 ms`, search `< 100 ms` | **`0.89 ms`** page, **`4.60 ms`** search, **`0.37 ms`** threads, **`0.06 ms`** messages |
+| `scale_50_large_clips_encrypted_history`: 50 clipboard items of 64 KiB each, encrypted at rest | Reopen, decrypt, list and search `< 250 ms` (release) | **`3.06 s`** to write all 50, **`182 ms`** to reopen and search |
 
 ### Android Client (`app.nectarlink.android`)
 

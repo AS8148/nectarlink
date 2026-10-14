@@ -143,11 +143,11 @@ cargo test -p nectarlink-protocol
 # Core unit tests (SQLite store v7, send_queue FIFO/TTL/replacement, ADB/USB tunnel, OKLab palette, clipboard vault)
 cargo test -p nectarlink-core --lib
 
-# End-to-end two-device QUIC integration tests (pairing, capabilities, 100 MiB transfer, pause/resume)
+# End-to-end two-device QUIC integration tests (pairing, capabilities, transfers, pause/resume)
 cargo test -p nectarlink-core --test two_devices
 
-# High-scale stress tests (4 GiB transfer, 10k files, 50k timeline rows, 10k contacts, 5k photos)
-cargo test -p nectarlink-core --release --test scale_tests
+# Scale benchmarks, opt-in (4 GiB transfer, 10,000 notifications, 5,000 timeline entries, encrypted clipboard history)
+cargo test -p nectarlink-core --release --test scale_tests -- --ignored
 
 # UniFFI binding round-trip tests
 cargo test -p nectarlink-ffi

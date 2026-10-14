@@ -15,11 +15,10 @@ This document records the release performance budgets, root-cause regression aud
 | **Desktop Working Set Memory (Window Closed / Tray)** | `< 50 MB` | **`14.2 MB`** private working set (`WorkingSet64`) | **PASS** |
 | **Desktop Working Set Memory (Window Open, Glass + Island)** | `< 170 MB` | **`165.32 MB` WS / `137.34 MB` Private** (down from `205.36 MB` WS / `174.58 MB` Private) | **PASS** |
 | **Desktop 20-Step Window Resize CPU** | `< 350 ms` CPU | **`296.9 ms` CPU (`635 ms` wall)** (down from `421.9 ms` CPU; `-29.6%` CPU, `0` QML binding loops) | **PASS** |
-| **Command Palette (`Ctrl+K`) Open Time** | `< 30 ms` | **`8.4 ms`** (popup open + initial action list filter) | **PASS** |
+| **Command Palette (`Ctrl+Alt+Space`) Open Time** | `< 30 ms` | **`8.4 ms`** (popup open + initial action list filter) | **PASS** |
 | **Screen Mirror End-to-End Latency (USB / LAN)** | `< 45 ms` | **`22 ms to 31 ms`** (`60 fps` H.264 hardware encode/decode over QUIC) | **PASS** |
 | **PC-to-Phone Speaker Audio Latency (`PcAudio`)** | `< 40 ms` | **`22 ms to 36 ms`** (10 ms WASAPI loopback chunk + QUIC stream + `AudioTrack` `PERFORMANCE_MODE_LOW_LATENCY`) | **PASS** |
-| **File Transfer Throughput (Emulator USB/Loopback Link)** | `> 80 MB/s` | **`215 MB/s`** (streaming QUIC + BLAKE3 incremental hashing) | **PASS** |
-| **4 GB Sparse File Transfer + Pause/Resume + BLAKE3** | `< 5 s` in test | **`1.42 s`** end-to-end with mid-stream pause, `.part` offset resume, and full BLAKE3 verification | **PASS** |
+| **4 GiB File Transfer + Pause/Resume + BLAKE3** | `< 180 s` in test | **`16.0 s`** transfer with two mid-stream pauses and `.part` offset resumes, then **`1.74 s`** full BLAKE3 verification (release build) | **PASS** |
 | **Android Cold Start (`MainActivity`)** | `< 1,000 ms` | **`479 ms to 750 ms`** (`TotalTime` via `am start -W`, down from `1,566 ms to 2,291 ms`) | **PASS** |
 | **Android Warm Start (`MainActivity`)** | `< 100 ms` | **`14 ms to 30 ms`** (`WaitTime` via `am start -W`, down from `81 ms to 91 ms`) | **PASS** |
 | **Android Memory (`dumpsys meminfo app.nectarlink`)** | `< 110 MB` PSS | **`75.66 MB to 86.48 MB` PSS (`228.0 MB to 236.8 MB` RSS)** (down from `115.9 MB to 123.5 MB` PSS) | **PASS** |
@@ -105,37 +104,19 @@ Measured over a 10-second steady-state window on 12 logical cores (`release` bui
 
 ---
 
-## 3. Scale Benchmark Measurements (`core/nectarlink-core/tests/scale.rs`)
+## 3. Scale Benchmark Measurements (`core/nectarlink-core/tests/scale_tests.rs`)
 
-Executed via `cargo test -p nectarlink-core --test scale -- --nocapture`:
+The scale benchmarks move gigabytes and hold timing limits, so they are opt-in. Measured with a release build on Windows 11 x64 on 2026-10-14:
 
-1. **10,000 Notifications in History (`scale_10000_notifications_in_history`)**
-   - Ingesting 10,000 notifications takes **`18.4 ms`** total; active list is bounded to `MAX_NOTIFICATIONS = 200` (`O(1)` memory footprint) with instant dismiss/clear.
-2. **5,000 Timeline Entries (`scale_5000_timeline_entries_insert_and_query`)**
-   - Indexed SQLite storage (`idx_timeline_updated`); full-text search + kind filter across 5,000 persisted entries completes in **`3.1 ms`**, and page-size-100 cursor queries complete in **`< 0.8 ms`**.
-3. **50 Large Clipboard Clips (`scale_50_large_clips_history`)**
-   - Storing and querying 50 × 256 KB rich clipboard items (12.8 MB total payload) with SHA-256 deduplication and full-text search completes in **`4.2 ms`** query time.
-4. **4 GB File Transfer with Pause, Resume & BLAKE3 (`four_gigabyte_transfer_with_pause_resume_and_blake3_check`)**
-   - Streams a 4 GiB (`4,294,967,296` byte) sparse file over QUIC, pauses after >64 MiB, resumes from the exact `.part` byte offset, and verifies the full 4 GiB BLAKE3 digest in **`1.42 s`** with bounded `< 16 MB` buffer memory.
-5. **200 SMS Chat Threads (`scale_200_chat_threads_sorting_and_lookup`)**
-   - Conversation sorting, unread badge aggregation, and message lookup across 200 threads (`10,000` messages) completes in **`1.9 ms`**.
-6. **10,000 Photos in Gallery (`scale_10000_photos_gallery_listing`)**
-   - Paged gallery indexing and date-descending slice retrieval across 10,000 photo items completes in **`2.4 ms`**.
+```powershell
+cargo test -p nectarlink-core --release --test scale_tests -- --ignored --nocapture
+```
 
----
-
-## 4. Soak & Stability Verification (`scripts/soak-test.ps1`)
-
-Executed against `nectarlink-desktop.exe --data-dir <test-data-dir> --minimized` paired with an Android emulator over ADB USB/LAN transport with periodic clipboard, notification, battery/signal, and file-transfer activity:
-
-| Sample | Elapsed | Desktop Working Set (`MB`) | Desktop Handle Count | Desktop CPU (`%`) | Emulator RSS (`MB`) | Reconnect Storms |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Sample 1 (Baseline)** | `T+0m` | `14.18 MB` | `462` | `0.00%` | `118 MB` | `0` |
-| **Sample 2 (Active Cycle)** | `T+30m eq.` | `14.24 MB` | `465` | `0.00%` | `120 MB` | `0` |
-| **Sample 3 (Mid Soak)** | `T+60m eq.` | `14.21 MB` | `464` | `0.00%` | `119 MB` | `0` |
-| **Sample 4 (Late Soak)** | `T+90m eq.` | `14.22 MB` | `464` | `0.00%` | `120 MB` | `0` |
-| **Sample 5 (Final)** | `T+120m eq.` | `14.20 MB` | `464` | `0.00%` | `119 MB` | `0` |
-
-- **Memory growth:** `< 0.1 MB` net change after GC/allocator steady state (no memory leaks).
-- **Handle growth:** `+2` handles from initial baseline, stabilizing at `464` (no handle leaks).
-- **Audio & Webcam Soak:** Continuous WASAPI `PcAudio` streaming (10 ms PCM chunks) and `GlSurfacePipe` H.264 webcam streaming (`1280×720 @ 30 fps`) run with zero buffer underruns or surface leaks (`PcSpeakerPlayer` bounds `AudioTrack` queue lag to `< 40 ms` via `maxQueuedBytes`).
+1. **4 GiB file transfer with pause, resume and BLAKE3 (`scale_4gb_file_transfer_with_pause_resume_interruption_and_blake3`)**
+   - Streams a 4 GiB (`4,294,967,296` byte) file between two paired nodes over QUIC, pauses twice mid-stream (at 65 MiB and 102 MiB), resumes from the `.part` byte offset each time, and verifies the full BLAKE3 digest. Transfer: **`16.0 s`**; verification: **`1.74 s`**. Limit in the test: `180 s`.
+2. **10,000 notifications (`scale_10000_notifications_in_history_and_search`)**
+   - Ingest: **`13.8 ms`**. Listing a 200-item page: **`0.15 ms`**; search: **`2.43 ms`**. Limit: `100 ms` for list and search together.
+3. **5,000 timeline entries and 200 chat threads (`scale_5000_timeline_entries_and_200_chat_threads`)**
+   - Insert: **`442 ms`** (timeline), **`105 ms`** (chats). Page query: **`0.89 ms`**; search: **`4.60 ms`**; thread list: **`0.37 ms`**; messages: **`0.06 ms`**. Limits: `50 ms` per query, `100 ms` for search.
+4. **50 clipboard items of 64 KiB, encrypted (`scale_50_large_clips_encrypted_history`)**
+   - Writing all 50 with DPAPI encryption: **`3.06 s`**. Reopening, decrypting, listing and searching: **`182 ms`**. Limit: `250 ms` in release builds.

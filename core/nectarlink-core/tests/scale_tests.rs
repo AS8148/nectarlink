@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Section 3.3 Scale & Performance verification suite and P2 core feature tests
-//! (`wake.relay` and `audio.pcm`).
+//! Scale and performance checks, and the relayed wake and PC audio round trip.
+//!
+//! The scale checks move gigabytes and hold timing limits, so they depend on
+//! the machine and are opt-in:
+//! `cargo test -p nectarlink-core --release --test scale_tests -- --ignored`.
 
 use std::{
     io::{Read, Write},
@@ -122,6 +125,7 @@ async fn relayed_wake_and_pc_audio_pcm_roundtrip() {
     pc.shutdown().await;
 }
 
+#[ignore = "scale benchmark with timing limits; run with --ignored"]
 #[tokio::test(flavor = "multi_thread")]
 async fn scale_10000_notifications_in_history_and_search() {
     let dir = TempDir::new().expect("temp dir");
@@ -194,6 +198,7 @@ async fn scale_10000_notifications_in_history_and_search() {
     node.shutdown().await;
 }
 
+#[ignore = "scale benchmark with timing limits; run with --ignored"]
 #[tokio::test(flavor = "multi_thread")]
 async fn scale_5000_timeline_entries_and_200_chat_threads() {
     let dir = TempDir::new().expect("temp dir");
@@ -332,6 +337,7 @@ async fn scale_5000_timeline_entries_and_200_chat_threads() {
     node.shutdown().await;
 }
 
+#[ignore = "scale benchmark with timing limits; run with --ignored"]
 #[test]
 fn scale_50_large_clips_encrypted_history() {
     let dir = TempDir::new().expect("temp dir");
@@ -387,6 +393,7 @@ fn scale_50_large_clips_encrypted_history() {
     );
 }
 
+#[ignore = "scale benchmark with timing limits; run with --ignored"]
 #[tokio::test(flavor = "multi_thread")]
 async fn scale_4gb_file_transfer_with_pause_resume_interruption_and_blake3() {
     const FOUR_GIB: u64 = 4 * 1024 * 1024 * 1024; // 4,294,967,296 bytes
