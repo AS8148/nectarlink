@@ -9,6 +9,16 @@ change things that need a step from you, and its notes say so.
 Fewer steps when sharing from the phone, clearer setup on phones that hold
 back permissions, and Graphite as the phone's default look.
 
+### Downloads
+
+| Download | For | Needs |
+|---|---|---|
+| [Nectarlink-0.1.1-x64-setup.exe](https://github.com/thtbee/nectarlink/releases/download/v0.1.1/Nectarlink-0.1.1-x64-setup.exe) | Windows | Windows 11, 64-bit |
+| [Nectarlink-0.1.1-android.apk](https://github.com/thtbee/nectarlink/releases/download/v0.1.1/Nectarlink-0.1.1-android.apk) | Android | Android 8.0 or newer |
+
+Both are listed with their SHA-256 hashes in [SHA256SUMS.txt](https://github.com/thtbee/nectarlink/releases/download/v0.1.1/SHA256SUMS.txt).
+Installed copies update themselves.
+
 ### Changed
 
 - **Sharing from the phone sends right away.** Choosing Nectarlink in the
