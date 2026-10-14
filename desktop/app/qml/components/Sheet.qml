@@ -59,8 +59,8 @@ Item {
         border.width: 1
         border.color: Theme.outlineVariant
         opacity: sheet.opened ? 1 : 0
-        scale: sheet.opened || Theme.reduceMotion ? 1 : 0.96
-        Behavior on opacity { NumberAnimation { duration: Theme.fadeNormal } }
+        scale: sheet.opened || Theme.reduceMotion ? 1 : 0.95
+        Behavior on opacity { NumberAnimation { duration: Theme.fadeNormal; easing.type: Easing.OutCubic } }
         Behavior on scale { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springStandard; damping: Theme.dampingStandard } }
         clip: true
 

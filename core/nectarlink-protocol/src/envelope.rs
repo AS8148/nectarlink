@@ -36,7 +36,12 @@ impl Envelope {
     /// An `error` reply.
     pub fn error(code: ErrorCode, msg: impl Into<String>) -> Self {
         let body = ErrorBody { code, msg: Some(msg.into()) };
-        Envelope::new(types::ERROR, &body).expect("error bodies always serialize")
+        Envelope::new(types::ERROR, &body).unwrap_or_else(|_| Envelope {
+            t: types::ERROR.to_owned(),
+            id: None,
+            re: None,
+            b: None,
+        })
     }
 
     pub fn with_id(mut self, id: u64) -> Self {
@@ -77,7 +82,7 @@ impl Envelope {
 
     pub fn to_cbor(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        ciborium::into_writer(self, &mut out).expect("writing to a Vec cannot fail");
+        let _ = ciborium::into_writer(self, &mut out);
         out
     }
 
@@ -134,5 +139,36 @@ mod tests {
     #[test]
     fn garbage_is_a_bad_message() {
         assert!(matches!(Envelope::from_cbor(&[0xff, 0x00, 0x13]), Err(ProtocolError::BadMessage(_))));
+    }
+
+    #[test]
+    fn fuzz_frame_decode_arbitrary_bytes_10k() {
+        let mut seed = 0x243F_6A88_85A3_08D3u64;
+        let mut next_u64 = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        let mut buf = Vec::with_capacity(256);
+        for _ in 0..10_000usize {
+            let len = (next_u64() as usize) % 192;
+            buf.clear();
+            for _ in 0..len {
+                buf.push((next_u64() & 0xFF) as u8);
+            }
+            if let Ok(Some((payload, _))) = crate::frame::decode_frame(&buf)
+                && let Ok(env) = Envelope::from_cbor(payload)
+            {
+                let cbor = env.to_cbor();
+                let round_tripped = Envelope::from_cbor(&cbor).unwrap();
+                assert_eq!(round_tripped.t, env.t);
+            }
+            if let Ok(env) = Envelope::from_cbor(&buf) {
+                let _ = env.expect(types::OK);
+                let _ = env.expect_body::<Ping>(types::PING);
+            }
+        }
     }
 }

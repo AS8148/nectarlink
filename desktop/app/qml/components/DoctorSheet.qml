@@ -46,10 +46,10 @@ Sheet {
             role: "body"
             muted: true
             text: AppController.doctorBusy && sheet.checks.length === 0
-                  ? qsTr("Checking this PC's network and firewall…")
+                  ? qsTr("Checking network and firewall…")
                   : sheet.allWell
-                    ? qsTr("Everything looks right. If your phone still can't connect, open Nectarlink on it and keep both on the same network.")
-                    : qsTr("Here's what may keep your phone from reaching this PC.")
+                    ? qsTr("Everything looks right.")
+                    : qsTr("Issues blocking your phone from reaching this PC:")
         }
 
         Column {
@@ -59,15 +59,19 @@ Sheet {
             Behavior on opacity { NumberAnimation { duration: Theme.fadeNormal } }
             Repeater {
                 model: sheet.checks
-                delegate: Item {
+                delegate: Rectangle {
                     id: row
                     required property var modelData
+                    readonly property bool hasFix: row.modelData.fix !== undefined && row.modelData.fix !== ""
                     width: parent.width
-                    height: Math.max(badge.height, words.height, fixButton.height) + 20
+                    height: Math.max(badge.height, words.height, actionsRow.height) + 20
+                    radius: Theme.radiusMd
+                    color: "transparent"
 
                     Rectangle {
                         id: badge
-                        x: 0; y: 12
+                        x: 8
+                        anchors.verticalCenter: parent.verticalCenter
                         width: 28; height: 28
                         radius: 14
                         color: row.modelData.outcome === "ok" ? Theme.secondaryContainer
@@ -85,9 +89,9 @@ Sheet {
                         id: words
                         anchors.left: badge.right
                         anchors.leftMargin: 14
-                        anchors.right: fixButton.visible ? fixButton.left : parent.right
-                        anchors.rightMargin: fixButton.visible ? 12 : 0
-                        y: 12
+                        anchors.right: actionsRow.visible ? actionsRow.left : parent.right
+                        anchors.rightMargin: actionsRow.visible ? 12 : 8
+                        anchors.verticalCenter: parent.verticalCenter
                         spacing: 3
                         Txt { width: parent.width; text: row.modelData.title; role: "title"; size: 14; wrapMode: Text.WordWrap }
                         Txt {
@@ -99,16 +103,30 @@ Sheet {
                             wrapMode: Text.WordWrap
                         }
                     }
-                    Button {
-                        id: fixButton
+                    Row {
+                        id: actionsRow
                         anchors.right: parent.right
-                        y: 10
-                        visible: row.modelData.fix !== undefined
-                        enabled: !AppController.doctorBusy
-                        variant: row.modelData.outcome === "fail" ? "fill" : "tonal"
-                        size: "sm"
-                        text: sheet.fixLabel(row.modelData.fix)
-                        onClicked: AppController.doctorFix(row.modelData.fix)
+                        anchors.rightMargin: 6
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 6
+                        visible: row.hasFix
+
+                        Button {
+                            visible: row.modelData.fix === "firewall"
+                            enabled: !AppController.doctorBusy
+                            variant: "tonal"
+                            size: "sm"
+                            text: qsTr("Firewall settings")
+                            onClicked: AppController.doctorFix("firewall-settings")
+                        }
+                        Button {
+                            id: fixButton
+                            enabled: !AppController.doctorBusy
+                            variant: row.modelData.outcome === "fail" ? "fill" : "tonal"
+                            size: "sm"
+                            text: sheet.fixLabel(row.modelData.fix)
+                            onClicked: AppController.doctorFix(row.modelData.fix)
+                        }
                     }
                 }
             }

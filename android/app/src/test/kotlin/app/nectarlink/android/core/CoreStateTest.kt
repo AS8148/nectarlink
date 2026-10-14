@@ -38,7 +38,7 @@ class CoreStateTest {
         assertTrue(state.device("a")!!.canWake)
         assertEquals(WakeState.Waking, state.device("a")!!.wakeState)
 
-        state = state.reduce(Event.LinkChanged("a", Link.Online(false, 5u)))
+        state = state.reduce(Event.LinkChanged("a", Link.Online(relayed = false, usb = false, rttMs = 5u)))
             .reduce(Event.Battery("a", Battery(42u, true, "ac", 28u)))
         assertTrue(state.device("a")!!.online)
         assertEquals(WakeState.Idle, state.device("a")!!.wakeState)
@@ -158,7 +158,7 @@ class CoreStateTest {
 
         val initialInfo = DeviceInfo("Pixel", DeviceKind.PHONE, "android", "16", "Pixel 9", 0xFF4F7A4Eu)
         var state = CoreState().reduce(
-            Event.DeviceAdded(PairedDevice("p1", initialInfo, 100L, Link.Online(false, 4u), false)),
+            Event.DeviceAdded(PairedDevice("p1", initialInfo, 100L, Link.Online(relayed = false, usb = true, rttMs = 4u), false)),
         )
         assertEquals(0xFF4F7A4Eu, state.device("p1")!!.accent)
 
@@ -173,6 +173,194 @@ class CoreStateTest {
         assertEquals(0xFF3E6A8Au, state.device("p1")!!.accent)
 
         assertEquals(state, state.reduce(Event.TimelineChanged))
+    }
+
+    @Test
+    fun onlineDevicesSortAheadOfOfflineDevices() {
+        var state = CoreState()
+            .reduce(Event.DeviceAdded(pc("a", "Desk", 10)))
+            .reduce(Event.DeviceAdded(pc("b", "Laptop", 20)))
+        assertEquals(listOf("Desk", "Laptop"), state.devices.map { it.name })
+
+        // Bringing the newer-paired Laptop online moves it ahead of the offline Desk.
+        state = state.reduce(Event.LinkChanged("b", Link.Online(relayed = false, usb = false, rttMs = 4u)))
+        assertEquals(listOf("Laptop", "Desk"), state.devices.map { it.name })
+
+        // Bringing Desk online restores pairing-order tie-breaking among online PCs.
+        state = state.reduce(Event.LinkChanged("a", Link.Online(relayed = false, usb = false, rttMs = 6u)))
+        assertEquals(listOf("Desk", "Laptop"), state.devices.map { it.name })
+    }
+
+    @Test
+    fun remoteInputRequestedReducesWhenControlAccessIsOff() {
+        val offState = CoreState(inputAccess = false, elevated = false)
+            .reduce(Event.RemoteInputRequested("pc-1"))
+        assertTrue(offState.remoteInputRequested)
+
+        val accessibilityOn = CoreState(inputAccess = true, elevated = false)
+            .reduce(Event.RemoteInputRequested("pc-1"))
+        assertTrue(!accessibilityOn.remoteInputRequested)
+
+        val elevatedOn = CoreState(inputAccess = false, elevated = true)
+            .reduce(Event.RemoteInputRequested("pc-1"))
+        assertTrue(!elevatedOn.remoteInputRequested)
+    }
+
+    @Test
+    fun inputServiceGestureHelpersClassifyTapsAndFilterDragPoints() {
+        val jitterTap = listOf(100f to 200f, 103f to 202f, 98f to 199f)
+        assertTrue(app.nectarlink.android.mirror.isStationaryTapOrHold(jitterTap, 1080f))
+
+        val swipePoints = listOf(
+            100f to 200f,
+            100.4f to 200.3f, // sub-pixel duplicate filtered out
+            120f to 240f,
+            120.2f to 240.1f, // sub-pixel duplicate filtered out
+            180f to 360f,
+        )
+        assertTrue(!app.nectarlink.android.mirror.isStationaryTapOrHold(swipePoints, 1080f))
+        val filtered = app.nectarlink.android.mirror.filterDragPoints(swipePoints)
+        assertEquals(listOf(100f to 200f, 120f to 240f, 180f to 360f), filtered)
+
+        assertEquals(80L, app.nectarlink.android.mirror.swipeDurationMs(20L))
+        assertEquals(250L, app.nectarlink.android.mirror.swipeDurationMs(250L))
+        assertEquals(600L, app.nectarlink.android.mirror.swipeDurationMs(1100L))
+    }
+
+    @Test
+    fun sendQueueMapsFfiItemsAndDropsOnDeviceRemoval() {
+        val rawA = app.nectarlink.core.FfiQueueItem(
+            id = "q-1",
+            seq = 1L,
+            deviceId = "a",
+            deviceName = "Desk",
+            kind = app.nectarlink.core.FfiQueueKind.CLIPBOARD,
+            status = app.nectarlink.core.FfiQueueStatus.Waiting,
+            createdAt = 1_700_000_000L,
+            expiresAt = 1_700_604_800L,
+            attempts = 0u,
+            title = "Copied note",
+            detail = "11 chars",
+            bytesTotal = 11uL,
+            bytesDone = 0uL,
+            filesTotal = 0u,
+            filesDone = 0u,
+            files = emptyList(),
+        )
+        val rawB = app.nectarlink.core.FfiQueueItem(
+            id = "q-2",
+            seq = 2L,
+            deviceId = "b",
+            deviceName = "Laptop",
+            kind = app.nectarlink.core.FfiQueueKind.FILES,
+            status = app.nectarlink.core.FfiQueueStatus.Failed("File was deleted before it could be sent"),
+            createdAt = 1_700_000_100L,
+            expiresAt = 1_700_604_900L,
+            attempts = 2u,
+            title = "photo.jpg",
+            detail = "1 file",
+            bytesTotal = 2048uL,
+            bytesDone = 0uL,
+            filesTotal = 1u,
+            filesDone = 0u,
+            files = emptyList(),
+        )
+
+        var state = CoreState()
+            .reduce(Event.DeviceAdded(pc("a", "Desk", 10)))
+            .reduce(Event.DeviceAdded(pc("b", "Laptop", 20)))
+            .copy(sendQueue = listOf(rawA.toUi(), rawB.toUi()))
+
+        assertEquals(2, state.sendQueue.size)
+        assertEquals("Copied note", state.sendQueue[0].title)
+        assertNull(state.sendQueue[0].activeTransferId)
+        assertEquals("q-2", state.sendQueue[1].activeTransferId)
+        assertEquals(1, state.sendQueue[1].filesTotal)
+        assertEquals(0, state.sendQueue[1].filesDone)
+        assertEquals(app.nectarlink.core.FfiQueueStatus.Waiting, state.sendQueue[0].status)
+        assertEquals(
+            app.nectarlink.core.FfiQueueStatus.Failed("File was deleted before it could be sent"),
+            state.sendQueue[1].status,
+        )
+
+        // QueueChanged and QueueDroppedOnUnpair are refreshed by Core via node.sendQueue() and
+        // leave the pure reducer state intact until the snapshot is applied.
+        assertEquals(state, state.reduce(Event.QueueChanged))
+        assertEquals(state, state.reduce(Event.QueueDroppedOnUnpair("a", "Desk", 1u)))
+
+        // Removing a paired device immediately drops its queued items from CoreState.
+        state = state.reduce(Event.DeviceRemoved("a"))
+        assertEquals(listOf("q-2"), state.sendQueue.map { it.id })
+    }
+
+    @Test
+    fun formatQueueItemTitleCollapsesMultilineClipboardText() {
+        val multiline = "First line\r\nSecond line\nThird\rFourth   with   spaces"
+        assertEquals(
+            "First line Second line Third Fourth with spaces",
+            formatQueueItemTitle(app.nectarlink.core.FfiQueueKind.CLIPBOARD, multiline, maxChars = 64),
+        )
+
+        val longClipboard = "Line one\nLine two with extra words that exceed the maximum character budget"
+        val formatted = formatQueueItemTitle(
+            app.nectarlink.core.FfiQueueKind.CLIPBOARD,
+            longClipboard,
+            maxChars = 24,
+        )
+        assertTrue(!formatted.contains('\n'))
+        assertTrue(!formatted.contains('\r'))
+        assertTrue(formatted.endsWith("..."))
+        assertEquals(24, formatted.length)
+
+        assertEquals(
+            "Clipboard",
+            formatQueueItemTitle(app.nectarlink.core.FfiQueueKind.CLIPBOARD, " \r\n\t "),
+        )
+    }
+
+    @Test
+    fun transferEventUpdatesMatchingFileBackedQueueItemProgress() {
+        val queuedFile = app.nectarlink.core.FfiQueueItem(
+            id = "tx-100",
+            seq = 10L,
+            deviceId = "a",
+            deviceName = "Desk",
+            kind = app.nectarlink.core.FfiQueueKind.FILES,
+            status = app.nectarlink.core.FfiQueueStatus.Sending,
+            createdAt = 1_700_000_000L,
+            expiresAt = 1_700_604_800L,
+            attempts = 1u,
+            title = "archive.zip",
+            detail = "1 file",
+            bytesTotal = 10_000uL,
+            bytesDone = 0uL,
+            filesTotal = 1u,
+            filesDone = 0u,
+            files = emptyList(),
+        ).toUi()
+
+        var state = CoreState()
+            .reduce(Event.DeviceAdded(pc("a", "Desk", 10)))
+            .copy(sendQueue = listOf(queuedFile))
+
+        val liveTransfer = app.nectarlink.core.Transfer(
+            id = "tx-100",
+            deviceId = "a",
+            direction = app.nectarlink.core.TransferDirection.OUTGOING,
+            names = listOf("archive.zip"),
+            files = 1u,
+            total = 10_000uL,
+            done = 4_500uL,
+            status = app.nectarlink.core.TransferStatus.Running,
+            recording = false,
+            markers = emptyList(),
+            openOnArrival = false,
+        )
+
+        state = state.reduce(Event.Transfer(liveTransfer))
+        assertEquals(4_500L, state.sendQueue.single().bytesDone)
+        assertEquals(10_000L, state.sendQueue.single().totalBytes)
+        assertEquals(1, state.transfers.size)
     }
 }
 

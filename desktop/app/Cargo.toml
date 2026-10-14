@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+blake3.workspace = true
 cxx.workspace = true
 cxx-qt.workspace = true
 cxx-qt-lib.workspace = true
@@ -48,12 +49,23 @@ windows = { workspace = true, features = [
     "Storage_Search",
     "Storage_Streams",
     "ApplicationModel",
+    "ApplicationModel_Activation",
+    "ApplicationModel_Calls",
+    "ApplicationModel_DataTransfer",
+    "ApplicationModel_DataTransfer_ShareTarget",
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_Advertisement",
+    "Devices_Bluetooth_Rfcomm",
+    "Devices_Enumeration",
+    "Gaming_Input",
     "UI_Notifications",
     "Win32_Foundation",
+    "Win32_UI_Input_XboxController",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_Storage_CloudFilters",
+    "Win32_Storage_EnhancedStorage",
     "Win32_Storage_FileSystem",
     "Win32_System_CorrelationVector",
     "Win32_System_IO",
@@ -71,6 +83,7 @@ windows = { workspace = true, features = [
     "Win32_System_WinRT",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
     "Win32_NetworkManagement_IpHelper",

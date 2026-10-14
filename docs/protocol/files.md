@@ -21,18 +21,21 @@ header, then an offer:
 ```
 t = "stream"        b = { svc: "files", op: "send", v: 1 }
 t = "files.offer"   b = {
-  id:    text,             // Transfer ID: 16–64 bytes of [A-Za-z0-9_-], the same on every retry
+  id:    text,             // Transfer ID: 16 to 64 bytes of [A-Za-z0-9_-], the same on every retry
   files: [ {
     name:    text,         // The file's name
     size:    uint,
     ? folder: text,        // Only for files in a sent folder (see below)
-  } ],                     // 1–5,000 files, in order
+    ? blake3: text,        // Optional 64-character hex BLAKE3 digest of the full file
+  } ],                     // 1 to 5,000 files, in order
   ? open_on_arrival: bool, // True when handing off a single document to open on arrival
 }
 ```
 
-`name` is a file name only (no path), 1–255 bytes, without `/`, `\`, NUL
-or control characters, and not `.` or `..`.
+`name` is a file name only (no path), 1 to 255 bytes, without `/`, `\`, NUL
+or control characters, and not `.` or `..`. When `blake3` is present, it is
+64 ASCII hexadecimal characters representing the 256-bit BLAKE3 digest of
+the complete file.
 
 **Folders.** A sent folder is its files, each with `folder`: where the file
 is, as names joined by `/`, starting with the sent folder's own (`Trip`,
@@ -72,7 +75,13 @@ The sender then writes the files' bytes, raw and back to back: for each
 file, from `have[i]` to its `size`. A file whose `have` equals its `size`
 contributes nothing. The sender then finishes its side of the stream.
 
-When the receiver has every byte, it stores the files and answers:
+When the receiver has every byte, it verifies each file's `blake3` digest (if
+provided, hashing any resumed `.part` prefix together with the newly received
+bytes). If any file's digest does not match, the receiver keeps the partial
+directory on disk (so a retry can inspect or overwrite the corrupted `.part`
+file), answers with `error` (`BAD_MESSAGE`, `"blake3 integrity check failed"`),
+and closes the stream without moving files into the destination folder.
+Otherwise, the receiver stores the files and answers:
 
 ```
 t = "files.done"
@@ -81,15 +90,27 @@ t = "files.done"
 The transfer has succeeded once the sender reads `files.done`. Anything
 else (a reset, a closed connection, a missing `done`) means it didn't.
 
-## 3. Cancelling and resuming
+## 3. Cancelling, pausing and resuming
 
-- Either side cancels by resetting the stream (QUIC `RESET_STREAM` or
-  `STOP_SENDING`, application code 10, "cancelled").
+- Either side cancels an active stream by resetting it (QUIC `RESET_STREAM`
+  or `STOP_SENDING`, application code 10, "cancelled"). While a transfer is
+  paused (no active stream), either side cancels by sending a control message
+  `t = "files.cancel", b = { id: text }` so the receiver deletes its staged
+  `.part` directory.
+- Either side manually pauses an active transfer by resetting the stream with
+  application code 11 (`files::PAUSED`). Both sides keep the transfer in the
+  `Paused` state and the receiver preserves all `.part` files on disk.
+- Either side resumes a paused transfer: the sender re-offers the transfer with
+  the same `id` on a new stream; if the receiver initiates resume, it sends a
+  control message `t = "files.resume", b = { id: text }` prompting the sender
+  to immediately re-offer from the saved byte offset.
 - A transfer interrupted any other way (the connection dropped) is resumed
   by offering it again with the **same `id`** when the devices reconnect.
   The receiver keeps partly received files for a transfer for at least an
-  hour and reports their length in `have`. A sender **MUST** use a new `id`
-  if any file changed in between.
+  hour and reports their length in `have` (if a `.part` file's length already
+  equals `size` and `blake3` is present, the receiver verifies its digest
+  before reporting `have[i] = size`, reporting `0` on mismatch so the file is
+  re-sent). A sender **MUST** use a new `id` if any file changed in between.
 
 ## 4. Receiving safely
 

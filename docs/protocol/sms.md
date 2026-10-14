@@ -25,7 +25,7 @@ On the control stream. Each request is answered with the matching answer
 or `error`.
 
 ```
-t = "sms.threads"   id = n   b = { limit: uint }                          // 1–100
+t = "sms.threads"   id = n   b = { limit: uint }                          // 1 to 100
 t = "sms.threads"   re = n   b = { threads: [ thread ] }                  // newest first
 
 t = "sms.messages"  id = n   b = { thread: text, ? before: int, limit: uint }
@@ -78,7 +78,7 @@ with `BUSY`.
 ### 2.2 Sending
 
 `sms.send` sends `body` (at most 8 KiB) and/or `attachments` (at most 1 image,
-`image/jpeg` or `image/png`, at most 900 KiB) to `to` (1–20 numbers). When
+`image/jpeg` or `image/png`, at most 900 KiB) to `to` (1 to 20 numbers). When
 `attachments` is empty, `body` must not be blank and is sent as SMS; when an
 image attachment is included, the phone sends it as MMS (`sendMultimediaMessage`).
 Errors: `DENIED` when messages are off for the PC, `UNSUPPORTED` when the phone

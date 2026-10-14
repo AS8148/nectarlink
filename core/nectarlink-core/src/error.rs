@@ -30,6 +30,8 @@ pub enum Error {
     NotFound,
     #[error("too large to send")]
     TooLarge,
+    #[error("{0}")]
+    QueueFull(String),
     #[error("no pairing in progress")]
     NotPairing,
     #[error("invalid pairing link: {0}")]

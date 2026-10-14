@@ -3,7 +3,7 @@
 //!
 //! Codes are detected locally and never logged or stored in clipboard history.
 
-/// Extracts a 4–8 digit one-time code (or prefixed/hyphenated format like
+/// Extracts a 4-8 digit one-time code (or prefixed/hyphenated format like
 /// `"G-123456"` or `"123-456"`) when it appears near an OTP keyword in English
 /// or common languages, while ignoring dates, times, currency amounts, phone
 /// numbers, and order/card/account numbers.
@@ -52,7 +52,7 @@ pub fn is_otp_clip(text: &str) -> bool {
     one_time_code(trimmed).is_some()
 }
 
-/// Whether `trimmed` is nothing but a standalone 4–8 digit code, `"G-123456"`,
+/// Whether `trimmed` is nothing but a standalone 4-8 digit code, `"G-123456"`,
 /// `"123-456"` or `"1234-5678"`.
 pub fn is_bare_code(trimmed: &str) -> bool {
     if (4..=8).contains(&trimmed.len()) && trimmed.bytes().all(|b| b.is_ascii_digit()) {
@@ -787,5 +787,95 @@ mod tests {
         assert!(is_otp_clip("Your verification code is 482913"));
         assert!(!is_otp_clip("hello from phone"));
         assert!(!is_otp_clip("https://example.com/path/123456"));
+    }
+
+    #[test]
+    fn fuzz_otp_extract_arbitrary_unicode_10k() {
+        let mut seed = 0xA24B_AED4_963E_E407u64;
+        let mut next_u64 = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        let samples: &[&str] = &[
+            "İ",
+            "ß",
+            "验证码",
+            "認証コード",
+            "인증번호",
+            "رمز التحقق",
+            "आपका ओटीपी",
+            "G-482913",
+            "123-456",
+            "1234-5678",
+            "2026-10-10",
+            "+1 800-555-0199",
+            "Rs. 5000",
+            "$1200.50",
+            "code",
+            "OTP",
+            "verification",
+            "order #987654",
+            "zip code 94043",
+            "👨‍👩‍👧‍👦",
+            "\u{200B}\u{202E}\u{FEFF}",
+        ];
+
+        let mut s = String::with_capacity(256);
+        for i in 0..10_000usize {
+            s.clear();
+            let pieces = (next_u64() % 12) as usize;
+            for _ in 0..pieces {
+                let r = next_u64();
+                match r % 5 {
+                    0 => s.push_str(samples[(r as usize >> 8) % samples.len()]),
+                    1 => {
+                        let digits = 1 + ((r >> 16) % 10) as usize;
+                        for _ in 0..digits {
+                            s.push((b'0' + (next_u64() % 10) as u8) as char);
+                        }
+                    }
+                    2 => {
+                        // Arbitrary Unicode scalar value (including multibyte UTF-8 and edge planes).
+                        let cp = (r as u32) % 0x11_0000;
+                        if let Some(ch) = char::from_u32(cp) {
+                            s.push(ch);
+                        }
+                    }
+                    3 => s.push(match (r >> 8) % 8 {
+                        0 => ' ',
+                        1 => '-',
+                        2 => ':',
+                        3 => '/',
+                        4 => '.',
+                        5 => '#',
+                        6 => '+',
+                        _ => '\n',
+                    }),
+                    _ => {
+                        let raw_bytes: [u8; 8] = r.to_le_bytes();
+                        s.push_str(&String::from_utf8_lossy(&raw_bytes));
+                    }
+                }
+            }
+            if i % 10 == 0 {
+                s.push_str(" verification code ");
+                s.push_str("482913");
+            }
+
+            if let Some(code) = one_time_code(&s) {
+                assert!(
+                    (4..=8).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_digit()),
+                    "extracted OTP must be 4..=8 ASCII digits, got {code:?} from {s:?}"
+                );
+                assert!(is_otp_clip(&s));
+                assert!(is_bare_code(&code));
+            } else {
+                let _ = is_otp_clip(&s);
+                let _ = is_bare_code(s.trim());
+            }
+        }
     }
 }

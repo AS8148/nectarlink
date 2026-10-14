@@ -32,8 +32,20 @@ use tokio::sync::mpsc;
 
 use crate::{Error, Result, events::NodeEvent, node::Shared, session::Session};
 
-/// The device toggle that allows mirroring for a device.
+/// The device toggle that allows phone-to-PC mirroring for a device.
 pub(crate) const TOGGLE: &str = "mirroring";
+/// The per-device toggle that allows PC-to-phone reverse mirroring (off by default).
+pub const PC_MIRROR_TOGGLE: &str = "pc_mirror";
+
+fn is_local_desktop(shared: &Shared) -> bool {
+    let local = shared.local.read().unwrap_or_else(|e| e.into_inner());
+    matches!(crate::features::role_of(&local.device), Some(crate::features::Role::Desktop))
+}
+
+fn pc_mirror_allowed(shared: &Shared, peer: &DeviceId) -> bool {
+    shared.toggle_on(peer, PC_MIRROR_TOGGLE)
+        || shared.pc_mirror_sessions.lock().unwrap_or_else(|e| e.into_inner()).contains(peer)
+}
 /// Packets waiting to go out, at most. Beyond this the network is behind:
 /// sending more would only add delay.
 const QUEUE: usize = 4;
@@ -69,7 +81,12 @@ impl std::fmt::Debug for dyn MirrorSink {
 // ---- The PC ----
 
 pub(crate) async fn start(shared: &Shared, session: &Session, options: MirrorStart) -> Result<()> {
-    if !shared.toggle_on(&session.peer, TOGGLE) {
+    let allowed = if is_local_desktop(shared) {
+        shared.toggle_on(&session.peer, TOGGLE)
+    } else {
+        shared.store.toggles(&session.peer)?.get(PC_MIRROR_TOGGLE).copied().unwrap_or(true)
+    };
+    if !allowed {
         return Err(Error::Denied);
     }
     if !options.is_valid() {
@@ -94,7 +111,13 @@ pub(crate) async fn input(
     mirroring: u32,
     input: MirrorInput,
 ) -> Result<()> {
-    if !shared.toggle_on(&session.peer, TOGGLE) {
+    let allowed = if is_local_desktop(shared) {
+        shared.toggle_on(&session.peer, TOGGLE)
+    } else {
+        shared.store.toggles(&session.peer)?.get(PC_MIRROR_TOGGLE).copied().unwrap_or(true)
+            && shared.toggle_on(&session.peer, crate::remote::TOGGLE)
+    };
+    if !allowed {
         return Err(Error::Denied);
     }
     if !input.is_valid() {
@@ -173,17 +196,32 @@ pub(crate) async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendS
         let _ = recv.stop(VarInt::from_u32(mirror::STOPPED));
     };
     let shows = shared.local_capabilities().iter().any(|c| c == mirror::VIEW);
-    if !shows || !shared.toggle_on(&peer, TOGGLE) {
+    let allowed = if is_local_desktop(&shared) {
+        shared.toggle_on(&peer, TOGGLE)
+    } else {
+        shared.store.toggles(&peer).ok().and_then(|t| t.get(PC_MIRROR_TOGGLE).copied()).unwrap_or(true)
+    };
+    if !shows || !allowed {
         return refuse(send, recv);
     }
     let first = match read_video_packet(&mut recv).await {
         Ok(Some(p)) if p.kind == PacketKind::Config => {
-            MirrorConfig::from_cbor(&p.data).ok().filter(|c| c.is_valid())
+            let config = MirrorConfig::from_cbor(&p.data).ok().filter(|c| c.is_valid());
+            if config.is_none() {
+                tracing::warn!("a phone sent a video format this PC can't show");
+            }
+            config
         }
-        _ => None,
+        Ok(Some(_)) => {
+            tracing::warn!("a phone's video stream started without its format");
+            None
+        }
+        Ok(None) | Err(_) => {
+            tracing::warn!("a phone's video stream ended before its first frame");
+            None
+        }
     };
     let Some(config) = first else {
-        tracing::warn!("a phone sent a video format this PC can't show");
         return refuse(send, recv);
     };
     let mirroring = config.session;
@@ -296,10 +334,16 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
         types::MIRROR_START => {
             let options: MirrorStart = env.body()?;
             let needs = if options.app.is_some() { mirror::VIRTUAL_DISPLAY } else { mirror::CAPTURE };
-            let reply = if !shared.toggle_on(&peer, TOGGLE) {
-                Envelope::error(ErrorCode::Denied, "mirroring is off for this device")
-            } else if !options.is_valid() {
+            let desktop = is_local_desktop(shared);
+            let allowed =
+                if desktop { pc_mirror_allowed(shared, &peer) } else { shared.toggle_on(&peer, TOGGLE) };
+            let reply = if !options.is_valid() {
                 Envelope::error(ErrorCode::BadMessage, "invalid mirroring options")
+            } else if !allowed {
+                if desktop && options.app.is_none() {
+                    shared.emit(NodeEvent::PcMirrorRequested { device: peer, options: options.clone() });
+                }
+                Envelope::error(ErrorCode::Denied, "mirroring is off for this device")
             } else if !shared.local_capabilities().iter().any(|c| c == needs) {
                 Envelope::error(ErrorCode::Unsupported, "this device doesn't share that")
             } else {
@@ -310,7 +354,11 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
                     Ok(()) => Envelope::empty(types::OK),
                     Err(reason) => {
                         tracing::warn!(reason, "can't ask to share the screen");
-                        Envelope::error(ErrorCode::Internal, "the phone couldn't ask")
+                        if desktop {
+                            Envelope::error(ErrorCode::Denied, reason)
+                        } else {
+                            Envelope::error(ErrorCode::Internal, "the phone couldn't ask")
+                        }
                     }
                 }
             };
@@ -320,6 +368,9 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
             let MirrorSession { session: mirroring } = env.body()?;
             // The PC's side: stop showing; the phone's: stop sharing.
             shared.stop_showing(&peer, mirroring);
+            if mirroring == mirror::SCREEN {
+                shared.pc_mirror_sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(&peer);
+            }
             shared.emit(NodeEvent::Mirroring { device: peer, session: mirroring, on: false });
             tokio::task::spawn_blocking(move || platform.mirror_stop_requested(&peer, mirroring));
             session.send(Envelope::empty(types::OK).reply_to(env.id)).await?;
@@ -353,10 +404,26 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
             let MirrorSession { session: mirroring } = env.body()?;
             // App windows take input as they're Elevated; the screen, with mirror.input.
             let needs = if mirroring == mirror::SCREEN { mirror::INPUT } else { mirror::VIRTUAL_DISPLAY };
-            let allowed =
-                shared.toggle_on(&peer, TOGGLE) && shared.local_capabilities().iter().any(|c| c == needs);
+            let desktop = is_local_desktop(shared);
+            let mirror_on =
+                if desktop { pc_mirror_allowed(shared, &peer) } else { shared.toggle_on(&peer, TOGGLE) };
+            let remote_input_on = !desktop || shared.toggle_on(&peer, crate::remote::TOGGLE);
+            let has_cap = shared.local_capabilities().iter().any(|c| c == needs);
+            let allowed = mirror_on && remote_input_on && has_cap;
             if allowed && input.is_valid() {
                 platform.mirror_input(&peer, mirroring, input);
+            } else if mirroring == mirror::SCREEN && mirror_on && input.is_valid() {
+                if desktop {
+                    if !remote_input_on {
+                        let first_time =
+                            shared.remote.lock().unwrap_or_else(|e| e.into_inner()).mark_prompted(peer);
+                        if first_time {
+                            shared.emit(NodeEvent::RemoteInputRequested { device: peer });
+                        }
+                    }
+                } else if !has_cap {
+                    shared.emit(NodeEvent::RemoteInputRequested { device: peer });
+                }
             }
         }
         types::MIRROR_APPS => {
@@ -475,7 +542,12 @@ impl MirrorStream {
 /// Opens a video stream to a PC that asked for the screen, or (`audio`) a
 /// sound stream to one that asked for the sound too.
 pub(crate) async fn open(shared: &Arc<Shared>, session: &Session, audio: bool) -> Result<MirrorStream> {
-    if !shared.toggle_on(&session.peer, TOGGLE) {
+    let allowed = if is_local_desktop(shared) {
+        pc_mirror_allowed(shared, &session.peer)
+    } else {
+        shared.toggle_on(&session.peer, TOGGLE)
+    };
+    if !allowed {
         return Err(Error::Denied);
     }
     let (mut send, recv) = session.conn.open_bi().await.map_err(crate::error::net)?;
@@ -572,6 +644,18 @@ impl Shared {
         let mut stops = self.mirror_stops.lock().unwrap_or_else(|e| e.into_inner());
         for op in [mirror::OP_VIDEO, mirror::OP_AUDIO] {
             if let Some(signal) = stops.remove(&(*peer, mirroring, op)) {
+                signal.notify_one();
+            }
+        }
+    }
+
+    /// Stops showing (and playing) all mirror sessions of `peer` here.
+    pub(crate) fn stop_showing_all(&self, peer: &DeviceId) {
+        let mut stops = self.mirror_stops.lock().unwrap_or_else(|e| e.into_inner());
+        let keys: Vec<(DeviceId, u32, &'static str)> =
+            stops.keys().filter(|(p, _, _)| p == peer).copied().collect();
+        for key in keys {
+            if let Some(signal) = stops.remove(&key) {
                 signal.notify_one();
             }
         }

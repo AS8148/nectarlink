@@ -29,7 +29,9 @@ android {
 
     // Release builds are signed with the project's key when CI provides it
     // (NECTARLINK_KEYSTORE: a .jks file; NECTARLINK_KEYSTORE_PASSWORD).
-    // Without it, a release build comes out unsigned.
+    // Without it, a local release build is signed with the debug key so it can be
+    // installed over a debug build for testing. Never publish such a build: the
+    // release workflow refuses to run without the key and verifies the signature.
     val keystore = System.getenv("NECTARLINK_KEYSTORE")?.let(::file)?.takeIf { it.exists() }
     signingConfigs {
         if (keystore != null) {
@@ -44,7 +46,7 @@ android {
 
     buildTypes {
         release {
-            if (keystore != null) signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (keystore != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -61,6 +63,10 @@ android {
         buildConfig = true
     }
 
+}
+
+composeCompiler {
+    stabilityConfigurationFiles.add(project.layout.projectDirectory.file("compose_stability.conf"))
 }
 
 // ---- The Rust core (nectarlink-ffi) ----

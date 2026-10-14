@@ -36,7 +36,29 @@ Item {
             AppController.runCommandPalette(item.id)
     }
 
+    ParallelAnimation {
+        id: openAnim
+        NumberAnimation {
+            target: palette
+            property: "opacity"
+            from: 0.45
+            to: 1.0
+            duration: Theme.fadeFast
+            easing.type: Easing.OutCubic
+        }
+        NumberAnimation {
+            target: card
+            property: "scale"
+            from: 0.97
+            to: 1.0
+            duration: Theme.fadeFast
+            easing.type: Easing.OutCubic
+        }
+    }
+
     Component.onCompleted: {
+        if (!Theme.reduceMotion)
+            openAnim.restart()
         searchInput.forceActiveFocus()
         Qt.callLater(() => AppController.noteCommandPaletteShown())
     }
@@ -280,7 +302,7 @@ Item {
                                 height: 16
                                 path: (row.modelData.icon && Icons[row.modelData.icon])
                                     ? Icons[row.modelData.icon]
-                                    : Icons.sparkle
+                                    : Icons.terminal
                                 color: row.selected ? Theme.primaryContainerContent : Theme.surfaceContent
                             }
                         }

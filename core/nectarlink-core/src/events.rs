@@ -15,6 +15,8 @@ use crate::{features::CapabilityMatrix, transfer::Transfer};
 pub enum ConnectionPath {
     /// A direct connection on the local network.
     Lan,
+    /// Over a USB cable (ADB port forward).
+    Usb,
     /// Through a relay server (away mode).
     Relay,
 }
@@ -65,6 +67,7 @@ pub enum PairingFailure {
 
 /// Progress of a pairing ceremony.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant, reason = "a few events per pairing; boxing would only add an allocation")]
 pub enum PairingEvent {
     /// Show this 6-digit code and ask the user to confirm it matches.
     SasCode {
@@ -176,6 +179,12 @@ pub enum NodeEvent {
     RemoteInputRequested {
         device: DeviceId,
     },
+    /// A paired phone asked to view this PC's screen while its `pc_mirror`
+    /// toggle is off (so the PC UI can prompt the person at the PC).
+    PcMirrorRequested {
+        device: DeviceId,
+        options: crate::MirrorStart,
+    },
     /// A paired phone's quick settings state (on connect and on change).
     PhoneToggles {
         device: DeviceId,
@@ -239,4 +248,19 @@ pub enum NodeEvent {
     TimelineChanged,
     /// LocalSend interop state or discovered LocalSend peers changed.
     LocalSendChanged,
+    /// A PCM audio frame arrived from a paired PC (`audio.pcm`).
+    PcAudioFrame {
+        device: DeviceId,
+        sample_rate: u32,
+        channels: u8,
+        pcm: Vec<u8>,
+    },
+    /// The persistent outgoing send queue changed.
+    QueueChanged,
+    /// Queued outgoing items were dropped because a device was unpaired.
+    QueueDroppedOnUnpair {
+        peer: DeviceId,
+        peer_name: String,
+        dropped_count: u32,
+    },
 }

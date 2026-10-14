@@ -13,15 +13,15 @@ ARM64: `$env:QMAKE = ./scripts/qmake-arm64.ps1` then
 
 | Criterion | Budget | Result | |
 |---|---|---|---|
-| First frame | < 500 ms | ~400 ms | ✅ |
-| RAM, main window open | < 120 MB | ~88 MB working set idle (Task Manager: 32.5 MB private), ~104 MB under 10k events/s | ✅ |
-| Smoothness under load | 120 fps | 144 fps avg, 143 min (display max) at 10,000 core events/s + hero transition | ✅ |
-| Core→UI events | 10k/s without stutter | ✅ with coalescing (see below) | ✅ |
-| Bloom design fidelity | matches mockups | Home, notification cards, Deck, shared-element conversation transition, real blur (MultiEffect) | ✅ |
-| Mica | works | Works on D3D11 with no cost: 144 fps under load, same memory (see lesson 7) | ✅ |
-| Video in scene graph (zero copy) | works | 1080p60 GPU frames from a Rust thread on its own D3D11 device: 240/240 shown, 0 dropped, 144 fps alongside 10k events/s. Video alone: 11% of one core, 9% GPU, +6.5 MB | ✅ |
-| ARM64 build | CI builds | Cross-builds from x64 into an ARM64 exe linking ARM64 Qt; not run yet (needs ARM64 hardware or a `windows-11-arm` CI runner) | ✅ build |
-| Tray-only RAM | < 60 MB | After closing the main window: 64 MB working set, 52 MB private commit, **19.6 MB in Task Manager**. Never-opened floor: 34 / 23 MB. Core not included yet | ✅ |
+| First frame | < 500 ms | ~400 ms | Pass |
+| RAM, main window open | < 120 MB | ~88 MB working set idle (Task Manager: 32.5 MB private), ~104 MB under 10k events/s | Pass |
+| Smoothness under load | 120 fps | 144 fps avg, 143 min (display max) at 10,000 core events/s + hero transition | Pass |
+| Core→UI events | 10k/s without stutter | Yes, with coalescing (see below) | Pass |
+| Bloom design fidelity | matches mockups | Home, notification cards, Deck, shared-element conversation transition, real blur (MultiEffect) | Pass |
+| Mica | works | Works on D3D11 with no cost: 144 fps under load, same memory (see lesson 7) | Pass |
+| Video in scene graph (zero copy) | works | 1080p60 GPU frames from a Rust thread on its own D3D11 device: 240/240 shown, 0 dropped, 144 fps alongside 10k events/s. Video alone: 11% of one core, 9% GPU, +6.5 MB | Pass |
+| ARM64 build | CI builds | Cross-builds from x64 into an ARM64 exe linking ARM64 Qt; not run yet (needs ARM64 hardware or a `windows-11-arm` CI runner) | Builds |
+| Tray-only RAM | < 60 MB | After closing the main window: 64 MB working set, 52 MB private commit, **19.6 MB in Task Manager**. Never-opened floor: 34 / 23 MB. Core not included yet | Pass |
 
 ## Lessons (applied in the desktop app)
 

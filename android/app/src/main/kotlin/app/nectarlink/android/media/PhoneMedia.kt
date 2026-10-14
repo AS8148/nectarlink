@@ -36,7 +36,15 @@ class PhoneMedia(context: Context, private val onChange: (List<MediaPlayer>) -> 
     /** The players last sent, by ID, for commands. */
     @Volatile
     private var controllers: Map<String, MediaController> = emptyMap()
+    @Volatile
+    var activeSeedColor: UInt? = null
+        private set
+    private val appNames = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val art = ArtCache()
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "nectarlink-phone-media").apply { isDaemon = true }
+    }
+    @Volatile
     private var running = false
 
     private val sessionsChanged = MediaSessionManager.OnActiveSessionsChangedListener { list ->
@@ -50,9 +58,10 @@ class PhoneMedia(context: Context, private val onChange: (List<MediaPlayer>) -> 
         val component = NotificationListener.component(context)
         try {
             manager.addOnActiveSessionsChangedListener(sessionsChanged, component, main)
-            watch(manager.getActiveSessions(component))
             running = true
+            watch(manager.getActiveSessions(component))
         } catch (e: SecurityException) {
+            running = false
             Log.w(TAG, "no access to media sessions", e)
         }
     }
@@ -63,11 +72,14 @@ class PhoneMedia(context: Context, private val onChange: (List<MediaPlayer>) -> 
         manager.removeOnActiveSessionsChangedListener(sessionsChanged)
         watched.forEach { (controller, callback) -> controller.unregisterCallback(callback) }
         watched.clear()
-        controllers = emptyMap()
         main.removeCallbacks(publish)
         scheduled = false
-        lastSent = null
-        onChange(emptyList())
+        worker.execute {
+            controllers = emptyMap()
+            activeSeedColor = null
+            lastSent = null
+            onChange(emptyList())
+        }
     }
 
     private fun watch(sessions: List<MediaController>) {
@@ -91,7 +103,9 @@ class PhoneMedia(context: Context, private val onChange: (List<MediaPlayer>) -> 
     /** Whether a publish is on its way. */
     private var scheduled = false
     /** What was sent last, and when (for telling real changes from time passing). */
+    @Volatile
     private var lastSent: List<MediaPlayer>? = null
+    @Volatile
     private var lastSentAt = 0L
 
     /**
@@ -106,35 +120,22 @@ class PhoneMedia(context: Context, private val onChange: (List<MediaPlayer>) -> 
         main.postDelayed(publish, SETTLE_MS)
     }
 
-    private fun publishNow() {
-        scheduled = false
-        val ids = mutableMapOf<String, MediaController>()
-        val players = watched.keys
-            .mapNotNull { controller -> read(controller)?.let { controller to it } }
-            .sortedWith(
-                compareByDescending<Pair<MediaController, Reading>> { it.second.playing }
-                    .thenByDescending { it.second.updated },
-            )
-            .take(MAX_PLAYERS)
-            .map { (controller, reading) ->
-                // One app may have more than one session.
-                var id = controller.packageName
-                var n = 2
-                while (id in ids) id = "${controller.packageName}#${n++}"
-                ids[id] = controller
-                reading.player.copy(id = id)
-            }
-        controllers = ids
-        val now = SystemClock.elapsedRealtime()
-        if (sameButLater(lastSent, lastSentAt, players, now)) return
-        lastSent = players
-        lastSentAt = now
-        onChange(players)
-    }
+    private class ControllerSnapshot(
+        val controller: MediaController,
+        val packageName: String,
+        val title: String,
+        val artist: String?,
+        val rawArtist: String?,
+        val album: String?,
+        val playing: Boolean,
+        val duration: Long?,
+        val position: Long?,
+        val actions: List<MediaAction>,
+        val picture: Bitmap?,
+        val updated: Long,
+    )
 
-    private class Reading(val player: MediaPlayer, val playing: Boolean, val updated: Long)
-
-    private fun read(controller: MediaController): Reading? {
+    private fun snapshot(controller: MediaController): ControllerSnapshot? {
         val metadata = controller.metadata ?: return null
         val title = metadata.text(MediaMetadata.METADATA_KEY_TITLE)
             ?: metadata.text(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
@@ -162,33 +163,84 @@ class PhoneMedia(context: Context, private val onChange: (List<MediaPlayer>) -> 
         val picture = metadata.getBitmap(MediaMetadata.METADATA_KEY_ART)
             ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
             ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
-        val track = listOf(controller.packageName, title, metadata.getString(MediaMetadata.METADATA_KEY_ARTIST),
-            metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)).joinToString("\u0001")
-        val (artKey, artBytes) = picture?.let { art.get(track, it) } ?: (null to null)
-        val player = MediaPlayer(
-            id = controller.packageName,
-            app = appName(controller.packageName),
+        return ControllerSnapshot(
+            controller = controller,
+            packageName = controller.packageName,
             title = title,
             artist = metadata.text(MediaMetadata.METADATA_KEY_ARTIST)
                 ?: metadata.text(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
                 ?: metadata.text(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE),
+            rawArtist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST),
             album = metadata.text(MediaMetadata.METADATA_KEY_ALBUM),
             playing = playing,
-            duration = duration?.toULong(),
-            position = position?.toULong(),
+            duration = duration,
+            position = position,
             actions = actions,
-            artKey = artKey,
-            art = artBytes,
+            picture = picture,
+            updated = state?.lastPositionUpdateTime ?: 0L,
         )
-        return Reading(player, playing, state?.lastPositionUpdateTime ?: 0)
+    }
+
+    private fun publishNow() {
+        scheduled = false
+        val snapshots = watched.keys
+            .mapNotNull(::snapshot)
+            .sortedWith(
+                compareByDescending<ControllerSnapshot> { it.playing }
+                    .thenByDescending { it.updated },
+            )
+            .take(MAX_PLAYERS)
+        worker.execute {
+            if (!running) return@execute
+            val ids = mutableMapOf<String, MediaController>()
+            var topPlayingSeed: UInt? = null
+            var firstSeed: UInt? = null
+            val players = snapshots.map { snap ->
+                var id = snap.packageName
+                var n = 2
+                while (id in ids) id = "${snap.packageName}#${n++}"
+                ids[id] = snap.controller
+                val track = listOf(snap.packageName, snap.title, snap.rawArtist, snap.album).joinToString("\u0001")
+                val cachedArt = snap.picture?.let { art.get(track, it) }
+                if (firstSeed == null && cachedArt?.seedColor != null) {
+                    firstSeed = cachedArt.seedColor
+                }
+                if (topPlayingSeed == null && snap.playing && cachedArt?.seedColor != null) {
+                    topPlayingSeed = cachedArt.seedColor
+                }
+                MediaPlayer(
+                    id = id,
+                    app = appName(snap.packageName),
+                    title = snap.title,
+                    artist = snap.artist,
+                    album = snap.album,
+                    playing = snap.playing,
+                    duration = snap.duration?.toULong(),
+                    position = snap.position?.toULong(),
+                    actions = snap.actions,
+                    artKey = cachedArt?.key,
+                    art = cachedArt?.jpeg,
+                )
+            }
+            if (!running) return@execute
+            controllers = ids
+            activeSeedColor = topPlayingSeed ?: firstSeed
+            val now = SystemClock.elapsedRealtime()
+            if (sameButLater(lastSent, lastSentAt, players, now)) return@execute
+            lastSent = players
+            lastSentAt = now
+            onChange(players)
+        }
     }
 
     private fun MediaMetadata.text(key: String): String? = getString(key)?.trim()?.takeIf { it.isNotEmpty() }
 
-    private fun appName(packageName: String): String = runCatching {
-        val pm = context.packageManager
-        pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
-    }.getOrDefault(packageName)
+    private fun appName(packageName: String): String = appNames.getOrPut(packageName) {
+        runCatching {
+            val pm = context.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
+        }.getOrDefault(packageName)
+    }
 
     /** A PC's command for one of the players last sent. */
     fun command(player: String, action: MediaAction, position: ULong?) {
@@ -220,18 +272,22 @@ class PhoneMedia(context: Context, private val onChange: (List<MediaPlayer>) -> 
         return if (secs > 0) secs.toUInt() else null
     }
 
+    private class CachedArt(val key: String, val jpeg: ByteArray, val seedColor: UInt?)
+
     /**
      * Artwork as a small JPEG, made once per track and picture size (apps
      * hand over a new copy of the same picture with every update).
      */
     private class ArtCache {
-        private val made = object : LinkedHashMap<String, Pair<String, ByteArray>>(8, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<String, ByteArray>>) = size > 8
+        private val made = object : LinkedHashMap<String, CachedArt>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedArt>) = size > 8
         }
 
-        fun get(track: String, bitmap: Bitmap): Pair<String, ByteArray> {
+        @Synchronized
+        fun get(track: String, bitmap: Bitmap): CachedArt {
             val identity = "$track\u0001${bitmap.width}x${bitmap.height}"
             made[identity]?.let { return it }
+            val seedColor = extractArtworkSeedColor(bitmap, identity)
             val scale = minOf(1f, ART_SIZE.toFloat() / maxOf(bitmap.width, bitmap.height))
             val small = if (scale < 1f) {
                 bitmap.scale((bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1))
@@ -241,7 +297,7 @@ class PhoneMedia(context: Context, private val onChange: (List<MediaPlayer>) -> 
             val jpeg = ByteArrayOutputStream().also { small.compress(Bitmap.CompressFormat.JPEG, 88, it) }.toByteArray()
             if (small !== bitmap) small.recycle()
             val key = jpeg.contentHashCode().toUInt().toString(16) + "-" + jpeg.size.toString(16)
-            return (key to jpeg).also { made[identity] = it }
+            return CachedArt(key, jpeg, seedColor).also { made[identity] = it }
         }
     }
 
@@ -269,3 +325,39 @@ class PhoneMedia(context: Context, private val onChange: (List<MediaPlayer>) -> 
         const val ART_SIZE = 360
     }
 }
+
+/**
+ * Extracts a perceptual Material 3 seed color (`0xRRGGBB`) using the shared
+ * Rust perceptual color engine (`app.nectarlink.core.extractArtworkScheme`) over a
+ * downsampled `<= 112x112` RGBA buffer so both Android and Desktop select the exact
+ * same color for the same artwork.
+ */
+internal fun extractArtworkSeedColor(bitmap: Bitmap, cacheKey: String? = null): UInt? = runCatching {
+    val w0 = bitmap.width
+    val h0 = bitmap.height
+    if (w0 <= 0 || h0 <= 0) return null
+    val maxDim = 112
+    val scale = minOf(1f, maxDim.toFloat() / maxOf(w0, h0))
+    val w = (w0 * scale).toInt().coerceAtLeast(1)
+    val h = (h0 * scale).toInt().coerceAtLeast(1)
+    val sampled = if (w != w0 || h != h0) {
+        bitmap.scale(w, h)
+    } else {
+        bitmap
+    }
+    val pixels = IntArray(w * h)
+    sampled.getPixels(pixels, 0, w, 0, 0, w, h)
+    if (sampled !== bitmap) sampled.recycle()
+
+    val rgba = ByteArray(w * h * 4)
+    var outIdx = 0
+    for (px in pixels) {
+        rgba[outIdx] = ((px ushr 16) and 0xFF).toByte()
+        rgba[outIdx + 1] = ((px ushr 8) and 0xFF).toByte()
+        rgba[outIdx + 2] = (px and 0xFF).toByte()
+        rgba[outIdx + 3] = ((px ushr 24) and 0xFF).toByte()
+        outIdx += 4
+    }
+    return app.nectarlink.core.extractArtworkScheme(rgba, w.toUInt(), h.toUInt(), cacheKey)?.seedRgb
+}.getOrNull()
+

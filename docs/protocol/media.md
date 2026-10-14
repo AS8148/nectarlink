@@ -49,7 +49,7 @@ seek without a position.
 
 ```
 Player = {
-  id:        text,       // 1–256 bytes, stable while the player exists
+  id:        text,       // 1 to 256 bytes, stable while the player exists
   app:       text,       // user-visible app name
   title?:    text,       // each text up to 256 characters
   artist?:   text,
@@ -58,7 +58,7 @@ Player = {
   duration?: uint,       // milliseconds
   position?: uint,       // milliseconds, when sent
   actions:   [text],     // what it takes: play, pause, next, previous, seek
-  art_key?:  text,       // 1–64 bytes; the same key means the same picture
+  art_key?:  text,       // 1 to 64 bytes; the same key means the same picture
   art?:      bytes,      // JPEG or PNG, up to 256 KiB
 }
 ```

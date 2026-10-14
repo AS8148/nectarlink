@@ -100,10 +100,32 @@ pub mod qobject {
     impl cxx_qt::Initialize for DeviceList {}
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Row {
+    device: DeviceView,
+    screen_json: String,
+}
+
+impl Row {
+    fn from_device(device: DeviceView) -> Self {
+        let screen_json =
+            device.info.screen.as_ref().and_then(|s| serde_json::to_string(s).ok()).unwrap_or_default();
+        Self { device, screen_json }
+    }
+}
+
+impl std::ops::Deref for Row {
+    type Target = DeviceView;
+
+    fn deref(&self) -> &Self::Target {
+        &self.device
+    }
+}
+
 #[derive(Default)]
 pub struct DeviceListRust {
     count: i32,
-    rows: Vec<DeviceView>,
+    rows: Vec<Row>,
 }
 
 /// Model roles (Qt::UserRole + n).
@@ -121,6 +143,9 @@ const ROLES: &[&str] = &[
     "charging",
     "batteryPlugged",
     "batteryFullIn",
+    "cellBars",
+    "cellType",
+    "wifiBars",
     "power",
     "lastSeen",
     "pairedAt",
@@ -129,7 +154,7 @@ const ROLES: &[&str] = &[
 ];
 const USER_ROLE: i32 = 0x0100;
 
-fn role_value(device: &DeviceView, role: &str) -> QVariant {
+fn role_value(device: &Row, role: &str) -> QVariant {
     let text = |s: &str| QVariant::from(&QString::from(s));
     match role {
         "deviceId" => text(&device.id.to_string()),
@@ -147,6 +172,7 @@ fn role_value(device: &DeviceView, role: &str) -> QVariant {
         "online" => QVariant::from(&matches!(device.link, LinkState::Online { .. })),
         "path" => text(match device.link {
             LinkState::Online { path: ConnectionPath::Lan, .. } => "lan",
+            LinkState::Online { path: ConnectionPath::Usb, .. } => "usb",
             LinkState::Online { path: ConnectionPath::Relay, .. } => "relay",
             LinkState::Connecting => "connecting",
             LinkState::Offline { .. } => "offline",
@@ -163,6 +189,13 @@ fn role_value(device: &DeviceView, role: &str) -> QVariant {
         "batteryFullIn" => {
             QVariant::from(&device.battery.as_ref().and_then(|b| b.full_in).map_or(-1, i32::from))
         }
+        "cellBars" => {
+            QVariant::from(&device.battery.as_ref().and_then(|b| b.cell_bars).map_or(-1, i32::from))
+        }
+        "cellType" => text(device.battery.as_ref().and_then(|b| b.cell_type.as_deref()).unwrap_or_default()),
+        "wifiBars" => {
+            QVariant::from(&device.battery.as_ref().and_then(|b| b.wifi_bars).map_or(-1, i32::from))
+        }
         "power" => text(match device.power {
             PowerLevel::Assist => "assist",
             PowerLevel::Elevated => "elevated",
@@ -177,22 +210,21 @@ fn role_value(device: &DeviceView, role: &str) -> QVariant {
         "accent" => {
             text(&device.info.accent.map(|argb| format!("#{:06X}", argb & 0x00FF_FFFF)).unwrap_or_default())
         }
-        "screen" => {
-            text(&device.info.screen.as_ref().and_then(|s| serde_json::to_string(s).ok()).unwrap_or_default())
-        }
+        "screen" => text(&device.screen_json),
         _ => QVariant::default(),
     }
 }
 
 impl cxx_qt::Initialize for qobject::DeviceList {
     fn initialize(self: Pin<&mut Self>) {
-        super::subscribe(self.qt_thread(), Changes::DEVICES, Self::refresh);
+        super::subscribe(self.qt_thread(), Changes::DEVICES | Changes::DEVICE_METRICS, Self::refresh);
     }
 }
 
 impl qobject::DeviceList {
     fn refresh(mut self: Pin<&mut Self>) {
-        let new = core_host::host().hub.read(|s| s.devices.clone());
+        let new: Vec<Row> =
+            core_host::host().hub.read(|s| s.devices.iter().cloned().map(Row::from_device).collect());
         let root = QModelIndex::default();
         for edit in diff(&self.rows, &new, |d| d.id) {
             match edit {
@@ -285,6 +317,7 @@ mod tests {
                 model: None,
                 accent: None,
                 screen: None,
+                install_id: None,
             },
             paired_at: i64::from(n),
             link: LinkState::Offline { last_seen: None },
@@ -302,6 +335,9 @@ mod tests {
             charging: true,
             plugged: Some("usb".into()),
             full_in: Some(42),
+            cell_bars: Some(4),
+            cell_type: Some("5G".into()),
+            wifi_bars: Some(3),
         });
         d.info.accent = Some(0xFF8A5100);
         d.info.screen = Some(nectarlink_core::ScreenShape {
@@ -311,6 +347,7 @@ mod tests {
             cutouts: Vec::new(),
             cutout_path: None,
         });
+        let d = Row::from_device(d);
         assert_eq!(role_value(&d, "name").value::<QString>().map(String::from).as_deref(), Some("Pixel"));
         assert_eq!(role_value(&d, "online").value::<bool>(), Some(true));
         assert_eq!(role_value(&d, "rttMs").value::<i32>(), Some(7));
@@ -320,6 +357,9 @@ mod tests {
             Some("usb")
         );
         assert_eq!(role_value(&d, "batteryFullIn").value::<i32>(), Some(42));
+        assert_eq!(role_value(&d, "cellBars").value::<i32>(), Some(4));
+        assert_eq!(role_value(&d, "cellType").value::<QString>().map(String::from).as_deref(), Some("5G"));
+        assert_eq!(role_value(&d, "wifiBars").value::<i32>(), Some(3));
         assert_eq!(role_value(&d, "accent").value::<QString>().map(String::from).as_deref(), Some("#8A5100"));
         assert!(
             role_value(&d, "screen")

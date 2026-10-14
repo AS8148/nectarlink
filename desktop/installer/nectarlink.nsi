@@ -2,35 +2,53 @@
 ;
 ; The Nectarlink installer for Windows (built by scripts/package.ps1).
 ;
-; Installs for every user of the PC (one UAC prompt), so it can allow the
-; app through Windows Firewall: otherwise Windows asks on first use, and
-; people often say no. User data stays in each user's
-; %LOCALAPPDATA%\Nectarlink, and is kept when uninstalling.
+; Two ways to run it:
+;
+; - Opened by the user: no NSIS pages. It unpacks the app to a temporary
+;   folder and runs it there, as "Nectarlink Setup.exe" with --setup, which
+;   draws Nectarlink's own setup window (desktop/app/src/setup.rs). That
+;   window runs this installer again, elevated, as below.
+; - With /S (that window, or the app's updater): installs into Program Files
+;   for every user of the PC, without a window. /PROGRESS=<file> writes each
+;   step to the file; /RUN opens the app afterwards. Without administrator
+;   rights it asks for them (UAC) and carries on elevated.
+;
+; Installing for everyone lets it allow the app through Windows Firewall:
+; otherwise Windows asks on first use, and people often say no.
+;
+; The uninstaller (uninstall.exe) is always silent. Windows Settings runs
+; the app's own uninstall window (--remove), which runs uninstall.exe
+; elevated and then removes the user's data.
 ;
 ; Defines passed in: VERSION (numbers only, e.g. 0.0.1), DISPLAY_VERSION
-; (e.g. 0.0.1-beta.2), ARCH (x64 or arm64), STAGE (the
-; folder with the app and its Qt files), ICON, OUTFILE.
+; (e.g. 0.0.1-beta.2), ARCH (x64 or arm64), STAGE (the folder with the app
+; and its Qt files), ICON, OUTFILE.
 
 Unicode true
 ManifestDPIAware true
-SetCompressor /SOLID lzma
+SetCompressor /SOLID zlib
 
-!include "MUI2.nsh"
 !include "x64.nsh"
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
 
 !define APP "Nectarlink"
 !define EXE "nectarlink-desktop.exe"
+!define SETUP_EXE "Nectarlink Setup.exe"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP}"
 !define FIREWALL_RULE "Nectarlink"
 
 Name "${APP}"
 OutFile "${OUTFILE}"
-RequestExecutionLevel admin
+; Elevates itself only when it installs (see .onInit).
+RequestExecutionLevel user
 InstallDir "$PROGRAMFILES64\${APP}"
 InstallDirRegKey HKLM "Software\${APP}" "InstallDir"
-BrandingText "${APP} ${DISPLAY_VERSION}"
+Icon "${ICON}"
+UninstallIcon "${ICON}"
+SilentUnInstall silent
+ShowInstDetails nevershow
+ShowUninstDetails nevershow
 
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "${APP}"
@@ -40,24 +58,22 @@ VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "ProductVersion" "${DISPLAY_VERSION}"
 
-!define MUI_ICON "${ICON}"
-!define MUI_UNICON "${ICON}"
-!define MUI_ABORTWARNING
-!define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "Open ${APP}"
-!define MUI_FINISHPAGE_RUN_FUNCTION OpenApp
+; 1: show Nectarlink's own setup window. 0: install now (/S).
+Var Interactive
+; Where each step is written, for the setup window (/PROGRESS=<file>).
+Var ProgressFile
+Var AppDir
 
-!insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "${STAGE}\LICENSE.txt"
-!insertmacro MUI_PAGE_INSTFILES
-!insertmacro MUI_PAGE_FINISH
+!macro Progress line
+  ${If} $ProgressFile != ""
+    FileOpen $9 $ProgressFile a
+    FileSeek $9 0 END
+    FileWrite $9 "${line}$\r$\n"
+    FileClose $9
+  ${EndIf}
+!macroend
 
-!insertmacro MUI_UNPAGE_CONFIRM
-!insertmacro MUI_UNPAGE_INSTFILES
-
-!insertmacro MUI_LANGUAGE "English"
-
-Function .onInit
+!macro ArchCheck
   ${If} "${ARCH}" == "x64"
     ${IfNot} ${IsNativeAMD64}
       MessageBox MB_ICONSTOP "This copy of ${APP} is for x64 PCs. Download the ARM64 version for this PC." /SD IDOK
@@ -69,17 +85,51 @@ Function .onInit
       Abort
     ${EndIf}
   ${EndIf}
+!macroend
+
+Function .onInit
+  !insertmacro ArchCheck
   SetRegView 64
   SetShellVarContext all
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/PROGRESS=" $ProgressFile
+  ${If} ${Errors}
+    StrCpy $ProgressFile ""
+  ${EndIf}
+
+  ${If} ${Silent}
+    StrCpy $Interactive 0
+    ; Installing needs administrator rights: ask, and let the elevated copy
+    ; do it. (The app's own updater runs as SYSTEM and has them already.)
+    UserInfo::GetAccountType
+    Pop $0
+    ${If} $0 != "Admin"
+      ExecShell "runas" '"$EXEPATH"' "$R0" SW_HIDE
+      SetErrorLevel 0
+      Quit
+    ${EndIf}
+  ${Else}
+    StrCpy $Interactive 1
+    ; No NSIS window: the window is Nectarlink's own.
+    SetSilent silent
+  ${EndIf}
 FunctionEnd
 
 Function un.onInit
   SetRegView 64
   SetShellVarContext all
+  ${un.GetParameters} $R0
+  ClearErrors
+  ${un.GetOptions} $R0 "/PROGRESS=" $ProgressFile
+  ${If} ${Errors}
+    StrCpy $ProgressFile ""
+  ${EndIf}
 FunctionEnd
 
 ; Asks a running copy to quit (it closes its connections cleanly), and waits
-; for it, so its files can be replaced or removed.
+; for it, so its files can be replaced or removed. The setup and uninstall
+; windows run under other names, so they're left alone.
 !macro QuitRunningApp
   ${If} ${FileExists} "$INSTDIR\${EXE}"
     ExecWait '"$INSTDIR\${EXE}" --quit'
@@ -108,20 +158,53 @@ Function OpenApp
 FunctionEnd
 
 Section "Install"
-  !insertmacro QuitRunningApp
+  ${If} $Interactive == 1
+    InitPluginsDir
+    StrCpy $AppDir "$PLUGINSDIR\app"
+  ${Else}
+    !insertmacro Progress "step closing"
+    !insertmacro QuitRunningApp
+    !insertmacro Progress "step files"
+    ; A clean copy: nothing left over from an older version.
+    RMDir /r "$INSTDIR\qml"
+    RMDir /r "$INSTDIR\platforms"
+    StrCpy $AppDir "$INSTDIR"
+  ${EndIf}
 
-  ; A clean copy: nothing left over from an older version.
-  RMDir /r "$INSTDIR\qml"
-  RMDir /r "$INSTDIR\platforms"
-  SetOutPath "$INSTDIR"
+  ; One copy of the files, for either use.
+  SetOutPath "$AppDir"
   File /r "${STAGE}\*.*"
+
+  ${If} $Interactive == 1
+    Rename "$AppDir\${EXE}" "$AppDir\${SETUP_EXE}"
+    ExecWait '"$AppDir\${SETUP_EXE}" --setup --installer "$EXEPATH"' $0
+    ; Out of the temporary folder, so it can be deleted.
+    SetOutPath "$TEMP"
+    SetErrorLevel $0
+    Return
+  ${EndIf}
+
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
-  CreateShortCut "$SMPROGRAMS\${APP}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0 "" "" "Your phone, on your PC"
-
   ; Phones reach this PC over UDP (QUIC) and find it with mDNS.
+  !insertmacro Progress "step firewall"
   nsExec::Exec 'netsh advfirewall firewall delete rule name="${FIREWALL_RULE}"'
   nsExec::Exec 'netsh advfirewall firewall add rule name="${FIREWALL_RULE}" dir=in action=allow program="$INSTDIR\${EXE}" enable=yes profile=private,domain description="Lets paired phones connect to Nectarlink."'
+
+  ; Updates without an administrator prompt: a task that runs this app as
+  ; SYSTEM to install a newer release, which signed-in users may start but
+  ; not change (update-task.ps1, desktop/app/src/updater.rs).
+  !insertmacro Progress "step updates"
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\update-task.ps1" "update-task.ps1"
+  nsExec::Exec 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\update-task.ps1" -Exe "$INSTDIR\${EXE}"'
+
+  !insertmacro Progress "step shortcuts"
+  CreateShortCut "$SMPROGRAMS\${APP}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0 "" "" "Your phone, on your PC"
+  CreateShortCut "$DESKTOP\${APP}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0 "" "" "Your phone, on your PC"
+
+  ; Best-effort Sparse Package registration for the Windows Share sheet target.
+  nsExec::Exec 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { Add-AppxPackage -Register \"$INSTDIR\AppxManifest.xml\" -ExternalLocation \"$INSTDIR\" -ErrorAction SilentlyContinue } catch {}"'
 
   WriteRegStr HKLM "Software\${APP}" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayName" "${APP}"
@@ -130,12 +213,15 @@ Section "Install"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\${EXE}"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "URLInfoAbout" "https://github.com/thtbee/nectarlink"
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
+  ; Windows Settings > Apps opens Nectarlink's own uninstall window.
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\${EXE}" --remove'
   WriteRegStr HKLM "${UNINSTALL_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair" 1
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "EstimatedSize" $0
+
+  !insertmacro Progress "done"
 
   ; /RUN (the app's own updater): open the new version when done.
   ${GetParameters} $R0
@@ -147,15 +233,20 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
+  !insertmacro Progress "step closing"
   !insertmacro QuitRunningApp
   ; What the app set up for this user: Send to entries, sign-in start,
-  ; notification registration. (Data stays, for a reinstall.)
+  ; notification registration.
   ${If} ${FileExists} "$INSTDIR\${EXE}"
     ExecWait '"$INSTDIR\${EXE}" --uninstall'
   ${EndIf}
 
+  !insertmacro Progress "step cleanup"
+  nsExec::Exec 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { Get-AppxPackage -Name \"Nectarlink.Desktop\" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue } catch {}"'
   nsExec::Exec 'netsh advfirewall firewall delete rule name="${FIREWALL_RULE}"'
+  nsExec::Exec 'schtasks /Delete /TN "Nectarlink Update" /F'
   Delete "$SMPROGRAMS\${APP}.lnk"
+  Delete "$DESKTOP\${APP}.lnk"
   ; Only ever a folder of our own (a silent install can be pointed
   ; anywhere with /D): never everything in, say, C:\.
   ${GetFileName} "$INSTDIR" $0
@@ -164,9 +255,13 @@ Section "Uninstall"
   ${Else}
     Delete "$INSTDIR\${EXE}"
     Delete "$INSTDIR\nectarlink_vcam.dll"
+    Delete "$INSTDIR\AppxManifest.xml"
+    RMDir /r "$INSTDIR\Assets"
+    Delete "$INSTDIR\update.log"
     Delete "$INSTDIR\uninstall.exe"
   ${EndIf}
 
   DeleteRegKey HKLM "${UNINSTALL_KEY}"
   DeleteRegKey HKLM "Software\${APP}"
+  !insertmacro Progress "done"
 SectionEnd

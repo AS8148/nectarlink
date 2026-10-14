@@ -184,11 +184,8 @@ fn detect_web_link(s: &str) -> Option<String> {
 }
 
 fn strip_ascii_case_prefix<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-    if s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        Some(&s[prefix.len()..])
-    } else {
-        None
-    }
+    let head = s.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix).then(|| &s[prefix.len()..])
 }
 
 fn is_valid_url_host(host: &str) -> bool {
@@ -853,12 +850,12 @@ mod tests {
         }
 
         let negatives = [
-            r"C:\Users\anive\Documents\report.pdf",
-            "C:/Users/anive/Documents/report.pdf",
+            r"C:\Users\Alice\Documents\report.pdf",
+            "C:/Users/Alice/Documents/report.pdf",
             r"\\server\share\folder\file.txt",
             "/usr/local/bin/nectarlink",
             "~/Downloads/photo.jpg",
-            "file:///C:/Users/anive/test.html",
+            "file:///C:/Users/Alice/test.html",
             "ftp://files.example.com/pub/archive.zip",
             "https://",
             "http://not_a_host",
@@ -1067,5 +1064,110 @@ mod tests {
         let dbg = format!("{s:?}");
         assert!(dbg.contains("PhoneNumber"));
         assert!(!dbg.contains("4155550199"), "Debug leaked target: {dbg}");
+    }
+
+    #[test]
+    fn fuzz_clip_kind_classify_arbitrary_unicode_10k() {
+        let mut seed = 0x6C62_272E_07BB_0142u64;
+        let mut next_u64 = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        let fragments: &[&str] = &[
+            "https://",
+            "http://",
+            "www.",
+            "mailto:",
+            "tel:",
+            "@",
+            ".com",
+            ".de",
+            "1Z999AA10123456784",
+            "EA123456789US",
+            "TBA123456789012",
+            "+1 (415) 555-0199",
+            "1600 Amphitheatre Parkway, Mountain View, CA 94043",
+            "Friedrichstraße 123, 10117 Berlin",
+            "G-482913",
+            "482913",
+            "İ",
+            "München",
+            "🦀",
+            "\u{200B}\u{FEFF}",
+            "://",
+            "[]",
+            "()",
+            "...",
+            "---",
+        ];
+
+        let mut s = String::with_capacity(256);
+        for _ in 0..10_000usize {
+            s.clear();
+            let pieces = (next_u64() % 10) as usize;
+            for _ in 0..pieces {
+                let r = next_u64();
+                match r % 4 {
+                    0 => s.push_str(fragments[(r as usize >> 8) % fragments.len()]),
+                    1 => {
+                        let cp = (r as u32) % 0x11_0000;
+                        if let Some(ch) = char::from_u32(cp) {
+                            s.push(ch);
+                        }
+                    }
+                    2 => {
+                        let len = 1 + ((r >> 12) % 16) as usize;
+                        for _ in 0..len {
+                            let b = 0x20u8 + ((next_u64() % 95) as u8);
+                            s.push(b as char);
+                        }
+                    }
+                    _ => {
+                        let raw_bytes = r.to_le_bytes();
+                        s.push_str(&String::from_utf8_lossy(&raw_bytes));
+                    }
+                }
+            }
+
+            if let Some(suggestion) = classify_clip(&s) {
+                assert!(!suggestion.target.is_empty());
+                assert!(!suggestion.action_label().is_empty());
+                assert!(!suggestion.kind.as_str().is_empty());
+                // OTP clips must never produce a suggestion chip.
+                assert!(!crate::otp::is_otp_clip(s.trim()));
+                // Debug must never leak target string when target is non-trivial.
+                if suggestion.target.len() >= 6
+                    && !"ClipSuggestionWebLinkStreetAddressPhoneNumberTrackingNumberEmail"
+                        .contains(&suggestion.target)
+                {
+                    assert!(!format!("{suggestion:?}").contains(&suggestion.target));
+                }
+                match suggestion.kind {
+                    ClipKind::WebLink => {
+                        assert!(
+                            suggestion.target.starts_with("http://")
+                                || suggestion.target.starts_with("https://")
+                        );
+                    }
+                    ClipKind::Email => {
+                        assert!(suggestion.target.contains('@'));
+                    }
+                    ClipKind::PhoneNumber => {
+                        assert!(suggestion.target.bytes().all(|b| b.is_ascii_digit() || b == b'+'));
+                    }
+                    ClipKind::TrackingNumber => {
+                        assert!((12..=26).contains(&suggestion.target.len()));
+                        assert!(!tracking_search_url(&suggestion.target).is_empty());
+                    }
+                    ClipKind::StreetAddress => {
+                        assert!(!maps_web_url(&suggestion.target).is_empty());
+                    }
+                }
+            }
+            let _ = percent_encode(&s);
+        }
     }
 }

@@ -79,6 +79,12 @@ pub mod qobject {
         /// first time while `remote_input` is off ("" when none).
         #[qproperty(QString, remote_prompt_device_id)]
         #[qproperty(QString, remote_prompt_device_name)]
+        /// Device ID and name of a phone asking to view this PC's screen
+        /// while `pc_mirror` is off ("" when none), plus active sharing indicator.
+        #[qproperty(QString, pc_mirror_prompt_device_id)]
+        #[qproperty(QString, pc_mirror_prompt_device_name)]
+        #[qproperty(bool, pc_mirror_active)]
+        #[qproperty(QString, pc_mirror_device_name)]
         /// Whether the presentation laser pointer overlay is showing, and its
         /// normalized position on the primary screen (`0.0..=1.0`).
         #[qproperty(bool, laser_active)]
@@ -126,6 +132,16 @@ pub mod qobject {
         /// Slide-out edge Shelf state and JSON items (`""` while closed so nothing runs while hidden).
         #[qproperty(bool, shelf_open)]
         #[qproperty(QString, shelf_items)]
+        /// Pre-encoded QR code path and module size for the Android release APK link.
+        #[qproperty(QString, apk_qr_path)]
+        #[qproperty(i32, apk_qr_size)]
+        #[qproperty(QString, apk_qr_svg)]
+        /// In-app Features Guide reader sheet state and markdown/plain text body.
+        #[qproperty(bool, guide_doc_open)]
+        #[qproperty(QString, guide_doc_title)]
+        #[qproperty(QString, guide_doc_body)]
+        /// Control target ID highlighted by `"Show me"` in the Features guide (`""` when none).
+        #[qproperty(QString, highlight_target)]
         type AppController = super::AppControllerRust;
 
         /// Enables or disables LocalSend LAN discovery and file sharing.
@@ -134,6 +150,11 @@ pub mod qobject {
         /// Triggers an immediate LocalSend multicast/HTTP discovery announcement.
         #[qinvokable]
         fn refresh_localsend(self: Pin<&mut AppController>);
+
+        /// The primary display's work area in physical pixels: `{x, y, width, height}`
+        /// (empty when unknown). QML divides by `Screen.devicePixelRatio`.
+        #[qinvokable]
+        fn work_area(self: &AppController) -> QMap_QString_QVariant;
 
         /// Toggles the slide-out Shelf panel at the screen edge without stealing focus.
         #[qinvokable]
@@ -175,6 +196,18 @@ pub mod qobject {
         /// Dismisses the one-time remote input prompt without enabling the toggle.
         #[qinvokable]
         fn dismiss_remote_prompt(self: Pin<&mut AppController>);
+        /// Allows a paired phone to view this PC's screen for the current session only.
+        #[qinvokable]
+        fn allow_pc_mirror_once(self: Pin<&mut AppController>, device: &QString);
+        /// Allows a paired phone to view this PC's screen and enables `pc_mirror` for that device.
+        #[qinvokable]
+        fn allow_pc_mirror_device(self: Pin<&mut AppController>, device: &QString);
+        /// Dismisses the reverse-mirror consent prompt without allowing screen capture.
+        #[qinvokable]
+        fn dismiss_pc_mirror_prompt(self: Pin<&mut AppController>);
+        /// Immediately stops sharing this PC's screen with any phone.
+        #[qinvokable]
+        fn stop_pc_mirror(self: Pin<&mut AppController>);
         /// Reconnects to phones that aren't connected and syncs connected
         /// ones (notifications, media).
         #[qinvokable]
@@ -204,6 +237,9 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "sendClipboard"]
         fn send_clipboard(self: &AppController, device: &QString);
+        /// Sends an item from local clipboard history to a device (or queues it when offline).
+        #[qinvokable]
+        fn send_clipboard_history(self: &AppController, device: &QString, id: &QString);
         /// Copies an item from local clipboard history back to the PC clipboard.
         #[qinvokable]
         fn copy_clipboard_history(self: &AppController, id: &QString);
@@ -283,9 +319,6 @@ pub mod qobject {
         /// Opens a paired phone's storage sync root in File Explorer.
         #[qinvokable]
         fn open_phone_storage(self: &AppController, device: &QString);
-        /// The local sync root folder path for a paired phone.
-        #[qinvokable]
-        fn phone_storage_path(self: &AppController, device: &QString) -> QString;
         /// Tells the event-driven Home summary which phone the Home page is showing (`""` when hidden).
         #[qinvokable]
         fn watch_home_summary(self: &AppController, device: &QString);
@@ -314,6 +347,21 @@ pub mod qobject {
         /// Clears all local histories and caches across all 6 categories while keeping paired devices and settings intact.
         #[qinvokable]
         fn clear_everything(self: Pin<&mut AppController>);
+        /// Copies plain text to the Windows clipboard and shows a confirmation toast.
+        #[qinvokable]
+        fn copy_text(self: &AppController, text: &QString);
+        /// Loads a guide topic from `docs/guide/<doc_name>.md` (or built-in guide text) into the in-app reader sheet.
+        #[qinvokable]
+        fn open_guide_doc(self: Pin<&mut AppController>, doc_name: &QString);
+        /// Closes the in-app Features Guide reader sheet.
+        #[qinvokable]
+        fn close_guide_doc(self: Pin<&mut AppController>);
+        /// Sets `highlight_target` so the target control pulses with an accent ring for 2 seconds.
+        #[qinvokable]
+        fn trigger_highlight(self: Pin<&mut AppController>, target: &QString);
+        /// Clears `highlight_target`.
+        #[qinvokable]
+        fn clear_highlight(self: Pin<&mut AppController>);
 
         /// A short message for the user (e.g. a command failed).
         #[qsignal]
@@ -330,6 +378,9 @@ pub mod qobject {
         /// Show the Connection Doctor.
         #[qsignal]
         fn doctor_requested(self: Pin<&mut AppController>);
+        /// Open the Send files picker on the Home page.
+        #[qsignal]
+        fn file_picker_requested(self: Pin<&mut AppController>);
         /// Open the Handoff document picker on the Home page.
         #[qsignal]
         fn handoff_file_picker_requested(self: Pin<&mut AppController>);
@@ -363,6 +414,10 @@ pub struct AppControllerRust {
     update_busy: bool,
     remote_prompt_device_id: QString,
     remote_prompt_device_name: QString,
+    pc_mirror_prompt_device_id: QString,
+    pc_mirror_prompt_device_name: QString,
+    pc_mirror_active: bool,
+    pc_mirror_device_name: QString,
     laser_active: bool,
     laser_x: f32,
     laser_y: f32,
@@ -391,6 +446,15 @@ pub struct AppControllerRust {
     localsend_peers_json: QString,
     shelf_open: bool,
     shelf_items: QString,
+    apk_qr_path: QString,
+    apk_qr_size: i32,
+    apk_qr_svg: QString,
+    guide_doc_open: bool,
+    guide_doc_title: QString,
+    guide_doc_body: QString,
+    highlight_target: QString,
+    last_online_count: usize,
+    last_tray_tooltip: String,
     tray: Option<tray::Tray>,
 }
 
@@ -398,6 +462,18 @@ pub struct AppControllerRust {
 /// reach it.
 static CONTROLLER: OnceLock<Mutex<Option<CxxQtThread<qobject::AppController>>>> = OnceLock::new();
 static SHELF_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[derive(Debug, Clone)]
+enum ToastAction {
+    ClipSuggestion,
+    UndoQueuedSend { device: DeviceId, item_id: Option<String> },
+}
+
+static LAST_TOAST_ACTION: OnceLock<Mutex<Option<ToastAction>>> = OnceLock::new();
+
+fn set_last_toast_action(action: Option<ToastAction>) {
+    *LAST_TOAST_ACTION.get_or_init(Mutex::default).lock().unwrap_or_else(|e| e.into_inner()) = action;
+}
 
 /// Whether the slide-out Shelf panel is currently open.
 pub fn is_shelf_open() -> bool {
@@ -488,6 +564,7 @@ pub fn request_activation() {
 /// Shows a short message in the app (from any thread).
 pub(crate) fn show_message(message: impl Into<String>) {
     let message = message.into();
+    set_last_toast_action(None);
     if let Some(qt) = controller() {
         let _ = qt.queue(move |object| object.toast(QString::from(&message)));
     }
@@ -497,11 +574,51 @@ pub(crate) fn show_message(message: impl Into<String>) {
 pub(crate) fn show_message_with_action(message: impl Into<String>, action_label: impl Into<String>) {
     let message = message.into();
     let action_label = action_label.into();
+    set_last_toast_action(Some(ToastAction::ClipSuggestion));
     if let Some(qt) = controller() {
         let _ = qt.queue(move |object| {
             object.toast_with_action(QString::from(&message), QString::from(&action_label));
         });
     }
+}
+
+/// When `device` is currently offline, shows `"{device_name} is offline. Will send when it's back."`
+/// with an `"Undo"` button that cancels the queued item, and returns `true`.
+/// Returns `false` if `device` is currently online.
+pub(crate) fn show_offline_queued_toast(device: DeviceId, item_id: Option<String>) -> bool {
+    let (online, device_name) = core_host::host().hub.read(|s| {
+        let online = s.devices.iter().any(|d| d.id == device && matches!(d.link, LinkState::Online { .. }));
+        let name = s.name_of(&device).unwrap_or_else(|| "Your phone".into());
+        (online, name)
+    });
+    if online {
+        return false;
+    }
+    let resolved_item_id = item_id.or_else(|| {
+        core_host::node().and_then(|n| n.latest_queued_id_for_peer(device)).or_else(|| {
+            core_host::host().hub.read(|s| {
+                s.send_queue
+                    .iter()
+                    .rev()
+                    .find(|i| {
+                        i.peer == device
+                            && matches!(
+                                i.status,
+                                nectarlink_core::QueueStatus::Waiting | nectarlink_core::QueueStatus::Sending
+                            )
+                    })
+                    .map(|i| i.id.clone())
+            })
+        })
+    });
+    set_last_toast_action(Some(ToastAction::UndoQueuedSend { device, item_id: resolved_item_id }));
+    let message = format!("{device_name} is offline. Will send when it's back.");
+    if let Some(qt) = controller() {
+        let _ = qt.queue(move |object| {
+            object.toast_with_action(QString::from(&message), QString::from("Undo"));
+        });
+    }
+    true
 }
 
 /// Opens the Calls page dialer with `number` filled in (without placing the call).
@@ -537,8 +654,21 @@ pub(crate) fn describe(error: &Error) -> String {
         Error::Timeout => "The device didn't answer in time.".into(),
         Error::Denied | Error::Declined => "The device declined.".into(),
         Error::Unsupported => "The device's app doesn't support that yet.".into(),
+        Error::QueueFull(msg) => msg.clone(),
         other => format!("Something went wrong: {other}"),
     }
+}
+
+fn spawn_data_retention_refresh(qt: CxxQtThread<qobject::AppController>) {
+    core_host::host().runtime.spawn_blocking(move || {
+        let summary = compute_data_retention_json();
+        let _ = qt.queue(move |mut object| {
+            let q = QString::from(&summary);
+            if *object.data_retention_summary() != q {
+                object.as_mut().set_data_retention_summary(q);
+            }
+        });
+    });
 }
 
 impl cxx_qt::Initialize for qobject::AppController {
@@ -549,23 +679,38 @@ impl cxx_qt::Initialize for qobject::AppController {
         self.as_mut().set_clipboard_history(QString::from(&crate::clipboard::history_json()));
         self.as_mut().set_timeline_preview(QString::from(&super::timeline::preview_json()));
         self.as_mut().set_command_palette_results(QString::from("[]"));
-        self.as_mut().set_data_retention_summary(QString::from(&compute_data_retention_json()));
+        self.as_mut().set_data_retention_summary(QString::default());
         self.as_mut().set_localsend_peers_json(QString::from("[]"));
         self.as_mut().set_shelf_items(QString::default());
+        if let Ok(qr) = crate::qr::encode("https://github.com/thtbee/nectarlink/releases/latest") {
+            let svg = format!(
+                "data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {size} {size}\" shape-rendering=\"crispEdges\"><rect width=\"{size}\" height=\"{size}\" fill=\"white\"/><path d=\"{path}\" fill=\"black\"/></svg>",
+                size = qr.size,
+                path = qr.path
+            );
+            self.as_mut().set_apk_qr_path(QString::from(&qr.path));
+            self.as_mut().set_apk_qr_size(qr.size as i32);
+            self.as_mut().set_apk_qr_svg(QString::from(&svg));
+        }
         let initial_phone_colors = core_host::host().hub.read(|s| phone_colors_json(&s.devices));
         self.as_mut().set_phone_colors(QString::from(&initial_phone_colors));
         self.as_mut().refresh_appearance();
         self.as_mut().refresh_localsend_state();
         let qt = self.qt_thread();
         *CONTROLLER.get_or_init(Mutex::default).lock().unwrap_or_else(|e| e.into_inner()) = Some(qt.clone());
+        if let Some(task) = PENDING_JUMP_TASK.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            dispatch_jump_task(&qt, task);
+        }
         super::subscribe(
             qt.clone(),
             Changes::STATUS
                 | Changes::DEVICES
+                | Changes::DEVICE_METRICS
                 | Changes::CAPABILITIES
                 | Changes::RINGING
                 | Changes::REMOTE
-                | Changes::TOGGLES,
+                | Changes::TOGGLES
+                | Changes::QUEUE,
             Self::refresh,
         );
         super::subscribe(qt.clone(), Changes::UPDATE, |object| {
@@ -575,25 +720,29 @@ impl cxx_qt::Initialize for qobject::AppController {
         super::subscribe(qt.clone(), Changes::CLIPBOARD, |mut object| {
             let json = crate::clipboard::history_json();
             object.as_mut().set_clipboard_history(QString::from(&json));
-            let preview = super::timeline::preview_json();
-            object.as_mut().set_timeline_preview(QString::from(&preview));
+            let preview_q = QString::from(&super::timeline::preview_json());
+            if *object.timeline_preview() != preview_q {
+                object.as_mut().set_timeline_preview(preview_q);
+            }
             if object.shelf_open {
                 let shelf = compute_shelf_items_json(object.current_device);
                 object.set_shelf_items(QString::from(&shelf));
             }
         });
         super::subscribe(qt.clone(), Changes::TIMELINE | Changes::DEVICES | Changes::STATUS, |mut object| {
-            let preview = super::timeline::preview_json();
-            object.as_mut().set_timeline_preview(QString::from(&preview));
+            let preview_q = QString::from(&super::timeline::preview_json());
+            if *object.timeline_preview() != preview_q {
+                object.as_mut().set_timeline_preview(preview_q);
+            }
             if object.shelf_open {
                 let shelf = compute_shelf_items_json(object.current_device);
                 object.set_shelf_items(QString::from(&shelf));
             }
         });
-        super::subscribe(qt.clone(), Changes::TRANSFERS | Changes::PHOTOS, |mut object| {
+        super::subscribe(qt.clone(), Changes::TRANSFERS | Changes::PHOTOS, |object| {
             if object.shelf_open {
                 let shelf = compute_shelf_items_json(object.current_device);
-                object.as_mut().set_shelf_items(QString::from(&shelf));
+                object.set_shelf_items(QString::from(&shelf));
             }
         });
         super::subscribe(qt.clone(), Changes::CONTINUITY, Self::refresh_continuity);
@@ -605,12 +754,10 @@ impl cxx_qt::Initialize for qobject::AppController {
                 | Changes::CLIPBOARD
                 | Changes::TIMELINE
                 | Changes::HISTORY
-                | Changes::TRANSFERS
                 | Changes::MESSAGES
                 | Changes::PHOTOS,
             |object| {
-                let summary = compute_data_retention_json();
-                object.set_data_retention_summary(QString::from(&summary));
+                spawn_data_retention_refresh(object.qt_thread());
             },
         );
 
@@ -629,6 +776,155 @@ impl cxx_qt::Initialize for qobject::AppController {
             Err(e) => tracing::warn!(error = %e, "no tray icon"),
         }
     }
+}
+
+static PENDING_JUMP_TASK: Mutex<Option<String>> = Mutex::new(None);
+
+/// Executes one of the 5 Windows Taskbar Jump List tasks (`--task <action>`).
+pub fn handle_jump_task(action: &str) {
+    let action = action.trim().to_owned();
+    if action.is_empty() {
+        return;
+    }
+    let Some(qt) = controller() else {
+        *PENDING_JUMP_TASK.lock().unwrap_or_else(|e| e.into_inner()) = Some(action);
+        return;
+    };
+    dispatch_jump_task(&qt, action);
+}
+
+fn dispatch_jump_task(qt: &CxxQtThread<qobject::AppController>, action: String) {
+    let _ = qt.queue(move |mut object| match action.as_str() {
+        "send-files" => {
+            object.as_mut().set_current_page(QString::from("home"));
+            object.as_mut().activate_requested();
+            object.file_picker_requested();
+        }
+        "send-clipboard" => {
+            if let (Some(device), _, _) = resolve_shelf_device(object.current_device) {
+                crate::clipboard::send_now(device);
+            } else {
+                object.toast(QString::from("No paired phone is connected."));
+            }
+        }
+        "find-phone" => {
+            if let (Some(device), _, _) = resolve_shelf_device(object.current_device) {
+                ring_device(device, true);
+            } else {
+                object.toast(QString::from("No paired phone is connected."));
+            }
+        }
+        "take-photo" => {
+            crate::continuity_camera::start("photo");
+        }
+        "open-timeline" => {
+            object.as_mut().set_current_page(QString::from("timeline"));
+            object.activate_requested();
+        }
+        "open-guide" => {
+            object.as_mut().set_current_page(QString::from("guide"));
+            object.activate_requested();
+        }
+        "open-settings" => {
+            object.as_mut().set_current_page(QString::from("settings"));
+            object.activate_requested();
+        }
+        // Test hooks for screenshot automation; debug builds only.
+        "open-home" if cfg!(debug_assertions) => {
+            let dir = &core_host::host().data_dir;
+            let mut st = crate::settings::Settings::load(dir);
+            st.walkthrough_completed = true;
+            let _ = st.save(dir);
+            core_host::host().hub.changed(Changes::PREFS);
+            object.as_mut().set_current_page(QString::from("home"));
+            object.activate_requested();
+        }
+        s if cfg!(debug_assertions) && s.starts_with("page:") => {
+            object.as_mut().set_current_page(QString::from(&s["page:".len()..]));
+            object.activate_requested();
+        }
+        s if cfg!(debug_assertions) && s.starts_with("device:") => {
+            let name = &s["device:".len()..];
+            let row = core_host::host().hub.read(|st| st.devices.iter().position(|d| d.info.name == name));
+            if let Some(row) = row {
+                object.as_mut().set_current_device(row as i32);
+            }
+        }
+        s if cfg!(debug_assertions) && s.starts_with("walkthrough-step:") => {
+            if let Ok(step) = s["walkthrough-step:".len()..].parse::<u8>() {
+                let dir = &core_host::host().data_dir;
+                let mut st = crate::settings::Settings::load(dir);
+                st.walkthrough_completed = false;
+                st.walkthrough_step = step.min(6);
+                let _ = st.save(dir);
+                core_host::host().hub.changed(Changes::PREFS);
+                object.activate_requested();
+            }
+        }
+        s if s.starts_with("learn-more:") => {
+            let key = &s["learn-more:".len()..];
+            object.as_mut().set_current_page(QString::from("guide"));
+            object.as_mut().open_guide_doc(&QString::from(key));
+            object.activate_requested();
+        }
+        s if s.starts_with("show-me:") => {
+            let target = &s["show-me:".len()..];
+            object.as_mut().set_guide_doc_open(false);
+            object.as_mut().trigger_highlight(&QString::from(target));
+            object.activate_requested();
+        }
+        // Test hook for screenshots and theme checks; debug builds only.
+        s if cfg!(debug_assertions) && s.starts_with("theme:") => {
+            let mode = &s["theme:".len()..];
+            let dir = &core_host::host().data_dir;
+            let mut st = crate::settings::Settings::load(dir);
+            match mode {
+                "graphite" => {
+                    st.theme = crate::settings::Theme::Graphite;
+                    st.color_mode = crate::settings::ColorMode::Dark;
+                }
+                "bloom-dark" => {
+                    st.theme = crate::settings::Theme::Bloom;
+                    st.color_mode = crate::settings::ColorMode::Dark;
+                }
+                _ => {
+                    st.theme = crate::settings::Theme::Bloom;
+                    st.color_mode = crate::settings::ColorMode::Light;
+                }
+            }
+            let _ = st.save(dir);
+            core_host::host().hub.changed(Changes::PREFS);
+            object.activate_requested();
+        }
+        // Test hook for screenshots and theme checks; debug builds only.
+        s if cfg!(debug_assertions) && s.starts_with("size:") => {
+            let dims = &s["size:".len()..];
+            object.as_mut().trigger_highlight(&QString::from(&format!("__size__:{dims}")));
+        }
+        // Test hook for screenshots and theme checks; debug builds only.
+        s if cfg!(debug_assertions) && s.starts_with("grab:") => {
+            let path = &s["grab:".len()..];
+            object.as_mut().trigger_highlight(&QString::from(&format!("__grab__:{path}")));
+        }
+        other => {
+            tracing::debug!(task = other, "unknown jump list task");
+        }
+    });
+}
+
+/// Formats the tray tooltip summary for a single connected phone: battery level,
+/// charging status, and optional Wi-Fi / cellular signal bars.
+pub(crate) fn format_tray_device_summary(name: &str, b: &nectarlink_core::Battery) -> String {
+    let charging = if b.charging { ", charging" } else { "" };
+    let mut parts = vec![format!("{name} · {}%{charging}", b.level)];
+    if let Some(w) = b.wifi_bars {
+        parts.push(format!("Wi-Fi {w}/4"));
+    }
+    if let Some(c) = b.cell_bars {
+        let label = b.cell_type.as_deref().filter(|s| !s.is_empty()).unwrap_or("Cell");
+        parts.push(format!("{label} {c}/4"));
+    }
+    parts.join(" · ")
 }
 
 fn on_tray_event(qt: &CxxQtThread<qobject::AppController>, event: tray::TrayEvent) {
@@ -702,7 +998,20 @@ fn refresh_wallpaper_colors(qt: CxxQtThread<qobject::AppController>) {
 }
 
 fn phone_colors_json(devices: &[crate::state::DeviceView]) -> String {
-    if devices.is_empty() {
+    // One entry per name. When a phone was paired again (reinstalled, reset), an
+    // old entry can share its name: the connected, most recently paired one
+    // speaks for it, so its live colors (wallpaper, or the artwork playing) win.
+    let mut ordered: Vec<&crate::state::DeviceView> = devices.iter().collect();
+    ordered.sort_by_key(|d| (!matches!(d.link, LinkState::Online { .. }), std::cmp::Reverse(d.paired_at)));
+    let mut seen_names = std::collections::HashSet::new();
+    let deduped: Vec<&crate::state::DeviceView> = ordered
+        .into_iter()
+        .filter(|d| {
+            let key = d.info.name.trim().to_lowercase();
+            key.is_empty() || seen_names.insert(key)
+        })
+        .collect();
+    if deduped.is_empty() {
         return serde_json::json!([{
             "id": "",
             "key": "phone",
@@ -713,11 +1022,26 @@ fn phone_colors_json(devices: &[crate::state::DeviceView]) -> String {
         }])
         .to_string();
     }
-    let multiple = devices.len() > 1;
-    let entries: Vec<serde_json::Value> = devices
-        .iter()
+    let multiple = deduped.len() > 1;
+    let entries: Vec<serde_json::Value> = deduped
+        .into_iter()
         .map(|d| {
-            let scheme = d.info.accent.map(|argb| {
+            let effective_accent = d.info.accent.or_else(|| {
+                devices
+                    .iter()
+                    .filter(|o| matches!(o.link, LinkState::Online { .. }))
+                    .find(|o| {
+                        o.info.name.trim().eq_ignore_ascii_case(d.info.name.trim()) && o.info.accent.is_some()
+                    })
+                    .or_else(|| {
+                        devices.iter().find(|o| {
+                            o.info.name.trim().eq_ignore_ascii_case(d.info.name.trim())
+                                && o.info.accent.is_some()
+                        })
+                    })
+                    .and_then(|o| o.info.accent)
+            });
+            let scheme = effective_accent.map(|argb| {
                 let r = ((argb >> 16) & 0xFF) as u8;
                 let g = ((argb >> 8) & 0xFF) as u8;
                 let b = (argb & 0xFF) as u8;
@@ -755,56 +1079,90 @@ fn ring_device(device: DeviceId, on: bool) {
 impl qobject::AppController {
     fn refresh(mut self: Pin<&mut Self>) {
         let hub = &core_host::host().hub;
+        let current_idx = *self.current_device();
         let (
             status,
             devices,
             phone_colors,
             ringing,
             online,
+            current_is_online,
             caps_version,
             toggles_version,
             battery,
             remote_prompt,
+            pc_mirror_prompt,
+            pc_mirror_peer_name,
             laser,
             wake_adapter,
             wake_state,
             wake_wired,
+            waiting_count,
         ) = hub.read(|s| {
             let ringing = s.ringing_from.and_then(|id| s.name_of(&id)).unwrap_or_default();
             let remote_prompt = s.remote_prompt.map(|id| {
                 let name = s.name_of(&id).unwrap_or_else(|| id.short());
                 (id.to_string(), name)
             });
+            let pc_mirror_prompt = s.pc_mirror_prompt.as_ref().map(|(id, _)| {
+                let name = s.name_of(id).unwrap_or_else(|| id.short());
+                (id.to_string(), name)
+            });
+            let pc_mirror_peer_name =
+                crate::pc_mirror::active_peer().map(|id| s.name_of(&id).unwrap_or_else(|| id.short()));
             let connected: Vec<_> =
                 s.devices.iter().filter(|d| matches!(d.link, LinkState::Online { .. })).collect();
-            // With one phone connected, the tray shows its battery.
+            let current_is_online = usize::try_from(current_idx)
+                .ok()
+                .and_then(|i| s.devices.get(i))
+                .is_some_and(|d| matches!(d.link, LinkState::Online { .. }));
+            // With one phone connected, the tray shows its battery and signal strength.
             let battery = match connected.as_slice() {
-                [one] => one.battery.as_ref().map(|b| {
-                    let charging = if b.charging { ", charging" } else { "" };
-                    format!("{} · {}%{charging}", one.info.name, b.level)
-                }),
+                [one] => one.battery.as_ref().map(|b| format_tray_device_summary(&one.info.name, b)),
                 _ => None,
             };
             let wake_adapter = s.wake.primary().map(|a| a.label.clone()).unwrap_or_default();
             let wake_state = s.wake.state_str();
             let wake_wired = s.wake.primary().is_some_and(|a| a.wired);
             let phone_colors = phone_colors_json(&s.devices);
+            let waiting_count = s
+                .send_queue
+                .iter()
+                .filter(|i| {
+                    matches!(
+                        i.status,
+                        nectarlink_core::QueueStatus::Waiting | nectarlink_core::QueueStatus::Sending
+                    )
+                })
+                .count();
             (
                 s.core_status(),
                 s.devices.len(),
                 phone_colors,
                 ringing,
                 connected.len(),
+                current_is_online,
                 s.matrices_version,
                 s.toggles_version,
                 battery,
                 remote_prompt,
+                pc_mirror_prompt,
+                pc_mirror_peer_name,
                 s.laser,
                 wake_adapter,
                 wake_state,
                 wake_wired,
+                waiting_count,
             )
         });
+        let prev_online = self.rust().last_online_count;
+        self.as_mut().rust_mut().last_online_count = online;
+        let should_reset_current = (online > prev_online
+            && (!current_is_online || current_idx < 0 || (current_idx as usize) >= devices))
+            || (devices > 0 && (current_idx < 0 || (current_idx as usize) >= devices));
+        if should_reset_current {
+            self.as_mut().set_current_device(0);
+        }
         let (status_text, error) = match &status {
             CoreStatus::Starting => ("starting", String::new()),
             CoreStatus::Ready { device_id, name } => {
@@ -817,11 +1175,19 @@ impl qobject::AppController {
         self.as_mut().set_status(QString::from(status_text));
         self.as_mut().set_error(QString::from(&error));
         self.as_mut().set_has_devices(devices > 0);
-        self.as_mut().set_phone_colors(QString::from(&phone_colors));
+        let phone_colors_q = QString::from(&phone_colors);
+        if *self.phone_colors() != phone_colors_q {
+            self.as_mut().set_phone_colors(phone_colors_q);
+        }
         self.as_mut().set_ringing_from(QString::from(&ringing));
         let (prompt_id, prompt_name) = remote_prompt.unwrap_or_default();
         self.as_mut().set_remote_prompt_device_id(QString::from(&prompt_id));
         self.as_mut().set_remote_prompt_device_name(QString::from(&prompt_name));
+        let (mirror_prompt_id, mirror_prompt_name) = pc_mirror_prompt.unwrap_or_default();
+        self.as_mut().set_pc_mirror_prompt_device_id(QString::from(&mirror_prompt_id));
+        self.as_mut().set_pc_mirror_prompt_device_name(QString::from(&mirror_prompt_name));
+        self.as_mut().set_pc_mirror_active(pc_mirror_peer_name.is_some());
+        self.as_mut().set_pc_mirror_device_name(QString::from(&pc_mirror_peer_name.unwrap_or_default()));
         match laser {
             Some((_, x, y)) => {
                 self.as_mut().set_laser_x(x);
@@ -839,17 +1205,27 @@ impl qobject::AppController {
         self.as_mut().set_caps_revision(caps_version as i32);
         self.as_mut().set_phone_toggles_revision(toggles_version as i32);
 
+        let mut tooltip = match (devices, online) {
+            (0, _) => "Nectarlink · no devices paired".to_owned(),
+            (_, 0) => "Nectarlink · not connected".to_owned(),
+            (_, 1) => battery.map_or_else(
+                || "Nectarlink · 1 device connected".to_owned(),
+                |b| format!("Nectarlink · {b}"),
+            ),
+            (_, n) => format!("Nectarlink · {n} devices connected"),
+        };
+        if waiting_count > 0 {
+            tooltip.push_str(&format!(" · {waiting_count} waiting"));
+        }
+        let tooltip_changed = self.rust().last_tray_tooltip != tooltip;
         if let Some(tray) = self.rust().tray.as_ref() {
             tray.set_find_phone_enabled(devices > 0);
-            tray.set_tooltip(&match (devices, online) {
-                (0, _) => "Nectarlink · no devices paired".to_owned(),
-                (_, 0) => "Nectarlink · not connected".to_owned(),
-                (_, 1) => battery.map_or_else(
-                    || "Nectarlink · 1 device connected".to_owned(),
-                    |b| format!("Nectarlink · {b}"),
-                ),
-                (_, n) => format!("Nectarlink · {n} devices connected"),
-            });
+            if tooltip_changed {
+                tray.set_tooltip(&tooltip);
+            }
+        }
+        if tooltip_changed {
+            self.as_mut().rust_mut().last_tray_tooltip = tooltip;
         }
     }
 
@@ -937,6 +1313,12 @@ impl qobject::AppController {
         }
     }
 
+    pub fn send_clipboard_history(&self, device: &QString, id: &QString) {
+        if let Some(dev) = super::parse_device(device) {
+            crate::clipboard::send_history_item(dev, &String::from(id));
+        }
+    }
+
     pub fn copy_clipboard_history(&self, id: &QString) {
         crate::clipboard::copy_history_item(&String::from(id));
     }
@@ -954,7 +1336,22 @@ impl qobject::AppController {
     }
 
     pub fn run_clip_suggestion(&self) {
-        crate::clipboard::run_last_suggestion();
+        let action =
+            LAST_TOAST_ACTION.get_or_init(Mutex::default).lock().unwrap_or_else(|e| e.into_inner()).take();
+        match action {
+            Some(ToastAction::UndoQueuedSend { device, item_id }) => {
+                if crate::continuity_camera::view().busy {
+                    crate::continuity_camera::cancel();
+                }
+                if let Some(id) = item_id {
+                    crate::transfers::cancel_queue_item(&id);
+                } else {
+                    crate::transfers::cancel_all_queued(Some(device));
+                }
+                show_message("Send cancelled");
+            }
+            _ => crate::clipboard::run_last_suggestion(),
+        }
     }
 
     pub fn open_link_on_phone(&self, device: &QString, text: &QString) {
@@ -1048,7 +1445,7 @@ impl qobject::AppController {
             PaletteUiAction::OpenDoctor => {
                 self.run_doctor();
             }
-            PaletteUiAction::OpenPairing => {
+            PaletteUiAction::OpenPairing | PaletteUiAction::OpenWalkthrough => {
                 self.as_mut().set_current_page(QString::from("home"));
                 self.activate_requested();
             }
@@ -1090,6 +1487,57 @@ impl qobject::AppController {
         core_host::host()
             .hub
             .update(|s| if s.remote_prompt.take().is_some() { Changes::REMOTE } else { Changes::NONE });
+    }
+
+    pub fn allow_pc_mirror_once(self: Pin<&mut Self>, device: &QString) {
+        let Some(id) = super::parse_device(device) else { return };
+        if let Some(node) = core_host::node() {
+            node.set_pc_mirror_session_allowed(id, true);
+        }
+        let mut options = None;
+        core_host::host().hub.update(|s| {
+            if let Some((prompt_id, opts)) = s.pc_mirror_prompt.take()
+                && prompt_id == id
+            {
+                options = Some(opts);
+            }
+            Changes::REMOTE
+        });
+        if let Some(opts) = options {
+            crate::pc_mirror::start(id, opts);
+        } else {
+            core_host::refresh_capabilities();
+        }
+    }
+
+    pub fn allow_pc_mirror_device(mut self: Pin<&mut Self>, device: &QString) {
+        let Some(id) = super::parse_device(device) else { return };
+        self.as_mut().set_device_toggle(device, &QString::from("pc_mirror"), true);
+        if let Some(node) = core_host::node() {
+            node.set_pc_mirror_session_allowed(id, true);
+        }
+        let mut options = None;
+        core_host::host().hub.update(|s| {
+            if let Some((prompt_id, opts)) = s.pc_mirror_prompt.take()
+                && prompt_id == id
+            {
+                options = Some(opts);
+            }
+            Changes::REMOTE
+        });
+        if let Some(opts) = options {
+            crate::pc_mirror::start(id, opts);
+        }
+    }
+
+    pub fn dismiss_pc_mirror_prompt(self: Pin<&mut Self>) {
+        core_host::host()
+            .hub
+            .update(|s| if s.pc_mirror_prompt.take().is_some() { Changes::REMOTE } else { Changes::NONE });
+    }
+
+    pub fn stop_pc_mirror(self: Pin<&mut Self>) {
+        crate::pc_mirror::stop_all();
     }
 
     pub fn unpair(self: Pin<&mut Self>, device: &QString) {
@@ -1139,6 +1587,21 @@ impl qobject::AppController {
                     Changes::NONE
                 }
             });
+            core_host::refresh_capabilities();
+        }
+        if name_str == "pc_mirror" {
+            if !on {
+                crate::pc_mirror::stop_for(&id);
+            }
+            core_host::host().hub.update(|s| {
+                if s.pc_mirror_prompt.as_ref().is_some_and(|(d, _)| *d == id) {
+                    s.pc_mirror_prompt = None;
+                    Changes::REMOTE
+                } else {
+                    Changes::NONE
+                }
+            });
+            core_host::refresh_capabilities();
         }
         if name_str == "storage" {
             crate::storage::sync();
@@ -1161,7 +1624,9 @@ impl qobject::AppController {
         let id = String::from(id);
         let raw = String::from(value);
         let parsed = match id.as_str() {
-            "dnd" | "flashlight" | "wifi" | "bluetooth" => Some(PhoneToggleValue::Bool(raw == "true")),
+            "dnd" | "flashlight" | "wifi" | "bluetooth" | "hotspot" | "pc_active" => {
+                Some(PhoneToggleValue::Bool(raw == "true"))
+            }
             "volume" | "brightness" => raw.parse::<u8>().ok().map(|v| PhoneToggleValue::Level(v.min(100))),
             "ringer" => Some(PhoneToggleValue::Mode(raw)),
             _ => None,
@@ -1234,13 +1699,6 @@ impl qobject::AppController {
         }
     }
 
-    pub fn phone_storage_path(&self, device: &QString) -> QString {
-        let Some(id) = super::parse_device(device) else { return QString::default() };
-        let path =
-            crate::storage::sync_root_path_for(id).map(|p| p.display().to_string()).unwrap_or_default();
-        QString::from(&path)
-    }
-
     pub fn watch_home_summary(&self, device: &QString) {
         watch_home(super::parse_device(device));
     }
@@ -1260,8 +1718,7 @@ impl qobject::AppController {
     }
 
     pub fn refresh_data_retention(self: Pin<&mut Self>) {
-        let summary = compute_data_retention_json();
-        self.set_data_retention_summary(QString::from(&summary));
+        spawn_data_retention_refresh(self.qt_thread());
     }
 
     pub fn clear_notification_history(self: Pin<&mut Self>) {
@@ -1271,8 +1728,9 @@ impl qobject::AppController {
     }
 
     pub fn clear_message_cache(self: Pin<&mut Self>) {
-        if let Some(node) = core_host::node() {
-            let _ = node.clear_message_cache();
+        if let Some(Err(e)) = core_host::node().map(|node| node.clear_message_cache()) {
+            tracing::warn!(error = %e, "can't clear the message cache");
+            show_message("Some messages couldn't be cleared. Try again.");
         }
         crate::messages::clear_cache();
         core_host::host().hub.changed(Changes::DATA_RETENTION);
@@ -1286,8 +1744,9 @@ impl qobject::AppController {
     }
 
     pub fn clear_received_file_history(self: Pin<&mut Self>) {
-        if let Some(node) = core_host::node() {
-            let _ = node.clear_received_file_history();
+        if let Some(Err(e)) = core_host::node().map(|node| node.clear_received_file_history()) {
+            tracing::warn!(error = %e, "can't clear the received file history");
+            show_message("The received file history couldn't be cleared. Try again.");
         }
         core_host::host()
             .hub
@@ -1296,9 +1755,13 @@ impl qobject::AppController {
     }
 
     pub fn clear_everything(mut self: Pin<&mut Self>) {
-        if let Some(node) = core_host::node() {
-            let _ = node.clear_all_local_data();
-        }
+        let failed = match core_host::node().map(|node| node.clear_all_local_data()) {
+            Some(Err(e)) => {
+                tracing::warn!(error = %e, "can't clear local data");
+                true
+            }
+            _ => false,
+        };
         crate::clipboard::clear_history();
         core_host::host().hub.update(|s| {
             s.clear_notification_history()
@@ -1311,7 +1774,11 @@ impl qobject::AppController {
         crate::messages::clear_cache();
         crate::photos::clear_cache();
         self.as_mut().refresh_data_retention();
-        self.toast(QString::from("Cleared all local history and caches"));
+        if failed {
+            show_message("Some history couldn't be cleared. Try again.");
+        } else {
+            self.toast(QString::from("Cleared all local history and caches"));
+        }
     }
 
     pub fn toggle_shelf(mut self: Pin<&mut Self>) {
@@ -1346,6 +1813,7 @@ impl qobject::AppController {
 
     pub fn style_shelf_window(&self) {
         win::tray::apply_no_activate_style_by_title("Nectarlink Shelf");
+        win::tray::apply_no_activate_style_by_title("Nectar Island");
     }
 
     pub fn start_shelf_drag(&self, kind: &QString, id_or_path: &QString, text: &QString) -> bool {
@@ -1396,8 +1864,8 @@ impl qobject::AppController {
     }
 
     pub fn drop_to_shelf(&self, urls: &QList<QVariant>, text: &QString) {
-        let (Some(device), device_name, _) = resolve_shelf_device(self.current_device) else {
-            show_message("No paired phone is connected.");
+        let (Some(device), device_name, online) = resolve_shelf_device(self.current_device) else {
+            show_message("No phone is paired yet.");
             return;
         };
 
@@ -1439,7 +1907,9 @@ impl qobject::AppController {
 
         if !paths.is_empty() {
             crate::transfers::send(device, paths);
-            show_message(format!("Sending to {device_name}…"));
+            if online {
+                show_message(format!("Sending to {device_name}…"));
+            }
             return;
         }
 
@@ -1454,7 +1924,11 @@ impl qobject::AppController {
                 let name = device_name.clone();
                 core_host::spawn(async move {
                     match node.send_clipboard(device, dropped_text).await {
-                        Ok(()) => show_message(format!("Sent text to {name}.")),
+                        Ok(()) => {
+                            if !show_offline_queued_toast(device, None) {
+                                show_message(format!("Sent text to {name}."));
+                            }
+                        }
                         Err(e) => show_message(describe(&e)),
                     }
                 });
@@ -1526,6 +2000,456 @@ impl qobject::AppController {
             _ => {}
         }
     }
+
+    pub fn copy_text(&self, text: &QString) {
+        let s = String::from(text);
+        if s.is_empty() {
+            return;
+        }
+        match crate::win::clipboard::write(&s) {
+            Ok(()) => show_message("Copied to clipboard."),
+            Err(_) => show_message("Could not copy to the clipboard."),
+        }
+    }
+
+    pub fn open_guide_doc(mut self: Pin<&mut Self>, doc_name: &QString) {
+        let key = String::from(doc_name);
+        let (title, body) = load_guide_doc_content(&key);
+        self.as_mut().set_guide_doc_title(QString::from(&title));
+        self.as_mut().set_guide_doc_body(QString::from(&body));
+        self.as_mut().set_guide_doc_open(true);
+    }
+
+    pub fn close_guide_doc(mut self: Pin<&mut Self>) {
+        self.as_mut().set_guide_doc_open(false);
+    }
+
+    pub fn work_area(&self) -> cxx_qt_lib::QMap<cxx_qt_lib::QMapPair_QString_QVariant> {
+        let mut map = cxx_qt_lib::QMap::<cxx_qt_lib::QMapPair_QString_QVariant>::default();
+        if let Some((x, y, w, h)) = crate::win::work_area() {
+            for (key, value) in [("x", x), ("y", y), ("width", w), ("height", h)] {
+                map.insert(QString::from(key), cxx_qt_lib::QVariant::from(&value));
+            }
+        }
+        map
+    }
+
+    pub fn trigger_highlight(mut self: Pin<&mut Self>, target: &QString) {
+        // "__"-prefixed targets are internal test commands (window size, screenshots). In a
+        // release build nothing may reach them, e.g. through `--task show-me:__grab__:...`.
+        if !cfg!(debug_assertions) && String::from(target).starts_with("__") {
+            return;
+        }
+        self.as_mut().set_highlight_target(target.clone());
+    }
+
+    pub fn clear_highlight(mut self: Pin<&mut Self>) {
+        self.as_mut().set_highlight_target(QString::default());
+    }
+}
+
+fn find_guide_file_on_disk(file_stem: &str) -> Option<String> {
+    let safe: String = file_stem
+        .trim()
+        .trim_end_matches(".md")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if safe.is_empty() {
+        return None;
+    }
+    let rel = std::path::PathBuf::from("docs").join("guide").join(format!("{safe}.md"));
+    let mut candidates = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join(&rel));
+        if let Some(parent) = cwd.parent() {
+            candidates.push(parent.join(&rel));
+            if let Some(grand) = parent.parent() {
+                candidates.push(grand.join(&rel));
+            }
+        }
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        candidates.push(dir.join(&rel));
+        if let Some(parent) = dir.parent() {
+            candidates.push(parent.join(&rel));
+            if let Some(grand) = parent.parent() {
+                candidates.push(grand.join(&rel));
+            }
+        }
+    }
+    let manifest_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Some(repo_root) = manifest_root.parent().and_then(|p| p.parent()) {
+        candidates.push(repo_root.join(&rel));
+    }
+    for path in candidates {
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && !text.trim().is_empty()
+        {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn load_guide_doc_content(raw_key: &str) -> (String, String) {
+    let key = raw_key.trim().trim_end_matches(".md").to_ascii_lowercase();
+    let top_level_title = match key.as_str() {
+        "overview" => Some("Nectarlink overview"),
+        "setup" => Some("Install and first-time setup"),
+        "features" => Some("Features reference"),
+        "permissions" => Some("Android permissions and why each is optional"),
+        "elevated" => Some("Elevated and Assist modes"),
+        "troubleshooting" => Some("Troubleshooting and Connection Doctor"),
+        "privacy" => Some("Privacy and security"),
+        _ => None,
+    };
+    if let Some(title) = top_level_title
+        && let Some(disk_md) = find_guide_file_on_disk(&key)
+    {
+        return (title.to_owned(), disk_md);
+    }
+
+    let (title, body) = match key.as_str() {
+        "overview" => (
+            "Nectarlink overview",
+            "Nectarlink links your Android phone and your Windows 11 PC directly on your local network or over a USB cable.\n\n\
+             How it works\n\
+             - Devices discover each other over local Wi-Fi (mDNS) or USB (ADB reverse tunnel) and connect over QUIC (TLS 1.3).\n\
+             - Every connection is mutually authenticated using Ed25519 device keys generated on each device.\n\
+             - There is no user account, no cloud database, and no telemetry.\n\n\
+             Capability tiers on Android\n\
+             - Standard mode: Works right after installation with standard Android permissions.\n\
+             - Elevated mode (optional): Uses Wireless debugging (set up once in the phone app) or root for phone apps in their own windows, mirroring without the screen capture prompt, and more phone controls.\n\
+             - Assist mode (optional): Uses the Android Accessibility service only when you enable Remote input so your PC mouse and keyboard can control the phone.",
+        ),
+        "setup" => (
+            "Install and first-time setup",
+            "1. Install Nectarlink on your Windows 11 PC and your Android phone (Android 8.0 or newer).\n\
+             2. Connect both devices to the same Wi-Fi network, or plug your phone into your PC with a USB cable.\n\
+             3. Open the Pair step in the setup walkthrough, or click + (Pair a new device) at the bottom of the left rail.\n\
+             4. Scan the QR code from the Nectarlink Android app, or select your phone from the nearby devices list and confirm that the 6-digit code matches on both screens.\n\
+             5. Choose which features to share for that phone and grant only the Android permissions you want to use.",
+        ),
+        "permissions" => (
+            "Android permissions and why each is optional",
+            "Nectarlink never asks for every permission up front. Each feature works independently:\n\n\
+             - Notification Access: Required only if you want phone notifications, inline replies, and notification-backed chat threads on your PC.\n\
+             - SMS and Contacts: Required only if you want to read and send SMS/MMS messages or look up contact names on your PC.\n\
+             - Phone and Call Log: Required only if you want incoming call alerts, call history, or dialing from your PC.\n\
+             - Media and Photos: Required only if you want the Photos gallery, Shelf latest photo, or folder sync.\n\
+             - Camera and Microphone: Required only while streaming your phone as a webcam, taking a Continuity Camera shot, or recording a voice note.",
+        ),
+        "elevated" => (
+            "Elevated and Assist modes",
+            "Most Nectarlink features work in Standard mode with regular Android permissions. Two optional modes unlock deeper system integration:\n\n\
+             Elevated mode (Wireless debugging or root)\n\
+             - Captures the phone screen without showing the Android cast confirmation prompt every time.\n\
+             - Streams individual phone apps in separate desktop windows (virtual displays).\n\
+             - Controls additional system quick toggles.\n\n\
+             Assist mode (Android Accessibility Service)\n\
+             - Injects mouse clicks, scrolling, and touch gestures when you control your phone from your PC.\n\
+             - Nectarlink never reads screen text or logs keystrokes through the Accessibility service.",
+        ),
+        "troubleshooting" => (
+            "Troubleshooting and Connection Doctor",
+            "If your phone and PC do not see each other:\n\n\
+             1. Open Connection Doctor from Settings › Connection & About or the Command Palette.\n\
+             2. Check that your Wi-Fi network profile in Windows is set to Private rather than Public, or click Fix in Connection Doctor to allow Nectarlink through Windows Firewall.\n\
+             3. Verify that both devices are on the same subnet and that guest Wi-Fi client isolation is turned off on your router.\n\
+             4. You can also connect over a USB cable with USB debugging enabled; Nectarlink automatically sets up a local tunnel.",
+        ),
+        "privacy" => (
+            "Privacy and security",
+            "Local by default\n\
+             Your phone and PC talk directly over your local network or USB cable. When Connect over mobile data is on, encrypted traffic can use a relay when away from home. Automatic update checks contact GitHub Releases and can be turned off in Settings › Connection & About › Check for updates.\n\n\
+             End-to-end encrypted\n\
+             Every connection uses QUIC with TLS 1.3 and Ed25519 device certificates verified during pairing. Device keys are protected by Windows DPAPI and the Android Keystore.\n\n\
+             Per-device sharing controls\n\
+             Sensitive capabilities such as Share PC folders, Remote input, and Reverse PC screen mirroring are turned off by default for each paired device until you turn them on.",
+        ),
+        "notifications" => (
+            "Notifications",
+            "What it does\n\
+             Mirrors your phone notifications to the Home feed and Windows notification pop-ups. You can reply inline to messages, click action buttons, dismiss individual notifications or groups, and undo a recent dismissal.\n\n\
+             Where to find it\n\
+             - Home › Notifications.\n\
+             - Settings › Notifications for per-app rules (Show, Silent, or Hidden) and Do Not Disturb sync.\n\
+             - Settings › General › Copy one-time codes.\n\n\
+             What it needs\n\
+             - Notification Access permission enabled for Nectarlink on your Android phone.\n\
+             - The per-device Notifications toggle enabled on your PC.",
+        ),
+        "messages" => (
+            "Messages",
+            "What it does\n\
+             Lets you read and send SMS and MMS conversations, plus reply to notification-backed chat threads from messaging apps such as WhatsApp, Signal, and Telegram.\n\n\
+             Where to find it\n\
+             - Left navigation rail › Messages.\n\
+             - Command Palette (Ctrl+Alt+Space) › type Text followed by a contact name.\n\n\
+             What it needs\n\
+             - SMS and Contacts permissions on your phone for SMS/MMS threads.\n\
+             - Notification Access on your phone for messaging app conversations.",
+        ),
+        "calls" => (
+            "Calls",
+            "What it does\n\
+             Shows incoming and active phone calls on your PC with Answer, Decline, and Reject with SMS actions, plus browsable call history, contacts, and a dialpad.\n\n\
+             Where to find it\n\
+             - Left navigation rail › Calls.\n\
+             - Incoming call banner on Home and Nectar Island.\n\n\
+             What it needs\n\
+             - Phone, Call Log, and Contacts permissions on your Android phone.\n\
+             - Call audio stays on your phone (or a headset paired to your phone); Elevated mode on Android 12+ unlocks mute, speakerphone, hold, and keypad controls.",
+        ),
+        "clipboard" => (
+            "Clipboard",
+            "What it does\n\
+             Shares copied text, rich HTML/RTF text, images, and small copied file sets between your PC and phone. Keeps an encrypted local history of up to 50 items with pinning and smart context chips for links, phone numbers, addresses, and tracking codes.\n\n\
+             Where to find it\n\
+             - Home › Send clipboard.\n\
+             - Settings › General › Sync clipboard to phone.\n\n\
+             What it needs\n\
+             - Automatic PC-to-phone clipboard send works whenever your phone is connected.\n\
+             - Background phone-to-PC clipboard sync on Android 10+ uses notifications, the Nectarlink quick tile, or Elevated mode.",
+        ),
+        "transfers" => (
+            "Send files",
+            "What it does\n\
+             Sends files, folders, links, and text between your phone and PC at local network speed. If your phone is offline when you send, Nectarlink places the item in the Waiting to send queue and delivers it automatically as soon as your phone reconnects.\n\n\
+             Where to find it\n\
+             - Home › Send files button, drag-and-drop anywhere on the window, Waiting to send card, and Transfers list.\n\
+             - Windows File Explorer › right-click › Send to.\n\n\
+             What it needs\n\
+             - Paired phone and the per-device Files toggle enabled.",
+        ),
+        "photos" => (
+            "Photos",
+            "What it does\n\
+             Browses recent photos, camera shots, and screenshots on your phone without copying your entire library first. You can view full-resolution images, copy them to the clipboard, save them to disk, or drag them directly into other Windows apps.\n\n\
+             Where to find it\n\
+             - Left navigation rail › Photos.\n\
+             - Shelf edge panel (Ctrl+Alt+S) › Latest photo and screenshot.\n\n\
+             What it needs\n\
+             - Photos and Media permission granted on your Android phone.",
+        ),
+        "mirroring" => (
+            "Screen mirroring",
+            "What it does\n\
+             Streams your phone screen into a low-latency desktop window with hardware-accelerated decoding, or opens individual Android apps in their own windows on your PC.\n\n\
+             Where to find it\n\
+             - Left navigation rail › Apps.\n\
+             - Home › Mirror screen quick action.\n\n\
+             What it needs\n\
+             - Standard mode mirrors the full phone screen after you tap Start now on Android's screen capture prompt.\n\
+             - Elevated mode (Wireless debugging or root) skips the prompt and unlocks individual app windows.\n\
+             - Assist mode or Elevated mode lets you click, scroll, and type inside the mirrored window.",
+        ),
+        "pc-mirror" => (
+            "Share PC screen",
+            "What it does\n\
+             Streams your Windows PC monitor to your phone so you can view your desktop from across the room and use your phone as a trackpad or laser pointer.\n\n\
+             Where to find it\n\
+             - Started from the Nectarlink app on your phone.\n\
+             - Settings › Devices › Share PC screen to phone.\n\n\
+             What it needs\n\
+             - The per-device Share PC screen to phone switch on your PC, or one-time approval when your phone requests to view your screen.",
+        ),
+        "webcam" => (
+            "Phone as webcam",
+            "What it does\n\
+             Streams your phone camera into the Nectarlink Virtual Camera on Windows so Zoom, Teams, Meet, Discord, and OBS can use your phone's rear or front camera at up to 4K.\n\n\
+             Where to find it\n\
+             - Home › Phone as webcam.\n\
+             - Settings › Camera & Audio › Start webcam.\n\n\
+             What it needs\n\
+             - Camera permission on your phone.\n\
+             - For other apps to see it: Virtual camera add-on in Settings › Camera & Audio.",
+        ),
+        "continuity-camera" => (
+            "Continuity camera",
+            "What it does\n\
+             Triggers your phone camera from any Windows app to snap a photo or scan a document, then copies the result to the Windows clipboard and pastes it into the active window.\n\n\
+             Where to find it\n\
+             - Global hotkeys Ctrl+Alt+C (Take photo with phone) and Ctrl+Alt+D (Scan document with phone).\n\
+             - Home › Continuity Camera.\n\n\
+             What it needs\n\
+             - Camera permission on your phone.",
+        ),
+        "speaker" => (
+            "Phone as speaker",
+            "What it does\n\
+             Streams your PC system audio to your connected phone in real time over the encrypted connection so you can listen through your phone speakers or headphones.\n\n\
+             Where to find it\n\
+             - Home › Phone as speaker.\n\
+             - Settings › Camera & Audio › Stream PC audio to phone.\n\n\
+             What it needs\n\
+             - Paired phone connected over local Wi-Fi or USB.",
+        ),
+        "recordings" => (
+            "Voice recorder",
+            "What it does\n\
+             Receives voice notes recorded on your phone and saves them to your PC in your chosen audio format (M4A, MP3, WAV, or FLAC).\n\n\
+             Where to find it\n\
+             - On your phone: Home › Record.\n\
+             - Settings › Files & Sync › Voice recordings.\n\n\
+             What it needs\n\
+             - Microphone permission on your phone when recording a voice note.",
+        ),
+        "deck" => (
+            "Deck",
+            "What it does\n\
+             Syncs media playback between your phone and PC, switches Windows audio output and microphone devices, and turns your phone into a customizable grid of shortcut tiles, macros, and volume sliders.\n\n\
+             Where to find it\n\
+             - Left navigation rail › Deck.\n\n\
+             What it needs\n\
+             - Paired phone over any active connection.",
+        ),
+        "remote-input" => (
+            "Remote input",
+            "What it does\n\
+             Lets your phone act as a wireless trackpad, keyboard, presentation clicker, and on-screen laser pointer for your Windows PC.\n\n\
+             Where to find it\n\
+             - On your phone: Home › Control PC.\n\
+             - Settings › Devices › Remote mouse, keyboard & Deck.\n\n\
+             What it needs\n\
+             - The per-device Remote mouse, keyboard & Deck switch on your PC (or approved from the one-time prompt when your phone requests control).",
+        ),
+        "type-on-phone" => (
+            "Type on phone",
+            "What it does\n\
+             Forwards keystrokes and pasted text from your PC keyboard directly to your phone without needing to mirror the phone screen.\n\n\
+             Where to find it\n\
+             - Home › Type on phone.\n\
+             - Command Palette › Type on phone with PC keyboard.\n\n\
+             What it needs\n\
+             - Assist mode (Accessibility service), the Nectarlink input method, or Elevated mode on your phone.",
+        ),
+        "phone-controls" => (
+            "Phone controls",
+            "What it does\n\
+             Controls your phone's Do Not Disturb mode, ringer mode (Sound, Vibrate, Silent), flashlight, media volume, screen brightness, Wi-Fi, Bluetooth, and Find My Phone ring from your PC.\n\n\
+             Where to find it\n\
+             - Home › Phone controls and Find phone.\n\
+             - Command Palette.\n\n\
+             What it needs\n\
+             - Volume, flashlight, and Find My Phone work in Standard mode; Do Not Disturb requires Notification Policy access; Wi-Fi and Bluetooth toggles use Elevated mode on newer Android versions.",
+        ),
+        "shelf" => (
+            "Drop shelf",
+            "What it does\n\
+             Opens a lightweight slide-out panel at the edge of your monitor showing your phone's latest photo, latest screenshot, recent clipboard items, and recent received files. Drag items out into any app, or drop files onto the Shelf to send them to your phone.\n\n\
+             Where to find it\n\
+             - Global hotkey Ctrl+Alt+S.\n\
+             - Command Palette › Open Shelf.\n\
+             - Settings › Shortcuts & Rules › File shelf, to change the hotkey.\n\n\
+             What it needs\n\
+             - Paired phone; Photos permission on your phone for the latest photo and screenshot tiles.",
+        ),
+        "nectar-island" => (
+            "Nectar Island",
+            "What it does\n\
+             Displays a compact pill at the top center of your primary monitor for incoming calls, live file transfer progress, media playback, and optional notification previews.\n\n\
+             Where to find it\n\
+             - Settings › General › Nectar Island.\n\n\
+             What it needs\n\
+             - Turn on Nectar Island in Settings › General and pick which events should appear.",
+        ),
+        "timeline" => (
+            "Timeline",
+            "What it does\n\
+             Provides a unified, searchable chronological feed of files, photos, clipboard items, calls, messages, and voice recordings shared between your phone and PC.\n\n\
+             Where to find it\n\
+             - Top bar › Timeline.\n\
+             - Home › Timeline.\n\n\
+             What it needs\n\
+             - Works automatically for all paired devices; retention period can be adjusted in Settings › Storage & Privacy.",
+        ),
+        "command-palette" => (
+            "Command palette",
+            "What it does\n\
+             Opens a keyboard-first search bar over actions, contacts, message threads, mirrorable apps, phone quick toggles, clipboard history, and navigation pages.\n\n\
+             Where to find it\n\
+             - Global hotkey Ctrl+Alt+Space (or Ctrl+K inside the Nectarlink window).\n\
+             - Commands in the top bar.\n\n\
+             What it needs\n\
+             - Works at any time with zero background memory cost when closed.",
+        ),
+        "handoff" => (
+            "Handoff",
+            "What it does\n\
+             Sends web links, video links with their current playback timestamp, map coordinates or street addresses, and documents to your phone so they open immediately in the right app.\n\n\
+             Where to find it\n\
+             - Command Palette › Open copied link on phone and Hand off document to phone.\n\n\
+             What it needs\n\
+             - Paired phone; works online or queues automatically when your phone is offline.",
+        ),
+        "wol" => (
+            "Wake PC",
+            "What it does\n\
+             Lets your paired phone wake this PC from sleep or soft power-off over your local network using a Wake-on-LAN packet.\n\n\
+             Where to find it\n\
+             - Settings › Connection & About › Wake from your phone.\n\
+             - On your phone: Home › Wake, shown while the PC is offline.\n\n\
+             What it needs\n\
+             - A network adapter with Wake-on-LAN enabled in Windows Device Manager and BIOS/UEFI (wired Ethernet is most reliable).",
+        ),
+        "folder-sync" => (
+            "Share PC folders",
+            "What it does\n\
+             Keeps selected folders on your phone (such as DCIM/Camera or Download) and folders on your PC in sync in one-way or two-way mode, and lets your phone browse shared PC folders.\n\n\
+             Where to find it\n\
+             - Settings › Files & Sync › Synced folders.\n\
+             - Settings › Devices › Remote PC file access, for browsing PC folders from the phone.\n\n\
+             What it needs\n\
+             - Files and media access on your phone and at least one folder sync rule configured in Settings.",
+        ),
+        "automations" => (
+            "Automations",
+            "What it does\n\
+             Runs automatic trigger-action rules such as locking your PC when your phone disconnects, pausing media when a call arrives, or running a command when your phone connects.\n\n\
+             Where to find it\n\
+             - Settings › Shortcuts & Rules › Trigger-action rules.\n\n\
+             What it needs\n\
+             - Add and turn on one or more rules there.",
+        ),
+        "localsend" => (
+            "LocalSend",
+            "What it does\n\
+             Discovers and exchanges files with nearby devices running LocalSend v2 on your local network without requiring pairing.\n\n\
+             Where to find it\n\
+             - Home › LocalSend nearby, while LocalSend is on.\n\
+             - Settings › Files & Sync › LocalSend on local network.\n\n\
+             What it needs\n\
+             - LocalSend on local network turned on in Settings › Files & Sync, and both devices on the same local network.",
+        ),
+        "local-api" => (
+            "Local HTTP API",
+            "What it does\n\
+             Exposes an opt-in localhost HTTP/JSON and Server-Sent Events API on 127.0.0.1 (default port 53320) protected by a bearer token so scripts, CLI tools, and Stream Deck plugins can trigger Nectarlink actions.\n\n\
+             Where to find it\n\
+             - Settings › Connection & About › Local automation API.\n\n\
+             What it needs\n\
+             - Turn on Local automation API in Settings › Connection & About and read the bearer token from api-token.json.",
+        ),
+        "doctor" => (
+            "Connection Doctor",
+            "What it does\n\
+             Inspects Windows Firewall rules, network profile type (Private vs Public), UDP discovery sockets, and paired phone reachability, and offers one-click fixes.\n\n\
+             Where to find it\n\
+             - Settings › Connection & About › Connection Doctor.\n\
+             - Command Palette › Connection Doctor.\n\n\
+             What it needs\n\
+             - Always available on your PC.",
+        ),
+        _ => (
+            "Features guide",
+            "Select any feature card in the Features guide to inspect its live status, jump directly to its control with Show me, or read how it works and what permissions it uses.",
+        ),
+    };
+    (title.to_owned(), body.to_owned())
 }
 
 fn resolve_shelf_device(current_device_idx: i32) -> (Option<DeviceId>, String, bool) {
@@ -1686,35 +2610,36 @@ fn compute_shelf_items_json(current_device_idx: i32) -> String {
     }
 
     // 4. Current clip (from encrypted local clipboard history, or live Windows clipboard fallback).
-    let current_clip =
-        if let Some(entry) = node.as_ref().and_then(|n| n.clipboard_history(None).into_iter().next()) {
-            let (kind, image_data_url) = match entry.kind {
-                ClipboardItemKind::Text => ("text", String::new()),
-                ClipboardItemKind::Image => {
-                    ("image", crate::clipboard::thumb_for_clip(&entry.id).unwrap_or_default())
-                }
-            };
-            serde_json::json!({
-                "id": entry.id,
-                "kind": kind,
-                "text": entry.text,
-                "imageDataUrl": image_data_url,
-                "deviceName": entry.device_name,
-                "localPath": "",
-            })
-        } else {
-            match crate::win::clipboard::read() {
-                crate::win::clipboard::Clip::Text(t) if !t.trim().is_empty() => serde_json::json!({
-                    "id": "",
-                    "kind": "text",
-                    "text": t,
-                    "imageDataUrl": "",
-                    "deviceName": "This PC",
-                    "localPath": "",
-                }),
-                _ => serde_json::Value::Null,
+    let current_clip = if let Some(entry) =
+        node.as_ref().and_then(|n| n.clipboard_history(None).into_iter().next())
+    {
+        let (kind, image_data_url) = match entry.kind {
+            ClipboardItemKind::Text => ("text", String::new()),
+            ClipboardItemKind::Image => {
+                ("image", crate::clipboard::thumb_for_clip(&entry.id).unwrap_or_default())
             }
         };
+        serde_json::json!({
+            "id": entry.id,
+            "kind": kind,
+            "text": entry.text,
+            "imageDataUrl": image_data_url,
+            "deviceName": entry.device_name,
+            "localPath": "",
+        })
+    } else {
+        match crate::win::clipboard::read() {
+            crate::win::clipboard::Clip::Text { text: t, .. } if !t.trim().is_empty() => serde_json::json!({
+                "id": "",
+                "kind": "text",
+                "text": t,
+                "imageDataUrl": "",
+                "deviceName": "This PC",
+                "localPath": "",
+            }),
+            _ => serde_json::Value::Null,
+        }
+    };
 
     // 5. Recent received files (up to 5 existing files on disk).
     let mut recent_files: Vec<serde_json::Value> = Vec::new();
@@ -2203,4 +3128,67 @@ fn feature_state_map(state: Option<FeatureState>) -> QMap<QMapPair_QString_QVari
         }
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phone_colors_come_from_the_connected_phone_when_an_old_pairing_shares_its_name() {
+        let phone = |n: u8, accent: u32, online: bool| crate::state::DeviceView {
+            id: DeviceId([n; 32]),
+            info: nectarlink_core::DeviceInfo {
+                name: "Galaxy".into(),
+                kind: nectarlink_core::DeviceKind::Phone,
+                os: "android".into(),
+                os_ver: "16".into(),
+                model: None,
+                accent: Some(accent),
+                screen: None,
+                install_id: None,
+            },
+            paired_at: i64::from(n),
+            link: if online {
+                LinkState::Online { path: nectarlink_core::ConnectionPath::Lan, rtt_ms: 4 }
+            } else {
+                LinkState::Offline { last_seen: None }
+            },
+            battery: None,
+            power: nectarlink_core::PowerLevel::Basic,
+        };
+        // The stale pairing is listed first and has its own (old) color.
+        let devices = [phone(1, 0xFF00_00FF, false), phone(2, 0xFFFF_8800, true)];
+        let entries: serde_json::Value = serde_json::from_str(&phone_colors_json(&devices)).unwrap();
+        let entries = entries.as_array().unwrap();
+        assert_eq!(entries.len(), 1, "one entry per name");
+        assert_eq!(entries[0]["id"], DeviceId([2; 32]).to_string(), "the connected phone");
+        let expected = crate::palette::scheme_json(material_colors::color::Rgb::new(0xFF, 0x88, 0x00));
+        assert_eq!(entries[0]["scheme"], serde_json::json!(expected));
+    }
+
+    #[test]
+    fn tray_summary_includes_battery_and_signal_strength() {
+        let b = nectarlink_core::Battery {
+            level: 85,
+            charging: true,
+            plugged: Some("usb".into()),
+            full_in: Some(25),
+            cell_bars: Some(4),
+            cell_type: Some("5G".into()),
+            wifi_bars: Some(3),
+        };
+        assert_eq!(format_tray_device_summary("Pixel 9", &b), "Pixel 9 · 85%, charging · Wi-Fi 3/4 · 5G 4/4");
+
+        let basic = nectarlink_core::Battery {
+            level: 40,
+            charging: false,
+            plugged: None,
+            full_in: None,
+            cell_bars: Some(2),
+            cell_type: None,
+            wifi_bars: None,
+        };
+        assert_eq!(format_tray_device_summary("Galaxy", &basic), "Galaxy · 40% · Cell 2/4");
+    }
 }

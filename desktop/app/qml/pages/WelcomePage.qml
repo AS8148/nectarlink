@@ -23,6 +23,7 @@ Item {
                 anchors.centerIn: parent
                 width: 26; height: 26
                 path: Icons.mark
+                stroke: 2.4
                 color: Theme.graphite ? Theme.surface : Theme.primaryContent
             }
         }

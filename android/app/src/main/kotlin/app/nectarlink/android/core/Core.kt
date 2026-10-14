@@ -9,6 +9,7 @@ import android.service.notification.NotificationListenerService
 import android.util.Log
 import android.net.Uri
 import app.nectarlink.android.BuildConfig
+import app.nectarlink.android.audio.PcSpeakerPlayer
 import app.nectarlink.android.clipboard.PhoneClipboard
 import app.nectarlink.android.links.LinkNotifications
 import app.nectarlink.android.media.PcMedia
@@ -18,8 +19,10 @@ import app.nectarlink.android.files.ReceivedFiles
 import app.nectarlink.android.files.TransferNotifications
 import app.nectarlink.android.R
 import app.nectarlink.android.notifications.NotificationListener
+import app.nectarlink.android.notifications.PcNotificationPoster
 import app.nectarlink.android.calls.CallCompanion
 import app.nectarlink.android.calls.PhoneCalls
+import app.nectarlink.android.companion.PcCompanion
 import app.nectarlink.android.contacts.PhoneContacts
 import app.nectarlink.android.elevated.Elevated
 import app.nectarlink.android.mirror.AppWindows
@@ -47,6 +50,7 @@ import app.nectarlink.core.Notification
 import app.nectarlink.core.PairingFailure
 import app.nectarlink.core.PowerLevel
 import app.nectarlink.core.RecordingMarker
+import app.nectarlink.core.RemoteStorageEntry
 import app.nectarlink.core.TimelineEntry
 import app.nectarlink.core.TimelineKind
 import app.nectarlink.core.TimelinePage
@@ -66,6 +70,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -75,11 +81,15 @@ import kotlinx.coroutines.withContext
  * its events into [state], feeds it the phone's battery and network
  * changes, and runs commands for the UI.
  */
+@androidx.compose.runtime.Stable
 class Core(context: Context, private val scope: CoroutineScope) : EventListener {
-    private val context = context.applicationContext
+    private val context = context.applicationContext.also { PhoneClipboard.init(it) }
     private val ringer = Ringer(this.context)
+    private val pcNotificationPoster = PcNotificationPoster(this.context)
+    private val pcSpeakerPlayer = PcSpeakerPlayer()
     /** What plays on this phone, for PCs (needs notification access). */
     private val phoneMedia = PhoneMedia(this.context) { players ->
+        syncActiveMediaColor()
         notificationOps.trySend { it.mediaChanged(players) }
     }
     private val platform = PhonePlatform(
@@ -160,8 +170,19 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     )
 
     /** What plays on the PCs, in Android's media controls. */
-    val pcMedia = PcMedia(this.context) { pc, player, action, position ->
+    val pcMedia = PcMedia(
+        context = this.context,
+        onSeedColorChanged = { syncActiveMediaColor() },
+    ) { pc, player, action, position ->
         command { it.mediaCommand(pc, player, action, position) }
+    }
+
+    private fun syncActiveMediaColor() {
+        val nextColor = phoneMedia.activeSeedColor ?: pcMedia.activeSeedColor
+        if (_state.value.activeMediaColor != nextColor) {
+            _state.update { if (it.activeMediaColor != nextColor) it.copy(activeMediaColor = nextColor) else it }
+        }
+        accent.updateMediaColor(nextColor)
     }
     /**
      * Notification changes, in order: a removal must never overtake the post
@@ -177,14 +198,43 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     private val remoteOps = Channel<suspend (NectarlinkNode) -> Unit>(Channel.UNLIMITED)
     private val _state = MutableStateFlow(CoreState())
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    private val _queuedNotices = MutableSharedFlow<OfflineQueuedNotice>(extraBufferCapacity = 8)
     private val _clipSuggestions = MutableSharedFlow<ClipSuggestionNotice>(extraBufferCapacity = 4)
     private var node: NectarlinkNode? = null
     private var startJob: Job? = null
     private var networkChange: Job? = null
     private val wakeTimers = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
+    @Volatile private var lastBattery: app.nectarlink.core.Battery? = null
+    @Volatile private var lastSignal: SignalSnapshot = SignalSnapshot()
+    @Volatile private var lastReportedBattery: app.nectarlink.core.Battery? = null
+
+    private fun pushBatteryAndSignal() {
+        val base = lastBattery ?: return
+        val sig = lastSignal
+        val merged = base.copy(
+            cellBars = sig.cellBars,
+            cellType = sig.cellType,
+            wifiBars = sig.wifiBars,
+        )
+        if (merged != lastReportedBattery) {
+            lastReportedBattery = merged
+            node?.let { scope.launch { it.updateBattery(merged) } }
+        }
+    }
+
     private val battery = BatteryMonitor(this.context) { battery ->
-        node?.let { scope.launch { it.updateBattery(battery) } }
+        lastBattery = battery
+        pushBatteryAndSignal()
+    }
+    private val signal = SignalMonitor(this.context) { snapshot ->
+        val hadWifi = lastSignal.wifiBars != null
+        val hasWifi = snapshot.wifiBars != null
+        lastSignal = snapshot
+        pushBatteryAndSignal()
+        if (hadWifi != hasWifi && (hasWifi || _state.value.awayMode)) {
+            node?.let { scope.launch { runCatching { it.networkChanged() } } }
+        }
     }
     private val accent = AccentMonitor(this.context) { seed ->
         node?.let { scope.launch { runCatching { it.updateAccent(seed) } } }
@@ -193,33 +243,46 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         // Network callbacks come in bursts; tell the core once they settle.
         networkChange?.cancel()
         networkChange = scope.launch {
-            delay(1_000)
-            node?.networkChanged()
-            // A new network turns wireless debugging off; Elevated turns it back on.
-            if (!Elevated.running) Elevated.start()
+            delay(150)
+            if (lastSignal.wifiBars != null || _state.value.awayMode) {
+                node?.networkChanged()
+            }
+            // A new Wi-Fi network turns wireless debugging off; Elevated turns it back on.
+            if (!Elevated.running && lastSignal.wifiBars != null) Elevated.start()
         }
     }
 
     // Android drops multicast (local discovery) unless a lock is held. The
     // connection service holds one while paired; this one covers pairing.
-    private val pairingMulticast: WifiManager.MulticastLock? =
+    private val pairingMulticast: WifiManager.MulticastLock? by lazy {
         this.context.getSystemService(WifiManager::class.java)
             ?.createMulticastLock("nectarlink-pairing")
             ?.apply { setReferenceCounted(false) }
+    }
 
     // Holds a multicast lock while LocalSend LAN interop (UDP 224.0.0.167:53317) is enabled.
-    private val localsendMulticast: WifiManager.MulticastLock? =
+    private val localsendMulticast: WifiManager.MulticastLock? by lazy {
         this.context.getSystemService(WifiManager::class.java)
             ?.createMulticastLock("nectarlink-localsend")
             ?.apply { setReferenceCounted(false) }
+    }
 
     val state: StateFlow<CoreState> = _state.asStateFlow()
 
     /** Short messages for the user (a command failed). */
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
+    /** Undoable notices emitted when an outbound action is queued for an offline PC. */
+    val queuedNotices: SharedFlow<OfflineQueuedNotice> = _queuedNotices.asSharedFlow()
+
     /** Context action suggestions for newly received clipboard text. */
     val clipSuggestions: SharedFlow<ClipSuggestionNotice> = _clipSuggestions.asSharedFlow()
+
+    data class OfflineQueuedNotice(
+        val message: String,
+        val queueId: String?,
+        val peerId: String?,
+    )
 
     data class ClipSuggestionNotice(
         val message: String,
@@ -227,18 +290,48 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         val suggestion: app.nectarlink.core.ClipSuggestion,
     )
 
+    data class PcMirrorConfigState(
+        val pcId: String,
+        val codec: String,
+        val width: Int,
+        val height: Int,
+    )
+
+    data class PcMirrorPacket(
+        val pcId: String,
+        val keyframe: Boolean,
+        val timeUs: Long,
+        val data: ByteArray,
+    )
+
+    private val _pcMirrorConfig = MutableStateFlow<PcMirrorConfigState?>(null)
+    val pcMirrorConfig: StateFlow<PcMirrorConfigState?> = _pcMirrorConfig.asStateFlow()
+
+    @Volatile private var lastPcMirrorKeyframe: PcMirrorPacket? = null
+
+    fun latestPcMirrorKeyframe(pcId: String): PcMirrorPacket? =
+        lastPcMirrorKeyframe?.takeIf { it.pcId == pcId }
+
+    private val _pcMirrorPackets = MutableSharedFlow<PcMirrorPacket>(
+        extraBufferCapacity = 32,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    val pcMirrorPackets: SharedFlow<PcMirrorPacket> = _pcMirrorPackets.asSharedFlow()
+
     /** Starts the node (once). Safe to call repeatedly. */
     fun start() {
         if (startJob != null) return
         startJob = scope.launch(Dispatchers.IO) {
             initLogging(if (BuildConfig.DEBUG) "debug,iroh=info,swarm_discovery=error" else "info,iroh=warn,swarm_discovery=error")
+            val initialAwayMode = app.nectarlink.android.ui.Preferences.isAwayModeEnabled(context)
             val options = NodeOptions(
                 dataDir = context.noBackupFilesDir.resolve("core").absolutePath,
                 device = deviceInfo(context),
                 appVersion = BuildConfig.VERSION_NAME,
                 power = PowerLevel.BASIC,
-                awayMode = false,
+                awayMode = initialAwayMode,
                 downloadsDir = context.cacheDir.resolve("received").absolutePath,
+                usbPort = 53319u.toUShort(),
             )
             val started = try {
                 NectarlinkNode.start(options, platform, KeystoreKeyProtector(), this@Core)
@@ -267,11 +360,13 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             } else {
                 emptyList()
             }
+            val initialQueue = runCatching { started.sendQueue(null).map { it.toUi() } }.getOrDefault(emptyList())
             localsendMulticast?.runCatching { if (lsEnabled) acquire() else release() }
             pruneOldTempCaches()
             _state.update {
                 it.withDevices(devices, storageAllowed).copy(
                     status = CoreStatus.Ready(started.deviceId()),
+                    sendQueue = initialQueue,
                     clipboardHistoryEnabled = clipHistEnabled,
                     clipboardHistory = clipHist,
                     timeline = tlPage?.items ?: emptyList(),
@@ -279,31 +374,56 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                     timelineHasMore = tlPage?.hasMore ?: false,
                     timelineRetentionDays = retention?.maxDays ?: 90u,
                     localsendEnabled = lsEnabled,
+                    awayMode = initialAwayMode,
                     localsendPeers = lsPeers,
                 )
             }
             refreshDataRetention()
             app.nectarlink.android.clipboard.DirectShareTargets.sync(context, _state.value.devices)
             app.nectarlink.android.widget.PcWidgetProvider.refreshAll(context, _state.value)
-            scope.launch {
-                _state.collect { s ->
-                    app.nectarlink.android.clipboard.DirectShareTargets.sync(context, s.devices)
-                    app.nectarlink.android.widget.PcWidgetProvider.refreshAll(context, s)
-                }
+            scope.launch(Dispatchers.IO) {
+                _state
+                    .map { s ->
+                        s.devices.map { d -> listOf(d.id, d.name, d.online, d.canWake, d.wakeState) }
+                    }
+                    .distinctUntilChanged()
+                    .collect {
+                        val s = _state.value
+                        app.nectarlink.android.clipboard.DirectShareTargets.sync(context, s.devices)
+                        app.nectarlink.android.widget.PcWidgetProvider.refreshAll(context, s)
+                    }
+            }
+            scope.launch(Dispatchers.IO) {
+                var first = true
+                _state
+                    .map { s ->
+                        s.devices.map { d -> listOf(d.id, d.online, d.deckState?.volume, d.deckState?.muted) }
+                    }
+                    .distinctUntilChanged()
+                    .collect {
+                        if (!first) delay(120L)
+                        first = false
+                        app.nectarlink.android.widget.PcWidgetProvider.refreshAll(context, _state.value)
+                    }
             }
             if (devices.isNotEmpty()) ConnectionService.start(context)
-            scope.launch(Dispatchers.Main) {
-                battery.start()
-                accent.start()
-                network.start()
+            val companionAssociated = PcCompanion.isAssociated(context)
+            if (companionAssociated) {
+                PcCompanion.startObservingPresence(context)
             }
+            val initialInputEnabled = InputService.running || InputService.enabled(context)
+            val initialElevated = Elevated.running
+            val initialInputAccess = InputService.running || initialElevated || initialInputEnabled
             _state.update {
                 it.copy(
+                    companionAssociated = companionAssociated,
                     photoAccess = RecentPhotos.hasAccess(context),
                     photoPartialAccess = RecentPhotos.hasPartialAccess(context),
                     callAccess = PhoneCalls.hasAll(context),
                     contactsAccess = PhoneContacts.canRead(context),
                     smsAccess = PhoneSms.hasAll(context),
+                    inputAccess = initialInputAccess,
+                    elevated = initialElevated,
                     dndAccess = PhoneToggles.hasDndAccess(context),
                     writeSettingsAccess = PhoneToggles.hasWriteSettings(context),
                     storageAllFilesAccess = PhoneStorage.hasAllFilesAccess(context),
@@ -314,11 +434,28 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             // Elevated, when set up and wireless debugging is on.
             scope.launch { Elevated.start() }
             scope.launch(Dispatchers.Main) {
-                toggles.start()
-                if (_state.value.photoAccess) photos.start()
+                // Allow first Compose frame to draw before registering BroadcastReceivers and ContentObservers on Main.
+                delay(48L)
+                battery.start()
+                accent.start()
+                network.start()
                 if (PhoneCalls.canFollow(context) || PhoneCalls.canReadLog(context)) calls.start()
                 if (PhoneContacts.canRead(context)) contacts.start()
                 if (PhoneSms.canRead(context)) sms.start()
+                _state
+                    .map { s -> s.devices.any { it.online } to s.photoAccess }
+                    .distinctUntilChanged()
+                    .collect { (anyOnline, hasPhotoAccess) ->
+                        if (anyOnline) {
+                            signal.start()
+                            toggles.start()
+                            if (hasPhotoAccess) photos.start() else photos.stop()
+                        } else {
+                            signal.stop()
+                            toggles.stop()
+                            photos.stop()
+                        }
+                    }
             }
             scope.launch {
                 for (op in notificationOps) {
@@ -357,80 +494,113 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         notificationOps.trySend { it.notificationRemoved(key) }
     }
 
+    fun notificationsRefreshed(showing: List<Notification>) {
+        notificationOps.trySend { it.notificationsReset(showing) }
+    }
+
+    @Volatile private var lastSensitiveAccess = false
+    private val refreshAccessRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val refreshAccessPending = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val lastTransferUiEmitMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     /**
      * Re-checks notification access and background restrictions (the user
      * may have changed them in Settings) and asks Android to reconnect the listener if it's allowed
-     * but not running.
+     * but not running. Coalesces rapid concurrent calls into at most one follow-up pass.
      */
     fun refreshNotificationAccess() {
-        val granted = NotificationListener.hasAccess(context)
-        val unrestricted = BackgroundAccess.isUnrestricted(context)
-        val photoAccess = RecentPhotos.hasAccess(context)
-        val photoPartialAccess = RecentPhotos.hasPartialAccess(context)
-        val callAccess = PhoneCalls.hasAll(context)
-        val contactsAccess = PhoneContacts.canRead(context)
-        val smsAccess = PhoneSms.hasAll(context)
-        val inputAccess = InputService.running
-        val elevated = Elevated.running
-        val dndAccess = PhoneToggles.hasDndAccess(context)
-        val writeSettingsAccess = PhoneToggles.hasWriteSettings(context)
-        val storageAllFilesAccess = PhoneStorage.hasAllFilesAccess(context)
-        val storageSafFolders = PhoneStorage.safFolders(context).map { it.name }
-        if (!storageAllFilesAccess) storage.stopWatching()
-        val localNetwork = LocalNetwork.granted(context)
-        if (localNetwork && !_state.value.localNetwork) {
-            // Just allowed: reach the PCs now rather than at the next retry.
-            scope.launch { node?.networkChanged() }
-        }
-        val prevPhotos = _state.value.photoAccess
-        val currentNode = node
-        val storageAllowed = if (currentNode != null) {
-            _state.value.devices.mapNotNull { dev ->
-                val devToggles = runCatching { currentNode.deviceToggles(dev.id) }.getOrDefault(emptyList())
-                if (devToggles.any { it.name == PhoneStorage.TOGGLE_NAME && it.enabled }) dev.id else null
-            }.toSet()
-        } else {
-            emptySet()
-        }
-        _state.update {
-            it.copy(
-                notificationAccess = granted,
-                backgroundUnrestricted = unrestricted,
-                photoAccess = photoAccess,
-                photoPartialAccess = photoPartialAccess,
-                callAccess = callAccess,
-                contactsAccess = contactsAccess,
-                smsAccess = smsAccess,
-                inputAccess = inputAccess,
-                elevated = elevated,
-                dndAccess = dndAccess,
-                writeSettingsAccess = writeSettingsAccess,
-                storageAllFilesAccess = storageAllFilesAccess,
-                storageSafFolders = storageSafFolders,
-                localNetwork = localNetwork,
-                devices = if (currentNode != null) {
-                    it.devices.map { d -> d.copy(storageEnabled = d.id in storageAllowed) }
-                } else {
-                    it.devices
-                },
-            )
-        }
-        if (granted && NotificationListener.instance == null) {
-            NotificationListenerService.requestRebind(NotificationListener.component(context))
-        }
-        if (node != null) {
-            scope.launch(Dispatchers.Main) {
-                toggles.start()
-                if (photoAccess) photos.start() else photos.stop()
-                if (PhoneCalls.canFollow(context) || PhoneCalls.canReadLog(context)) calls.start() else calls.stop()
-                if (contactsAccess) contacts.start() else contacts.stop()
-                if (PhoneSms.canRead(context)) sms.start() else sms.stop()
+        refreshAccessPending.set(true)
+        if (!refreshAccessRunning.compareAndSet(false, true)) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                while (refreshAccessPending.compareAndSet(true, false)) {
+                    val granted = NotificationListener.hasAccess(context)
+                    val sensitive = granted && NotificationListener.canReadSensitive(context)
+                    val becameSensitive = sensitive && !lastSensitiveAccess
+                    lastSensitiveAccess = sensitive
+                    val unrestricted = BackgroundAccess.isUnrestricted(context)
+                    val companionAssociated = PcCompanion.isAssociated(context)
+                    if (companionAssociated) {
+                        PcCompanion.startObservingPresence(context)
+                    }
+                    val photoAccess = RecentPhotos.hasAccess(context)
+                    val photoPartialAccess = RecentPhotos.hasPartialAccess(context)
+                    val callAccess = PhoneCalls.hasAll(context)
+                    val contactsAccess = PhoneContacts.canRead(context)
+                    val smsAccess = PhoneSms.hasAll(context)
+                    val inputEnabled = InputService.enabled(context)
+                    val elevated = Elevated.running
+                    val inputAccess = InputService.running || elevated || inputEnabled
+                    val dndAccess = PhoneToggles.hasDndAccess(context)
+                    val writeSettingsAccess = PhoneToggles.hasWriteSettings(context)
+                    val storageAllFilesAccess = PhoneStorage.hasAllFilesAccess(context)
+                    val storageSafFolders = PhoneStorage.safFolders(context).map { it.name }
+                    if (!storageAllFilesAccess) storage.stopWatching()
+                    val localNetwork = LocalNetwork.granted(context)
+                    if (localNetwork && !_state.value.localNetwork) {
+                        // Just allowed: reach the PCs now rather than at the next retry.
+                        scope.launch { node?.networkChanged() }
+                    }
+                    val prevPhotos = _state.value.photoAccess
+                    val currentNode = node
+                    val storageAllowed = if (currentNode != null) {
+                        _state.value.devices.mapNotNull { dev ->
+                            val devToggles = runCatching { currentNode.deviceToggles(dev.id) }.getOrDefault(emptyList())
+                            if (devToggles.any { it.name == PhoneStorage.TOGGLE_NAME && it.enabled }) dev.id else null
+                        }.toSet()
+                    } else {
+                        emptySet()
+                    }
+                    _state.update {
+                        it.copy(
+                            notificationAccess = granted,
+                            backgroundUnrestricted = unrestricted,
+                            companionAssociated = companionAssociated,
+                            photoAccess = photoAccess,
+                            photoPartialAccess = photoPartialAccess,
+                            callAccess = callAccess,
+                            contactsAccess = contactsAccess,
+                            smsAccess = smsAccess,
+                            inputAccess = inputAccess,
+                            elevated = elevated,
+                            remoteInputRequested = if (inputAccess) false else it.remoteInputRequested,
+                            dndAccess = dndAccess,
+                            writeSettingsAccess = writeSettingsAccess,
+                            storageAllFilesAccess = storageAllFilesAccess,
+                            storageSafFolders = storageSafFolders,
+                            localNetwork = localNetwork,
+                            devices = if (currentNode != null) {
+                                it.devices.map { d -> d.copy(storageEnabled = d.id in storageAllowed) }
+                            } else {
+                                it.devices
+                            },
+                        )
+                    }
+                    if (granted && NotificationListener.instance == null) {
+                        NotificationListenerService.requestRebind(NotificationListener.component(context))
+                    } else if (becameSensitive) {
+                        NotificationListener.instance?.refreshActive()
+                    }
+                    if (node != null) {
+                        scope.launch(Dispatchers.Main) {
+                            if (_state.value.devices.any { it.online }) toggles.start() else toggles.stop()
+                            if (photoAccess) photos.start() else photos.stop()
+                            if (PhoneCalls.canFollow(context) || PhoneCalls.canReadLog(context)) calls.start() else calls.stop()
+                            if (contactsAccess) contacts.start() else contacts.stop()
+                            if (PhoneSms.canRead(context)) sms.start() else sms.stop()
+                        }
+                        notificationOps.trySend {
+                            it.updatePower(powerLevel(), capabilities(_state.value.notificationAccess))
+                            if (photoAccess && (!prevPhotos || photoPartialAccess)) it.photosChanged()
+                        }
+                    }
+                }
+            } finally {
+                refreshAccessRunning.set(false)
+                if (refreshAccessPending.get()) {
+                    refreshNotificationAccess()
+                }
             }
-            notificationOps.trySend {
-                it.updatePower(powerLevel(), capabilities(_state.value.notificationAccess))
-                if (photoAccess && (!prevPhotos || photoPartialAccess)) it.photosChanged()
-            }
-            scope.launch(Dispatchers.IO) { refreshDataRetention() }
         }
     }
 
@@ -438,24 +608,112 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     val recordings = RecordingsStore(this.context)
 
     override fun onEvent(event: Event) {
-        _state.update { it.reduce(event) }
+        if (event is Event.Transfer) {
+            val transfer = event.transfer
+            val isRunningProgress = transfer.status is TransferStatus.Running &&
+                transfer.done > 0uL &&
+                (transfer.total == 0uL || transfer.done < transfer.total)
+            if (isRunningProgress) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val prev = lastTransferUiEmitMs[transfer.id] ?: 0L
+                val wasRunning = _state.value.transfers.firstOrNull { it.id == transfer.id }?.status is TransferStatus.Running
+                if (wasRunning && now - prev < 100L) {
+                    return
+                }
+                lastTransferUiEmitMs[transfer.id] = now
+            } else {
+                lastTransferUiEmitMs.remove(transfer.id)
+            }
+        }
+        if (event.affectsCoreState()) {
+            _state.update { it.reduce(event) }
+        }
         when (event) {
             is Event.Transfer -> onTransfer(event.transfer)
-            is Event.MediaChanged -> pcMedia.update(event.id, _state.value.nameOf(event.id).orEmpty(), event.players)
+            is Event.MediaChanged -> {
+                val pcName = _state.value.nameOf(event.id).orEmpty()
+                scope.launch(Dispatchers.Default) {
+                    pcMedia.update(event.id, pcName, event.players)
+                }
+            }
+            is Event.NotificationPosted -> scope.launch(Dispatchers.Default) {
+                pcNotificationPoster.post(event.id, event.notification)
+            }
+            is Event.NotificationRemoved -> scope.launch(Dispatchers.Default) {
+                pcNotificationPoster.cancel(event.id, event.key)
+            }
+            is Event.NotificationsReset -> scope.launch(Dispatchers.Default) {
+                pcNotificationPoster.reset(event.id, event.items)
+            }
+            is Event.PcAudioFrame -> pcSpeakerPlayer.playFrame(
+                event.sampleRate.toInt(),
+                event.channels.toInt(),
+                event.pcm,
+            )
+            is Event.PcMirrorConfig -> {
+                _pcMirrorConfig.value = PcMirrorConfigState(
+                    pcId = event.id,
+                    codec = event.codec,
+                    width = event.width.toInt(),
+                    height = event.height.toInt(),
+                )
+            }
+            is Event.PcMirrorFrame -> {
+                val pkt = PcMirrorPacket(
+                    pcId = event.id,
+                    keyframe = event.keyframe,
+                    timeUs = event.timeUs.toLong(),
+                    data = event.data,
+                )
+                if (pkt.keyframe) {
+                    lastPcMirrorKeyframe = pkt
+                }
+                _pcMirrorPackets.tryEmit(pkt)
+            }
+            is Event.PcMirrorEnded -> {
+                if (_pcMirrorConfig.value?.pcId == event.id) {
+                    _pcMirrorConfig.value = null
+                }
+                if (lastPcMirrorKeyframe?.pcId == event.id) {
+                    lastPcMirrorKeyframe = null
+                }
+            }
             // A PC that's gone isn't playing for this phone anymore; it
             // sends what plays when it's back.
             is Event.LinkChanged -> {
                 if (event.link is Link.Offline) {
-                    pcMedia.update(event.id, "", emptyList())
+                    scope.launch(Dispatchers.Default) {
+                        pcMedia.update(event.id, "", emptyList())
+                    }
+                    pcSpeakerPlayer.stop()
+                    if (_pcMirrorConfig.value?.pcId == event.id) {
+                        _pcMirrorConfig.value = null
+                    }
+                    if (lastPcMirrorKeyframe?.pcId == event.id) {
+                        lastPcMirrorKeyframe = null
+                    }
                 } else if (event.link is Link.Online) {
                     wakeTimers.remove(event.id)?.cancel()
                     retryWaitingRecordings(event.id)
+                    scope.launch(Dispatchers.Default) {
+                        accent.syncNow()
+                    }
                 }
             }
             is Event.DeviceAdded -> ConnectionService.start(context)
             is Event.DeviceRemoved -> {
                 wakeTimers.remove(event.id)?.cancel()
-                pcMedia.update(event.id, "", emptyList())
+                scope.launch(Dispatchers.Default) {
+                    pcMedia.update(event.id, "", emptyList())
+                    pcNotificationPoster.cancelAll(event.id)
+                }
+                pcSpeakerPlayer.stop()
+                if (_pcMirrorConfig.value?.pcId == event.id) {
+                    _pcMirrorConfig.value = null
+                }
+                if (lastPcMirrorKeyframe?.pcId == event.id) {
+                    lastPcMirrorKeyframe = null
+                }
                 if (_state.value.devices.isEmpty()) ConnectionService.stop(context)
             }
             is Event.Paired -> ConnectionService.start(context)
@@ -466,6 +724,20 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             }
             is Event.TimelineChanged -> scope.launch(Dispatchers.IO) { refreshTimeline() }
             is Event.LocalSendChanged -> scope.launch(Dispatchers.IO) { syncLocalSendState() }
+            is Event.QueueChanged -> refreshSendQueue()
+            is Event.QueueDroppedOnUnpair -> {
+                if (event.droppedCount > 0u) {
+                    val name = event.deviceName.ifBlank { context.getString(R.string.your_pc) }
+                    _messages.tryEmit(
+                        context.getString(
+                            R.string.send_queue_dropped_unpair,
+                            event.droppedCount.toInt(),
+                            name,
+                        ),
+                    )
+                }
+                refreshSendQueue()
+            }
             else -> {}
         }
     }
@@ -502,6 +774,12 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         scope.launch(Dispatchers.IO) {
             val published = done.saved.flatMap { ReceivedFiles.publish(context, java.io.File(it)) }
             if (published.isNotEmpty()) {
+                if (published.size == 1 && transfer.files <= 1u && !transfer.recording) {
+                    val first = published.first()
+                    val label = transfer.names.firstOrNull()?.takeIf(String::isNotBlank)
+                        ?: first.name.ifBlank { "File" }
+                    PhoneClipboard.setFileUri(context, first.uri, label)
+                }
                 val title = transferTitle(context.resources, transfer)
                 val detail = if (transfer.files > 1u) {
                     context.resources.getQuantityString(R.plurals.transfer_files, transfer.files.toInt(), transfer.files.toInt())
@@ -689,11 +967,12 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
 
     /**
      * Sends picked or shared files to a PC; problems arrive as messages.
-     * The files are opened right away: Android's permission to read a
-     * shared item ends with the activity that received it.
      */
-    fun sendFiles(pcId: String, uris: List<Uri>, handoff: Boolean = false) =
-        send(pcId, OutgoingFiles.open(context, uris), handoff)
+    fun sendFiles(pcId: String, uris: List<Uri>, handoff: Boolean = false) {
+        scope.launch(Dispatchers.IO) {
+            send(pcId, OutgoingFiles.open(context, uris), handoff)
+        }
+    }
 
     /** Sends a folder the user picked, with everything in it. */
     fun sendFolder(pcId: String, tree: Uri) {
@@ -719,6 +998,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         scope.launch(Dispatchers.IO) {
             startJob?.join()
             val node = node ?: return@launch
+            val wasOnline = _state.value.device(pcId)?.online == true
             try {
                 val singleFileName = if (files.size == 1) {
                     when (val f = files[0]) {
@@ -728,10 +1008,17 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                 } else {
                     null
                 }
-                if (handoff && singleFileName != null && app.nectarlink.core.isSafeHandoffDocument(singleFileName)) {
+                val returnedId = if (handoff && singleFileName != null && app.nectarlink.core.isSafeHandoffDocument(singleFileName)) {
                     node.sendHandoffFiles(pcId, files)
                 } else {
                     node.sendFiles(pcId, files)
+                }
+                refreshSendQueue()
+                if (!wasOnline) {
+                    val name = _state.value.nameOf(pcId).orEmpty()
+                    val qid = runCatching { node.latestQueuedIdForPeer(pcId) }.getOrNull()
+                        ?: returnedId.takeIf { it.isNotBlank() }
+                    emitOfflineQueuedNotice(pcId, name, qid)
                 }
             } catch (e: NectarlinkException) {
                 val name = _state.value.nameOf(pcId).orEmpty()
@@ -743,14 +1030,127 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     }
 
     fun acceptTransfer(id: String) {
-        node?.acceptTransfer(id)
+        scope.launch(Dispatchers.IO) { runCatching { node?.acceptTransfer(id) } }
     }
 
     fun cancelTransfer(id: String) {
-        node?.cancelTransfer(id)
+        scope.launch(Dispatchers.IO) { runCatching { node?.cancelTransfer(id) } }
     }
 
-    // ---- LocalSend interop ----
+    fun pauseTransfer(id: String) {
+        scope.launch(Dispatchers.IO) { runCatching { node?.pauseTransfer(id) } }
+    }
+
+    fun resumeTransfer(id: String) {
+        scope.launch(Dispatchers.IO) { runCatching { node?.resumeTransfer(id) } }
+    }
+
+    // ---- Send Queue ----
+
+    private val refreshQueueRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val refreshQueuePending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    fun refreshSendQueue() {
+        refreshQueuePending.set(true)
+        if (!refreshQueueRunning.compareAndSet(false, true)) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                while (refreshQueuePending.compareAndSet(true, false)) {
+                    val currentNode = node ?: break
+                    val items = runCatching { currentNode.sendQueue(null).map { it.toUi() } }.getOrDefault(emptyList())
+                    _state.update { prev ->
+                        val merged = items.map { item ->
+                            if (item.kind.isFileBacked() && item.status is app.nectarlink.core.FfiQueueStatus.Sending) {
+                                val targetId = item.activeTransferId ?: item.id
+                                val liveTransfer = prev.transfers.firstOrNull {
+                                    it.id == targetId && it.direction == TransferDirection.OUTGOING
+                                }
+                                val prevItem = prev.sendQueue.firstOrNull { it.id == item.id }
+                                val liveDone = maxOf(
+                                    item.bytesDone,
+                                    liveTransfer?.done?.toLong() ?: 0L,
+                                    prevItem?.bytesDone ?: 0L,
+                                )
+                                val liveTotal = if (item.totalBytes > 0L) {
+                                    item.totalBytes
+                                } else {
+                                    liveTransfer?.total?.toLong() ?: prevItem?.totalBytes ?: 0L
+                                }
+                                item.copy(
+                                    totalBytes = liveTotal.coerceAtLeast(0L),
+                                    bytesDone = liveDone.coerceIn(0L, liveTotal.coerceAtLeast(0L)),
+                                )
+                            } else {
+                                item
+                            }
+                        }
+                        prev.copy(sendQueue = merged)
+                    }
+                }
+            } finally {
+                refreshQueueRunning.set(false)
+                if (refreshQueuePending.get()) {
+                    refreshSendQueue()
+                }
+            }
+        }
+    }
+
+    fun cancelQueueItem(id: String) {
+        scope.launch(Dispatchers.IO) {
+            startJob?.join()
+            runCatching { node?.cancelQueueItem(id) }
+            refreshSendQueue()
+        }
+    }
+
+    fun cancelAllQueueItems(peerId: String? = null) {
+        scope.launch(Dispatchers.IO) {
+            startJob?.join()
+            runCatching { node?.cancelAllQueueItems(peerId) }
+            refreshSendQueue()
+        }
+    }
+
+    fun retryQueueItem(id: String) {
+        scope.launch(Dispatchers.IO) {
+            startJob?.join()
+            runCatching { node?.retryQueueItem(id) }
+            refreshSendQueue()
+        }
+    }
+
+    fun clearFinishedQueueItems(peerId: String? = null) {
+        scope.launch(Dispatchers.IO) {
+            startJob?.join()
+            runCatching { node?.clearFinishedQueueItems(peerId) }
+            refreshSendQueue()
+        }
+    }
+
+    private fun emitOfflineQueuedNotice(pcId: String, pcName: String, queueId: String? = null) {
+        val resolvedQueueId = queueId ?: runCatching { node?.latestQueuedIdForPeer(pcId) }.getOrNull()
+        val displayName = pcName.ifBlank { context.getString(R.string.your_pc) }
+        val message = context.getString(R.string.send_queue_offline_toast, displayName)
+        _queuedNotices.tryEmit(
+            OfflineQueuedNotice(
+                message = message,
+                queueId = resolvedQueueId,
+                peerId = pcId,
+            ),
+        )
+    }
+
+    // ---- LocalSend interop & Mobile Data (Away mode) ----
+
+    fun setAwayMode(enabled: Boolean) {
+        app.nectarlink.android.ui.Preferences.setAwayModeEnabled(context, enabled)
+        _state.update { it.copy(awayMode = enabled) }
+        scope.launch(Dispatchers.IO) {
+            startJob?.join()
+            runCatching { node?.setAwayMode(enabled) }
+        }
+    }
 
     fun setLocalSendEnabled(enabled: Boolean) {
         scope.launch(Dispatchers.IO) {
@@ -789,21 +1189,55 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
 
     // ---- Clipboard ----
 
+    @Volatile private var lastAutoSentClip: Pair<String, String?>? = null
+    @Volatile private var lastAutoSentAtMs: Long = 0L
+
     /**
-     * Sends text to every connected PC (or to `pcId` when chosen via Direct Share);
+     * Sends text (and optional HTML) to every connected PC (or to `pcId` when chosen via Direct Share);
      * returns what to tell the user. Waits for the core when the app was just launched.
      */
-    suspend fun sendClipboard(text: String, pcId: String? = null): String =
-        sendToPcs(image = false, pcId = pcId) { node, pc -> node.sendClipboard(pc, text) }
+    suspend fun sendClipboard(text: String, pcId: String? = null, html: String? = null): String =
+        sendToPcs(image = false, pcId = pcId) { node, pc -> node.sendClipboardRich(pc, text, html, null) }
 
-    /** Sends a copied image to the connected PCs (or to `pcId`); returns what to tell the user. */
+    /**
+     * Automatically sends non-sensitive text copied in the background while Elevated mode is running.
+     * Skips clips Nectarlink itself wrote from a PC (`PhoneClipboard.isRecentEcho`).
+     */
+    fun onElevatedClipboardChanged(text: String, html: String?) {
+        if (text.isBlank() || PhoneClipboard.isRecentEcho(text, html)) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val key = text to html
+        if (lastAutoSentClip == key && (now - lastAutoSentAtMs) in 0..1_500L) return
+        lastAutoSentClip = key
+        lastAutoSentAtMs = now
+        PhoneClipboard.recordLocalCopy(text, html)
+        scope.launch(Dispatchers.IO) {
+            if (Build.FINGERPRINT.startsWith("generic") || Build.HARDWARE.contains("ranchu")) {
+                delay(80)
+            }
+            startJob?.join()
+            val currentNode = node ?: return@launch
+            val onlinePcs = _state.value.devices.filter { it.online }
+            for (pc in onlinePcs) {
+                runCatching { currentNode.sendClipboardRich(pc.id, text, html, null) }
+                    .onFailure { Log.d(TAG, "auto clipboard not sent to ${pc.id}: $it") }
+            }
+        }
+    }
+
+    private fun targetPcsForSend(pcId: String?): List<Device> {
+        val all = _state.value.devices
+        if (pcId != null) {
+            return all.filter { it.id == pcId }
+        }
+        val online = all.filter { it.online }
+        return if (online.isNotEmpty()) online else all
+    }
+
+    /** Sends a copied image to the connected PCs (or to `pcId`, queueing if offline); returns what to tell the user. */
     suspend fun sendClipboardImage(uri: Uri, pcId: String? = null): String {
         startJob?.join()
-        val targets = if (pcId != null) {
-            _state.value.devices.filter { it.id == pcId && it.online }
-        } else {
-            _state.value.devices.filter { it.online }
-        }
+        val targets = targetPcsForSend(pcId)
         if (targets.isEmpty()) return context.getString(R.string.clip_no_pc)
         val image = when (val read = withContext(Dispatchers.IO) { PhoneClipboard.readImage(context, uri) }) {
             is PhoneClipboard.ImageResult.Ready -> read.image
@@ -820,18 +1254,22 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     ): String {
         startJob?.join()
         val node = node ?: return context.getString(R.string.clip_no_pc)
-        val pcs = if (pcId != null) {
-            _state.value.devices.filter { it.id == pcId && it.online }
-        } else {
-            _state.value.devices.filter { it.online }
-        }
+        val pcs = targetPcsForSend(pcId)
         if (pcs.isEmpty()) return context.getString(R.string.clip_no_pc)
         val sentTo = mutableListOf<String>()
+        val queuedTo = mutableListOf<Device>()
+        var lastQueueId: String? = null
         var failure: String? = null
         for (pc in pcs) {
+            val wasOnline = pc.online
             try {
                 send(node, pc.id)
-                sentTo += pc.name
+                if (wasOnline) {
+                    sentTo += pc.name
+                } else {
+                    queuedTo += pc
+                    lastQueueId = runCatching { node.latestQueuedIdForPeer(pc.id) }.getOrNull()
+                }
             } catch (e: NectarlinkException) {
                 failure = when (e) {
                     is NectarlinkException.Denied -> context.getString(R.string.clip_off_for, pc.name)
@@ -842,6 +1280,21 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                         if (image) context.getString(R.string.clip_image_unsupported, pc.name) else describe(e)
                     else -> describe(e)
                 }
+            }
+        }
+        if (queuedTo.isNotEmpty()) {
+            refreshSendQueue()
+            val names = queuedTo.joinToString { it.name }
+            val msg = context.getString(R.string.send_queue_offline_toast, names)
+            _queuedNotices.tryEmit(
+                OfflineQueuedNotice(
+                    message = msg,
+                    queueId = if (queuedTo.size == 1) lastQueueId else null,
+                    peerId = queuedTo.singleOrNull()?.id,
+                ),
+            )
+            if (sentTo.isEmpty()) {
+                return msg
             }
         }
         return if (sentTo.isNotEmpty()) context.getString(R.string.clip_sent_to, sentTo.joinToString()) else failure.orEmpty()
@@ -960,7 +1413,10 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     fun clearTimeline() {
         scope.launch(Dispatchers.IO) {
             startJob?.join()
-            runCatching { node?.clearTimeline() }
+            runCatching { node?.clearTimeline() }.onFailure {
+                Log.w(TAG, "couldn't clear the Timeline", it)
+                _messages.tryEmit(context.getString(R.string.data_clear_failed))
+            }
             refreshTimeline()
         }
     }
@@ -1003,7 +1459,10 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                     runCatching { file.delete() }
                 }
             }
-            runCatching { node?.clearMessageCache() }
+            runCatching { node?.clearMessageCache() }.onFailure {
+                Log.w(TAG, "couldn't clear the message cache", it)
+                _messages.tryEmit(context.getString(R.string.data_clear_failed))
+            }
             refreshDataRetention()
         }
     }
@@ -1027,7 +1486,10 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                 runCatching { file.deleteRecursively() }
             }
             _state.update { s -> s.copy(transfers = s.transfers.filterNot { it.isFinished() }) }
-            runCatching { node?.clearReceivedFileHistory() }
+            runCatching { node?.clearReceivedFileHistory() }.onFailure {
+                Log.w(TAG, "couldn't clear the received file history", it)
+                _messages.tryEmit(context.getString(R.string.data_clear_failed))
+            }
             refreshTimeline()
             refreshDataRetention()
         }
@@ -1036,7 +1498,9 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     fun clearEverything() {
         scope.launch(Dispatchers.IO) {
             startJob?.join()
-            runCatching { node?.clearAllLocalData() }
+            val failed = runCatching { node?.clearAllLocalData() }
+                .onFailure { Log.w(TAG, "couldn't clear local data", it) }
+                .isFailure
             listOf("mms", "continuity_camera", "clipboard", "received").forEach { dirName ->
                 java.io.File(context.cacheDir, dirName).listFiles()?.forEach { file ->
                     runCatching { file.deleteRecursively() }
@@ -1045,8 +1509,11 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             _state.update { s -> s.copy(transfers = s.transfers.filterNot { it.isFinished() }) }
             refreshClipboardHistory()
             refreshTimeline()
+            refreshSendQueue()
             refreshDataRetention()
-            _messages.tryEmit(context.getString(R.string.data_cleared_everything_toast))
+            _messages.tryEmit(
+                context.getString(if (failed) R.string.data_clear_failed else R.string.data_cleared_everything_toast),
+            )
         }
     }
 
@@ -1055,19 +1522,28 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             startJob?.join()
             val currentNode = node ?: return@launch
             val pcName = _state.value.nameOf(entry.deviceId).orEmpty().ifEmpty { context.getString(R.string.your_pc) }
+            val wasOnline = _state.value.device(entry.deviceId)?.online == true
             when (entry.kind) {
                 TimelineKind.CLIP -> {
                     val clipId = entry.refId ?: return@launch
                     try {
                         currentNode.resendClipboardHistory(clipId, entry.deviceId)
-                        _messages.tryEmit(context.getString(R.string.clip_sent_to, pcName))
+                        if (wasOnline) {
+                            _messages.tryEmit(context.getString(R.string.clip_sent_to, pcName))
+                        } else {
+                            refreshSendQueue()
+                            emitOfflineQueuedNotice(entry.deviceId, pcName)
+                        }
                     } catch (e: NectarlinkException) {
                         _messages.tryEmit(describe(e))
                     }
                 }
                 TimelineKind.LINK -> {
                     val url = entry.target.ifEmpty { entry.title }
-                    _messages.tryEmit(openLinkOnPc(entry.deviceId, url))
+                    val msg = openLinkOnPc(entry.deviceId, url)
+                    if (wasOnline) {
+                        _messages.tryEmit(msg)
+                    }
                 }
                 TimelineKind.FILE, TimelineKind.PHOTO, TimelineKind.RECORDING -> {
                     val target = entry.target
@@ -1113,6 +1589,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         CLIPBOARD_CAPABILITIES +
             toggles.capabilities() +
             (if (notificationAccess) NOTIFICATION_CAPABILITIES + MEDIA_CAPABILITIES else emptyList()) +
+            (if (notificationAccess && NotificationListener.canReadSensitive(context)) listOf("notify.sensitive") else emptyList()) +
             (if (_state.value.photoAccess) PHOTO_CAPABILITIES else emptyList()) +
             (if (PhoneCalls.canFollow(context)) listOf("call.state") else emptyList()) +
             (if (PhoneCalls.canControl(context)) listOf("call.control") else emptyList()) +
@@ -1126,10 +1603,23 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             (if (WebcamService.hasPermission(context)) listOf("camera.stream") else emptyList()) +
             (if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) listOf("camera.capture") else emptyList()) +
             (if (InputService.running || Elevated.running) listOf("mirror.input") else emptyList()) +
+            (if (Elevated.running) listOf("clip.read.auto") else emptyList()) +
             // Apps in windows of their own run on displays the Elevated helper makes.
             (if (Elevated.running && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) listOf("mirror.virtual_display") else emptyList()) +
-            // Asked for when a PC wants the sound.
-            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) listOf("mirror.audio.playback") else emptyList())
+            // Asked for when a PC wants the sound, or streamed via Elevated helper.
+            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q || Elevated.running) listOf("mirror.audio.playback") else emptyList())
+
+    /**
+     * Triggers an immediate network/presence reconnect (e.g. when woken by
+     * CompanionDeviceService on BLE proximity beacon appearance).
+     */
+    fun reconnectNow() {
+        start()
+        scope.launch {
+            node?.networkChanged()
+            if (!Elevated.running) Elevated.start()
+        }
+    }
 
     /**
      * Elevated while the wireless debugging helper runs, Assist when the
@@ -1183,13 +1673,13 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
 
     fun confirmCode(matches: Boolean) {
         val comparing = _state.value.pairing as? PairingState.Comparing ?: return
-        runCatching { node?.pairingConfirm(matches) }
         _state.update {
             it.copy(
                 pairing = if (matches) PairingState.Confirmed(comparing.peer, comparing.code)
                 else PairingState.Failed(PairingFailure.Declined),
             )
         }
+        scope.launch(Dispatchers.IO) { runCatching { node?.pairingConfirm(matches) } }
     }
 
     /** Keeps local discovery working while the pairing screen is open. */
@@ -1198,8 +1688,8 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     }
 
     fun resetPairing() {
-        node?.pairingCancel()
         _state.update { it.copy(pairing = PairingState.Idle) }
+        scope.launch(Dispatchers.IO) { runCatching { node?.pairingCancel() } }
     }
 
     // ---- Devices ----
@@ -1272,6 +1762,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         startJob?.join()
         val node = node ?: return context.getString(R.string.clip_no_pc)
         val name = _state.value.nameOf(id).orEmpty()
+        val wasOnline = _state.value.device(id)?.online == true
         val handoff = app.nectarlink.core.extractHandoffLink(url)
         val finalUrl = if (
             handoff != null &&
@@ -1285,7 +1776,22 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         }
         return try {
             node.openLink(id, finalUrl)
-            context.getString(R.string.link_opened_on, name)
+            if (wasOnline) {
+                context.getString(R.string.link_opened_on, name)
+            } else {
+                refreshSendQueue()
+                val qid = runCatching { node.latestQueuedIdForPeer(id) }.getOrNull()
+                val displayName = name.ifBlank { context.getString(R.string.your_pc) }
+                val msg = context.getString(R.string.send_queue_offline_toast, displayName)
+                _queuedNotices.tryEmit(
+                    OfflineQueuedNotice(
+                        message = msg,
+                        queueId = qid,
+                        peerId = id,
+                    ),
+                )
+                msg
+            }
         } catch (e: NectarlinkException) {
             describe(e)
         }
@@ -1309,9 +1815,45 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         }
     }
 
-    /** Moves a PC's cursor by `(dx, dy)` logical pixels over QUIC datagrams. */
+    private val pendingMoveLock = Any()
+    private var pendingMovePcId: String? = null
+    private var pendingMoveDx: Float = 0f
+    private var pendingMoveDy: Float = 0f
+    private var pendingMoveQueued: Boolean = false
+
+    /** Moves a PC's cursor by `(dx, dy)` logical pixels over QUIC datagrams, coalescing rapid 120Hz touch samples. */
     fun remoteMove(id: String, dx: Float, dy: Float) {
-        remoteOps.trySend { runCatching { it.remoteMove(id, dx, dy) } }
+        val shouldQueue = synchronized(pendingMoveLock) {
+            if (pendingMovePcId != null && pendingMovePcId != id) {
+                pendingMoveDx = 0f
+                pendingMoveDy = 0f
+            }
+            pendingMovePcId = id
+            pendingMoveDx += dx
+            pendingMoveDy += dy
+            if (!pendingMoveQueued) {
+                pendingMoveQueued = true
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldQueue) {
+            remoteOps.trySend { node ->
+                val (targetId, totalDx, totalDy) = synchronized(pendingMoveLock) {
+                    val t = pendingMovePcId
+                    val x = pendingMoveDx
+                    val y = pendingMoveDy
+                    pendingMoveDx = 0f
+                    pendingMoveDy = 0f
+                    pendingMoveQueued = false
+                    Triple(t, x, y)
+                }
+                if (targetId != null && (totalDx != 0f || totalDy != 0f)) {
+                    runCatching { node.remoteMove(targetId, totalDx, totalDy) }
+                }
+            }
+        }
     }
 
     /** Scrolls on a PC (`dy` > 0 scrolls down, `dx` > 0 scrolls right, in wheel notches). */
@@ -1342,6 +1884,41 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     /** Moves or hides the laser pointer on a PC (`x`, `y` in `0..1`). */
     fun remoteLaser(id: String, on: Boolean, x: Float = 0.5f, y: Float = 0.5f) {
         remoteOps.trySend { runCatching { it.remoteLaser(id, on, x, y) } }
+    }
+
+    /** Asks a paired PC to start streaming its desktop screen to this phone (`mirror.start`, session 0). */
+    fun startPcMirror(id: String, maxSize: Int = 1280, fps: Int = 30, bitrate: Int = 4_000_000) {
+        command {
+            it.startPcMirror(
+                id,
+                maxSize.coerceIn(320, 1920).toUInt(),
+                fps.coerceIn(10, 60).toUInt(),
+                bitrate.coerceIn(500_000, 20_000_000).toUInt(),
+            )
+        }
+    }
+
+    /** Stops an active PC-to-phone screen mirror session (`mirror.stop`, session 0). */
+    fun stopPcMirror(id: String) {
+        if (_pcMirrorConfig.value?.pcId == id) {
+            _pcMirrorConfig.value = null
+        }
+        if (lastPcMirrorKeyframe?.pcId == id) {
+            lastPcMirrorKeyframe = null
+        }
+        scope.launch(Dispatchers.IO) {
+            runCatching { node?.mirrorStop(id, 0u) }
+        }
+    }
+
+    /** Requests an immediate IDR keyframe from a paired PC streaming its screen. */
+    fun requestPcMirrorKeyframe(id: String) {
+        remoteOps.trySend { runCatching { it.requestPcMirrorKeyframe(id) } }
+    }
+
+    /** Sends a normalized touch, scroll, key, or text event to a paired PC during reverse mirroring. */
+    fun sendPcMirrorInput(id: String, input: app.nectarlink.core.MirrorInputEvent) {
+        remoteOps.trySend { runCatching { it.sendPcMirrorInput(id, input) } }
     }
 
     private fun remoteCommand(onStatus: ((RemoteAccess) -> Unit)?, block: suspend (NectarlinkNode) -> Unit) {
@@ -1384,19 +1961,38 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         }
     }
 
-    /** Sets the PC's master volume (`0..=100`) and/or mute state (`pc.audio.set`). */
+    /** Sets the PC's master volume (`0..=100` or `200`/`201` for phone speaker relay) and/or mute state (`pc.audio.set`). */
     fun setPcAudio(id: String, volume: Int? = null, muted: Boolean? = null) {
-        val clampedVol = volume?.coerceIn(0, 100)?.toUByte()
-        // Optimistic local state update so the slider and mute button don't snap back while the RPC runs.
+        val isSpeakerRelayToggle = volume == 200 || volume == 201
+        val wireVol = if (isSpeakerRelayToggle) {
+            volume.toUByte()
+        } else {
+            volume?.coerceIn(0, 100)?.toUByte()
+        }
+        // Optimistic local state update so the slider, mute button, and phone speaker switch don't snap back while the RPC runs.
         _state.update { s ->
             val current = s.device(id)?.deckState
             if (current != null) {
+                val updatedOutputs = when (volume) {
+                    201 -> if (current.outputDevices.any { it.id == "nectarlink:phone_speaker" }) {
+                        current.outputDevices
+                    } else {
+                        current.outputDevices + app.nectarlink.core.AudioOutputDevice(
+                            id = "nectarlink:phone_speaker",
+                            name = "Phone speaker (Nectarlink)",
+                            isDefault = false,
+                        )
+                    }
+                    200 -> current.outputDevices.filterNot { it.id == "nectarlink:phone_speaker" }
+                    else -> current.outputDevices
+                }
                 s.reduce(
                     Event.DeckState(
                         id = id,
                         state = current.copy(
-                            volume = clampedVol ?: current.volume,
+                            volume = if (isSpeakerRelayToggle) current.volume else (wireVol ?: current.volume),
                             muted = muted ?: current.muted,
+                            outputDevices = updatedOutputs,
                         ),
                     ),
                 )
@@ -1406,7 +2002,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         }
         remoteOps.trySend { node ->
             try {
-                node.setPcAudio(id, clampedVol, muted)
+                node.setPcAudio(id, wireVol, muted)
             } catch (e: NectarlinkException) {
                 if (e is NectarlinkException.Denied) {
                     val name = _state.value.nameOf(id).orEmpty()
@@ -1422,11 +2018,14 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
 
     /** Turns phone storage access in File Explorer on or off for `pcId` (off by default). */
     fun setStorageEnabled(pcId: String, enabled: Boolean) {
-        val currentNode = node ?: return
-        runCatching { currentNode.setDeviceToggle(pcId, PhoneStorage.TOGGLE_NAME, enabled) }
         _state.update { it.withStorageEnabled(pcId, enabled) }
-        notificationOps.trySend {
-            it.updatePower(powerLevel(), capabilities(_state.value.notificationAccess))
+        scope.launch(Dispatchers.IO) {
+            startJob?.join()
+            val currentNode = node ?: return@launch
+            runCatching { currentNode.setDeviceToggle(pcId, PhoneStorage.TOGGLE_NAME, enabled) }
+            notificationOps.trySend {
+                it.updatePower(powerLevel(), capabilities(_state.value.notificationAccess))
+            }
         }
     }
 
@@ -1442,6 +2041,59 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     fun removeSafFolder(name: String) {
         PhoneStorage.removeSafFolder(context, name)
         refreshNotificationAccess()
+    }
+
+    /** Lists files and folders in `path` on a paired PC (`storage.list`). */
+    fun listPcFiles(
+        deviceId: String,
+        path: String,
+        onResult: (List<RemoteStorageEntry>) -> Unit,
+    ) {
+        scope.launch(Dispatchers.IO) {
+            startJob?.join()
+            val entries = runCatching { node?.listRemoteStorage(deviceId, path).orEmpty() }
+                .getOrDefault(emptyList())
+            withContext(Dispatchers.Main) {
+                onResult(entries)
+            }
+        }
+    }
+
+    /** Downloads `remotePath` from a paired PC (`storage.read`) and saves it into Downloads. */
+    fun downloadPcFile(
+        deviceId: String,
+        remotePath: String,
+        fileName: String,
+        onSaved: (Uri?) -> Unit,
+    ) {
+        scope.launch(Dispatchers.IO) {
+            startJob?.join()
+            val currentNode = node
+            if (currentNode == null) {
+                withContext(Dispatchers.Main) { onSaved(null) }
+                return@launch
+            }
+            val cacheDir = java.io.File(context.cacheDir, "pc_downloads").apply { mkdirs() }
+            val safeName = fileName.replace(Regex("""[\\/:*?"<>|]"""), "_").ifBlank { "file" }
+            val tempFile = java.io.File(cacheDir, "${System.currentTimeMillis()}_$safeName")
+            val ok = runCatching {
+                currentNode.downloadRemoteStorage(deviceId, remotePath, tempFile.absolutePath)
+            }.getOrDefault(false)
+            val savedUri = if (ok && tempFile.exists()) {
+                ReceivedFiles.saveToDownloads(context, tempFile, safeName)
+            } else {
+                null
+            }
+            runCatching { tempFile.delete() }
+            withContext(Dispatchers.Main) {
+                onSaved(savedUri)
+            }
+        }
+    }
+
+    /** Asks an online relay peer to broadcast a Wake-on-LAN magic packet (`wake.relay`). */
+    fun wakeViaRelay(relayPeerId: String, mac: String, broadcast: String? = null) {
+        command { it.wakeViaRelay(relayPeerId, mac, broadcast) }
     }
 
     /** Reconnects to PCs that aren't connected and syncs connected ones. */
@@ -1492,6 +2144,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         is NectarlinkException.NotPaired -> context.getString(R.string.error_not_paired)
         is NectarlinkException.Timeout -> context.getString(R.string.error_timed_out)
         is NectarlinkException.Unsupported -> context.getString(R.string.error_unsupported)
+        is NectarlinkException.QueueFull -> e.reason.ifBlank { context.getString(R.string.send_queue_full) }
         else -> context.getString(R.string.error_generic)
     }
 
@@ -1504,7 +2157,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         /** Sharing this phone's players, which also needs notification access. */
         val MEDIA_CAPABILITIES = listOf("media.control")
         /** Accepting the PC's clipboard, and sending this one when asked. */
-        val CLIPBOARD_CAPABILITIES = listOf("clip.write", "clip.share", "mirror.capture")
+        val CLIPBOARD_CAPABILITIES = listOf("clip.write", "clip.share", "mirror.capture", "mirror.view")
         /** With access to the phone's photos. */
         val PHOTO_CAPABILITIES = listOf("photos.read")
     }

@@ -97,6 +97,10 @@ pub mod types {
     pub const CAMERA_CAPTURE_REQUEST: &str = "camera.capture.request";
     pub const CAMERA_CAPTURE_OK: &str = "camera.capture.ok";
     pub const CAMERA_CAPTURE_CANCEL: &str = "camera.capture.cancel";
+    pub const FILES_RESUME: &str = "files.resume";
+    pub const FILES_CANCEL: &str = "files.cancel";
+    pub const WAKE_RELAY: &str = "wake.relay";
+    pub const AUDIO_PCM: &str = "audio.pcm";
 }
 
 /// What kind of device this is.
@@ -328,13 +332,27 @@ pub struct DeviceInfo {
     /// Optional measured front-display geometry for phones/tablets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen: Option<ScreenShape>,
+    /// Identifies the physical device across app reinstalls (a new identity key each
+    /// time), so a re-paired device replaces its old entry instead of appearing twice.
+    /// A salted hash, never the raw platform ID; see `install_id_from`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_id: Option<String>,
 }
 
 impl DeviceInfo {
     pub fn sanitized(mut self) -> Self {
         self.screen = self.screen.and_then(ScreenShape::sanitized);
+        self.install_id = self.install_id.filter(|id| is_valid_install_id(id));
         self
     }
+}
+
+/// Length of an install ID in hex characters (128 bits).
+pub const INSTALL_ID_LEN: usize = 32;
+
+/// Whether `id` is a well-formed install ID: lowercase hex, [`INSTALL_ID_LEN`] long.
+pub fn is_valid_install_id(id: &str) -> bool {
+    id.len() == INSTALL_ID_LEN && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,6 +395,15 @@ pub struct Battery {
     /// Estimated minutes until full when charging (`BatteryManager.computeChargeTimeRemaining()`), if known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_in: Option<u16>,
+    /// Cellular signal strength in bars (`0..=4`), if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_bars: Option<u8>,
+    /// Cellular network generation/type (`"5G"`, `"LTE"`, `"4G"`, `"3G"`, `"2G"`), if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_type: Option<String>,
+    /// Wi-Fi signal strength in bars (`0..=4`), if connected to Wi-Fi and known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wifi_bars: Option<u8>,
 }
 
 impl Battery {
@@ -389,6 +416,10 @@ impl Battery {
         {
             self.full_in = None;
         }
+        self.cell_bars = self.cell_bars.map(|b| b.min(4));
+        self.cell_type =
+            clean_text(self.cell_type.map(|s| s.chars().filter(|c| !c.is_control()).collect()), 8);
+        self.wifi_bars = self.wifi_bars.map(|b| b.min(4));
         self
     }
 }
@@ -1153,6 +1184,24 @@ impl PcWakeInfo {
     }
 }
 
+/// Relayed Wake-on-LAN request (`wake.relay`): sent to an online paired peer on
+/// the target LAN asking it to broadcast a UDP magic packet for `mac`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WakeRelay {
+    pub mac: [u8; 6],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broadcast: Option<String>,
+}
+
+/// Low-latency PCM audio frame (`audio.pcm`) streamed from a PC to a phone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioPcmFrame {
+    pub sample_rate: u32,
+    pub channels: u8,
+    #[serde(with = "serde_bytes")]
+    pub pcm: Vec<u8>,
+}
+
 // ---- Screen mirroring (docs/protocol/mirror.md) ----
 
 pub mod mirror {
@@ -1170,6 +1219,8 @@ pub mod mirror {
     /// Typed text in one message: at most this many bytes.
     pub const MAX_TEXT_BYTES: usize = 4096;
     pub const H264: &str = "h264";
+    pub const H265: &str = "h265";
+    pub const AV1: &str = "av1";
     /// Offered by phones that stream all their sound while mirrored.
     pub const AUDIO: &str = "mirror.audio";
     /// Offered by phones that stream the sound of apps that allow it.
@@ -1301,7 +1352,7 @@ pub struct PhoneApps {
     pub apps: Vec<PhoneApp>,
 }
 
-/// Body of `mirror.input`: the PC's mouse and keyboard, on the mirrored
+/// Body of `mirror.input`: the PC's mouse, keyboard, and gamepad on the mirrored
 /// screen. Positions are fractions of the screen (0 at the left or top, 1
 /// at the right or bottom), so they hold at any size.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -1316,6 +1367,8 @@ pub enum MirrorInput {
     Key { key: String },
     /// Typed text, into what has the focus.
     Text { text: String },
+    /// Gamepad controller state (XInput-style buttons bitmask, stick axes, and triggers).
+    Gamepad { buttons: u16, lx: i16, ly: i16, rx: i16, ry: i16, lt: u8, rt: u8 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1383,6 +1436,7 @@ impl std::fmt::Debug for MirrorInput {
             MirrorInput::Scroll { .. } => f.write_str("Scroll"),
             MirrorInput::Key { key } => write!(f, "Key({key})"),
             MirrorInput::Text { text } => write!(f, "Text({} bytes)", text.len()),
+            MirrorInput::Gamepad { buttons, .. } => write!(f, "Gamepad({buttons:#06x})"),
         }
     }
 }
@@ -1402,6 +1456,7 @@ impl MirrorInput {
             }
             MirrorInput::Key { key } => mirror_keys::ALL.contains(&key.as_str()),
             MirrorInput::Text { text } => !text.is_empty() && text.len() <= mirror::MAX_TEXT_BYTES,
+            MirrorInput::Gamepad { .. } => true,
         }
     }
 }
@@ -1421,7 +1476,7 @@ pub struct MirrorConfig {
 impl MirrorConfig {
     pub fn to_cbor(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        ciborium::into_writer(self, &mut out).expect("writing to a Vec cannot fail");
+        let _ = ciborium::into_writer(self, &mut out);
         out
     }
 
@@ -1429,9 +1484,11 @@ impl MirrorConfig {
         ciborium::from_reader(bytes).map_err(|e| crate::ProtocolError::BadMessage(e.to_string()))
     }
 
-    /// A format this version can show: H.264, 1–8192 pixels a side.
+    /// A format this version can show: H.264, H.265, or AV1, 1-8192 pixels a side.
     pub fn is_valid(&self) -> bool {
-        self.codec == mirror::H264 && (1..=8192).contains(&self.width) && (1..=8192).contains(&self.height)
+        matches!(self.codec.as_str(), mirror::H264 | mirror::H265 | mirror::AV1)
+            && (1..=8192).contains(&self.width)
+            && (1..=8192).contains(&self.height)
     }
 }
 
@@ -1449,7 +1506,7 @@ pub struct MirrorAudioConfig {
 impl MirrorAudioConfig {
     pub fn to_cbor(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        ciborium::into_writer(self, &mut out).expect("writing to a Vec cannot fail");
+        let _ = ciborium::into_writer(self, &mut out);
         out
     }
 
@@ -1457,7 +1514,7 @@ impl MirrorAudioConfig {
         ciborium::from_reader(bytes).map_err(|e| crate::ProtocolError::BadMessage(e.to_string()))
     }
 
-    /// A format this version can play: PCM, 8–96 kHz, mono or stereo.
+    /// A format this version can play: PCM, 8-96 kHz, mono or stereo.
     pub fn is_valid(&self) -> bool {
         self.codec == mirror::PCM && (8_000..=96_000).contains(&self.rate) && (1..=2).contains(&self.channels)
     }
@@ -1558,7 +1615,7 @@ pub struct WebcamConfig {
 impl WebcamConfig {
     pub fn to_cbor(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        ciborium::into_writer(self, &mut out).expect("writing to a Vec cannot fail");
+        let _ = ciborium::into_writer(self, &mut out);
         out
     }
 
@@ -1818,8 +1875,21 @@ impl std::fmt::Debug for SmsAttachment {
 
 impl SmsAttachment {
     pub fn is_valid(&self) -> bool {
-        matches!(self.mime.as_str(), "image/jpeg" | "image/png")
-            && !self.data.is_empty()
+        matches!(
+            self.mime.as_str(),
+            "image/jpeg"
+                | "image/png"
+                | "image/gif"
+                | "image/webp"
+                | "audio/mp4"
+                | "audio/m4a"
+                | "audio/aac"
+                | "audio/mpeg"
+                | "audio/ogg"
+                | "audio/wav"
+                | "audio/amr"
+                | "audio/3gpp"
+        ) && !self.data.is_empty()
             && self.data.len() <= sms::MAX_ATTACHMENT_BYTES
     }
 }
@@ -1928,7 +1998,7 @@ pub mod calls {
     pub const EARPIECE: &str = "earpiece";
     pub const HOLD: &str = "hold";
     pub const UNHOLD: &str = "unhold";
-    /// A keypad tone: `digit` is one of `0`–`9`, `*`, `#`.
+    /// A keypad tone: `digit` is one of `0`-`9`, `*`, `#`.
     pub const DTMF: &str = "dtmf";
     pub const VOLUME_UP: &str = "volume_up";
     pub const VOLUME_DOWN: &str = "volume_down";
@@ -2017,7 +2087,7 @@ pub struct CallAction {
     pub digit: Option<String>,
 }
 
-/// Whether `digit` is a keypad key (`0`–`9`, `*`, `#`).
+/// Whether `digit` is a keypad key (`0`-`9`, `*`, `#`).
 pub fn is_dtmf_digit(digit: &str) -> bool {
     digit.len() == 1 && digit.chars().all(|c| c.is_ascii_digit() || c == '*' || c == '#')
 }
@@ -2242,7 +2312,7 @@ impl PhotoNew {
     }
 }
 
-/// Whether a photo ID is 1–64 printable ASCII characters.
+/// Whether a photo ID is 1-64 printable ASCII characters.
 pub fn is_valid_photo_id(id: &str) -> bool {
     (1..=photos::MAX_ID_BYTES).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_graphic())
 }
@@ -2411,12 +2481,18 @@ pub struct PhotosChanged {}
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkOpen {
     pub url: String,
+    /// Optional human-readable title (e.g. the active video's title from the sender's media player).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
-/// Never prints the link (protocol v0 §11).
+/// Never prints the link or title (protocol v0 §11).
 impl std::fmt::Debug for LinkOpen {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LinkOpen").field("bytes", &self.url.len()).finish()
+        f.debug_struct("LinkOpen")
+            .field("bytes", &self.url.len())
+            .field("has_title", &self.title.is_some())
+            .finish()
     }
 }
 
@@ -2524,8 +2600,12 @@ pub mod files {
     pub const OFFER: &str = "files.offer";
     pub const ACCEPT: &str = "files.accept";
     pub const DONE: &str = "files.done";
+    pub const RESUME: &str = "files.resume";
+    pub const CANCEL: &str = "files.cancel";
     /// Stream reset code for a cancelled transfer.
     pub const CANCELLED: u32 = 10;
+    /// Stream reset code for a manually paused transfer (receiver keeps `.part` files).
+    pub const PAUSED: u32 = 11;
     pub const MAX_FILES: usize = 5000;
     pub const MAX_NAME_BYTES: usize = 255;
     /// A file's folder: at most this many bytes and this many levels.
@@ -2578,12 +2658,23 @@ pub struct FileEntry {
     /// names, starting with the sent folder's own (`Trip/Day 1`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
+    /// Optional lowercase 64-character hex BLAKE3 digest of the file's full bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blake3: Option<String>,
 }
 
 /// Never prints the name (protocol v0 §11).
 impl std::fmt::Debug for FileEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileEntry").field("size", &self.size).finish_non_exhaustive()
+    }
+}
+
+impl FileEntry {
+    pub fn is_valid(&self) -> bool {
+        is_valid_file_name(&self.name)
+            && self.folder.as_deref().is_none_or(is_valid_folder)
+            && self.blake3.as_deref().is_none_or(is_valid_blake3_hex)
     }
 }
 
@@ -2623,6 +2714,18 @@ pub struct FilesAccept {
     pub have: Vec<u64>,
 }
 
+/// Body of `files.resume` and `files.cancel` control messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FilesControl {
+    pub id: String,
+}
+
+impl FilesControl {
+    pub fn is_valid(&self) -> bool {
+        is_valid_transfer_id(&self.id)
+    }
+}
+
 /// Whether a name is a plain file name the spec allows (no path, no
 /// control characters, not `.` or `..`).
 pub fn is_valid_file_name(name: &str) -> bool {
@@ -2633,7 +2736,7 @@ pub fn is_valid_file_name(name: &str) -> bool {
         && !name.chars().any(|c| c == '/' || c == '\\' || c.is_control())
 }
 
-/// Whether a folder is 1–32 valid names joined by `/`, in at most
+/// Whether a folder is 1-32 valid names joined by `/`, in at most
 /// [`files::MAX_FOLDER_BYTES`].
 pub fn is_valid_folder(folder: &str) -> bool {
     folder.len() <= files::MAX_FOLDER_BYTES
@@ -2641,7 +2744,12 @@ pub fn is_valid_folder(folder: &str) -> bool {
         && folder.split('/').all(is_valid_file_name)
 }
 
-/// Whether a transfer ID is 16–64 of `[A-Za-z0-9_-]`.
+/// Whether a string is a 64-character ASCII hexadecimal BLAKE3 digest.
+pub fn is_valid_blake3_hex(hex: &str) -> bool {
+    hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Whether a transfer ID is 16-64 of `[A-Za-z0-9_-]`.
 pub fn is_valid_transfer_id(id: &str) -> bool {
     (16..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
@@ -2656,12 +2764,7 @@ impl FilesOffer {
         } else {
             (1..=files::MAX_FILES).contains(&self.files.len()) && self.markers.is_empty()
         };
-        is_valid_transfer_id(&self.id)
-            && files_ok
-            && self
-                .files
-                .iter()
-                .all(|f| is_valid_file_name(&f.name) && f.folder.as_deref().is_none_or(is_valid_folder))
+        is_valid_transfer_id(&self.id) && files_ok && self.files.iter().all(FileEntry::is_valid)
     }
 
     pub fn total_size(&self) -> u64 {
@@ -2678,19 +2781,32 @@ pub const CLIP_MAX_BYTES: usize = 512 * 1024;
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClipSet {
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtf: Option<String>,
 }
 
 impl ClipSet {
-    /// Whether the text is within the spec's limits.
+    /// Whether the text and optional rich-text fields are within the spec's limits.
     pub fn is_valid(&self) -> bool {
-        !self.text.is_empty() && self.text.len() <= CLIP_MAX_BYTES
+        if self.text.is_empty() {
+            return false;
+        }
+        let html_len = self.html.as_ref().map_or(0, String::len);
+        let rtf_len = self.rtf.as_ref().map_or(0, String::len);
+        self.text.len().saturating_add(html_len).saturating_add(rtf_len) <= CLIP_MAX_BYTES
     }
 }
 
 /// Never prints content (protocol v0 §11).
 impl std::fmt::Debug for ClipSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClipSet").field("bytes", &self.text.len()).finish()
+        f.debug_struct("ClipSet")
+            .field("bytes", &self.text.len())
+            .field("has_html", &self.html.is_some())
+            .field("has_rtf", &self.rtf.is_some())
+            .finish()
     }
 }
 
@@ -2955,7 +3071,7 @@ impl RemoteInput {
     /// Encodes a datagram prefixed with [`remote::DATAGRAM_TAG`].
     pub fn to_datagram(&self) -> Vec<u8> {
         let mut out = vec![remote::DATAGRAM_TAG];
-        ciborium::into_writer(self, &mut out).expect("writing to a Vec cannot fail");
+        let _ = ciborium::into_writer(self, &mut out);
         out
     }
 
@@ -3001,7 +3117,10 @@ pub mod toggle_ids {
     pub const BRIGHTNESS: &str = "brightness";
     pub const WIFI: &str = "wifi";
     pub const BLUETOOTH: &str = "bluetooth";
-    pub const ALL: &[&str] = &[DND, RINGER, FLASHLIGHT, VOLUME, BRIGHTNESS, WIFI, BLUETOOTH];
+    pub const HOTSPOT: &str = "hotspot";
+    pub const PC_ACTIVE: &str = "pc_active";
+    pub const ALL: &[&str] =
+        &[DND, RINGER, FLASHLIGHT, VOLUME, BRIGHTNESS, WIFI, BLUETOOTH, HOTSPOT, PC_ACTIVE];
 }
 
 /// Ringer modes for [`PhoneToggles::ringer`] and `phone.toggle.set` (`id = "ringer"`).
@@ -3070,7 +3189,12 @@ impl PhoneToggleSet {
     pub fn is_valid(&self) -> bool {
         match (self.id.as_str(), &self.value) {
             (
-                toggle_ids::DND | toggle_ids::FLASHLIGHT | toggle_ids::WIFI | toggle_ids::BLUETOOTH,
+                toggle_ids::DND
+                | toggle_ids::FLASHLIGHT
+                | toggle_ids::WIFI
+                | toggle_ids::BLUETOOTH
+                | toggle_ids::HOTSPOT
+                | toggle_ids::PC_ACTIVE,
                 PhoneToggleValue::Bool(_),
             ) => true,
             (toggle_ids::VOLUME | toggle_ids::BRIGHTNESS, PhoneToggleValue::Level(n)) => *n <= 100,
@@ -3623,7 +3747,8 @@ pub struct PcAudioSet {
 
 impl PcAudioSet {
     pub fn is_valid(&self) -> bool {
-        (self.volume.is_some() || self.muted.is_some()) && self.volume.is_none_or(|v| v <= 100)
+        let vol_ok = self.volume.is_none_or(|v| v <= 100 || v == 200 || v == 201);
+        (self.volume.is_some() || self.muted.is_some()) && vol_ok
     }
 }
 
@@ -3915,6 +4040,7 @@ mod tests {
             model: Some("Google Pixel 9".into()),
             accent: None,
             screen: None,
+            install_id: None,
         }
     }
 
@@ -3956,13 +4082,114 @@ mod tests {
         assert!(dirty.cutout_path.is_none());
 
         // Battery with full_in round-trips and sanitizes when not charging or out of range.
-        let b = Battery { level: 68, charging: true, plugged: Some("usb".into()), full_in: Some(34) };
+        let b = Battery {
+            level: 68,
+            charging: true,
+            plugged: Some("usb".into()),
+            full_in: Some(34),
+            cell_bars: None,
+            cell_type: None,
+            wifi_bars: None,
+        };
         let env = Envelope::new(types::EVENT_BATTERY, &b).unwrap();
         let back: Battery = Envelope::from_cbor(&env.to_cbor()).unwrap().body().unwrap();
         assert_eq!(back.sanitized(), b);
         assert_eq!(
-            Battery { level: 105, charging: false, plugged: None, full_in: Some(25) }.sanitized(),
-            Battery { level: 100, charging: false, plugged: None, full_in: None }
+            Battery {
+                level: 105,
+                charging: false,
+                plugged: None,
+                full_in: Some(25),
+                cell_bars: None,
+                cell_type: None,
+                wifi_bars: None,
+            }
+            .sanitized(),
+            Battery {
+                level: 100,
+                charging: false,
+                plugged: None,
+                full_in: None,
+                cell_bars: None,
+                cell_type: None,
+                wifi_bars: None,
+            }
+        );
+    }
+
+    #[test]
+    fn battery_signal_strength_round_trips_sanitizes_and_is_backwards_compatible() {
+        let valid = Battery {
+            level: 85,
+            charging: false,
+            plugged: None,
+            full_in: None,
+            cell_bars: Some(4),
+            cell_type: Some("5G".into()),
+            wifi_bars: Some(3),
+        };
+        let env = Envelope::new(types::EVENT_BATTERY, &valid).unwrap();
+        let back: Battery = Envelope::from_cbor(&env.to_cbor()).unwrap().body().unwrap();
+        assert_eq!(back.sanitized(), valid);
+
+        // Clamping bars > 4 to 4, stripping control characters, trimming, truncating cell_type to 8 chars.
+        let dirty = Battery {
+            level: 50,
+            charging: false,
+            plugged: None,
+            full_in: None,
+            cell_bars: Some(9),
+            cell_type: Some("  5G\n\tUltraWideband  ".into()),
+            wifi_bars: Some(255),
+        }
+        .sanitized();
+        assert_eq!(dirty.cell_bars, Some(4));
+        assert_eq!(dirty.cell_type.as_deref(), Some("5GUltraW"));
+        assert_eq!(dirty.wifi_bars, Some(4));
+
+        // Blank or control-only cell_type becomes None.
+        let empty_type = Battery {
+            level: 50,
+            charging: false,
+            plugged: None,
+            full_in: None,
+            cell_bars: Some(0),
+            cell_type: Some(" \n\0\t ".into()),
+            wifi_bars: Some(0),
+        }
+        .sanitized();
+        assert_eq!(empty_type.cell_bars, Some(0));
+        assert_eq!(empty_type.cell_type, None);
+        assert_eq!(empty_type.wifi_bars, Some(0));
+
+        // Backwards-compatible decoding when signal fields are omitted on the wire.
+        #[derive(Serialize)]
+        struct LegacyBattery {
+            level: u8,
+            charging: bool,
+        }
+        let legacy_env =
+            Envelope::new(types::EVENT_BATTERY, &LegacyBattery { level: 77, charging: false }).unwrap();
+        let decoded: Battery = Envelope::from_cbor(&legacy_env.to_cbor()).unwrap().body().unwrap();
+        assert_eq!(
+            decoded,
+            Battery {
+                level: 77,
+                charging: false,
+                plugged: None,
+                full_in: None,
+                cell_bars: None,
+                cell_type: None,
+                wifi_bars: None,
+            }
+        );
+        // None signal fields are omitted on the wire.
+        let none_env = Envelope::new(types::EVENT_BATTERY, &decoded).unwrap();
+        let debug_b = format!("{:?}", none_env.b);
+        assert!(
+            !debug_b.contains("cell_bars")
+                && !debug_b.contains("cell_type")
+                && !debug_b.contains("wifi_bars")
         );
     }
 
@@ -4101,7 +4328,10 @@ mod tests {
     fn file_offers_are_validated() {
         let offer = |id: &str, names: &[&str]| FilesOffer {
             id: id.into(),
-            files: names.iter().map(|n| FileEntry { name: (*n).into(), size: 1, folder: None }).collect(),
+            files: names
+                .iter()
+                .map(|n| FileEntry { name: (*n).into(), size: 1, folder: None, blake3: None })
+                .collect(),
             recording: false,
             markers: Vec::new(),
             open_on_arrival: false,
@@ -4117,10 +4347,36 @@ mod tests {
     }
 
     #[test]
+    fn file_blake3_and_control_are_validated() {
+        let good_hex = "a".repeat(64);
+        let offer_with_hash = |blake3: Option<String>| FilesOffer {
+            id: "abcdefghijklmnop".into(),
+            files: vec![FileEntry { name: "a.bin".into(), size: 10, folder: None, blake3 }],
+            recording: false,
+            markers: Vec::new(),
+            open_on_arrival: false,
+        };
+        assert!(offer_with_hash(None).is_valid());
+        assert!(offer_with_hash(Some(good_hex)).is_valid());
+        assert!(offer_with_hash(Some("0123456789abcdefABCDEF".repeat(2) + &"0".repeat(20))).is_valid());
+        for bad in ["", "abcd", &"a".repeat(63), &"a".repeat(65), &(String::from("g") + &"a".repeat(63))] {
+            assert!(!offer_with_hash(Some(bad.into())).is_valid(), "{bad:?}");
+        }
+        assert!(FilesControl { id: "abcdefghijklmnop".into() }.is_valid());
+        assert!(!FilesControl { id: "short".into() }.is_valid());
+        assert!(!FilesControl { id: "abcdefghijklmnop!".into() }.is_valid());
+    }
+
+    #[test]
     fn folders_are_validated() {
         let offer = |folder: &str| FilesOffer {
             id: "abcdefghijklmnop".into(),
-            files: vec![FileEntry { name: "a.jpg".into(), size: 1, folder: Some(folder.into()) }],
+            files: vec![FileEntry {
+                name: "a.jpg".into(),
+                size: 1,
+                folder: Some(folder.into()),
+                blake3: None,
+            }],
             recording: false,
             markers: Vec::new(),
             open_on_arrival: false,
@@ -4132,10 +4388,11 @@ mod tests {
             assert!(!offer(bad).is_valid(), "{bad:?}");
         }
         assert!(!offer(&vec!["d"; files::MAX_FOLDER_DEPTH + 1].join("/")).is_valid());
-        // Without a folder, the field isn't sent at all.
-        let plain = FileEntry { name: "a".into(), size: 1, folder: None };
+        // Without a folder or blake3, the fields aren't sent at all.
+        let plain = FileEntry { name: "a".into(), size: 1, folder: None, blake3: None };
         let env = Envelope::new("x", &plain).unwrap();
         assert!(!format!("{:?}", env.b).contains("folder"));
+        assert!(!format!("{:?}", env.b).contains("blake3"));
         assert!(!format!("{:?}", offer("Secret")).contains("Secret"));
     }
 
@@ -4143,7 +4400,7 @@ mod tests {
     fn recording_offers_and_markers_are_validated() {
         let rec = FilesOffer {
             id: "abcdefghijklmnop".into(),
-            files: vec![FileEntry { name: "Recording.m4a".into(), size: 4096, folder: None }],
+            files: vec![FileEntry { name: "Recording.m4a".into(), size: 4096, folder: None, blake3: None }],
             recording: true,
             markers: vec![
                 RecordingMarker { at_ms: 1200, label: None },
@@ -4161,8 +4418,8 @@ mod tests {
         assert!(
             !FilesOffer {
                 files: vec![
-                    FileEntry { name: "a.m4a".into(), size: 1, folder: None },
-                    FileEntry { name: "b.m4a".into(), size: 1, folder: None },
+                    FileEntry { name: "a.m4a".into(), size: 1, folder: None, blake3: None },
+                    FileEntry { name: "b.m4a".into(), size: 1, folder: None, blake3: None },
                 ],
                 ..rec.clone()
             }
@@ -4170,7 +4427,12 @@ mod tests {
         );
         assert!(
             !FilesOffer {
-                files: vec![FileEntry { name: "a.m4a".into(), size: 1, folder: Some("dir".into()) }],
+                files: vec![FileEntry {
+                    name: "a.m4a".into(),
+                    size: 1,
+                    folder: Some("dir".into()),
+                    blake3: None,
+                }],
                 ..rec.clone()
             }
             .is_valid()
@@ -4491,9 +4753,9 @@ mod tests {
 
     #[test]
     fn magic_packet_has_sync_header_and_sixteen_mac_copies() {
-        let mac = parse_mac("38-A7-46-37-2E-64").unwrap();
-        assert_eq!(mac, [0x38, 0xa7, 0x46, 0x37, 0x2e, 0x64]);
-        assert_eq!(format_mac(&mac), "38:a7:46:37:2e:64");
+        let mac = parse_mac("00-00-5E-00-53-01").unwrap();
+        assert_eq!(mac, [0x00, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+        assert_eq!(format_mac(&mac), "00:00:5e:00:53:01");
         let pkt = magic_packet(&mac);
         assert_eq!(pkt.len(), 102);
         assert_eq!(&pkt[..6], &[0xff; 6]);
@@ -4523,7 +4785,7 @@ mod tests {
     #[test]
     fn wake_info_validates_sanitizes_and_round_trips() {
         let info = PcWakeInfo {
-            macs: vec!["38:a7:46:37:2e:64".into(), "24:b2:b9:c6:a4:81".into()],
+            macs: vec!["00:00:5e:00:53:01".into(), "00:00:5e:00:53:02".into()],
             broadcasts: vec!["192.168.1.255".into()],
         };
         assert!(info.is_valid());
@@ -4549,26 +4811,26 @@ mod tests {
             "00:00:00:00:00:00",
             "ff:ff:ff:ff:ff:ff",
             "FF-FF-FF-FF-FF-FF",
-            "38:a7:46:37:2e",
-            "38:a7:46:37:2e:64:00",
-            "38:a7:46:37:2e:zz",
+            "00:00:5e:00:53",
+            "00:00:5e:00:53:01:00",
+            "00:00:5e:00:53:zz",
         ] {
             assert!(!PcWakeInfo { macs: vec![bad_mac.into()], broadcasts: vec![] }.is_valid(), "{bad_mac}");
         }
         for bad_ip in ["", "0.0.0.0", "127.0.0.1", "169.254.1.255", "224.0.0.251", "not-an-ip"] {
             assert!(
-                !PcWakeInfo { macs: vec!["38:a7:46:37:2e:64".into()], broadcasts: vec![bad_ip.into()] }
+                !PcWakeInfo { macs: vec!["00:00:5e:00:53:01".into()], broadcasts: vec![bad_ip.into()] }
                     .is_valid(),
                 "{bad_ip}"
             );
         }
 
         let messy = PcWakeInfo {
-            macs: vec!["38-A7-46-37-2E-64".into(), "38:a7:46:37:2e:64".into(), "00:00:00:00:00:00".into()],
+            macs: vec!["00-00-5E-00-53-01".into(), "00:00:5e:00:53:01".into(), "00:00:00:00:00:00".into()],
             broadcasts: vec!["192.168.1.255".into(), "192.168.1.255".into(), "127.0.0.1".into()],
         }
         .sanitized();
-        assert_eq!(messy.macs, vec!["38:a7:46:37:2e:64"]);
+        assert_eq!(messy.macs, vec!["00:00:5e:00:53:01"]);
         assert_eq!(messy.broadcasts, vec!["192.168.1.255"]);
     }
 
@@ -4904,5 +5166,256 @@ mod tests {
         let back_meta: CameraCaptureResultMeta =
             Envelope::from_cbor(&env_meta.to_cbor()).unwrap().body().unwrap();
         assert_eq!(back_meta, meta);
+    }
+
+    #[test]
+    fn clip_set_rich_text_validates_and_round_trips() {
+        let plain = ClipSet { text: "Hello".into(), html: None, rtf: None };
+        assert!(plain.is_valid());
+        let env_plain = Envelope::new(types::CLIP_SET, &plain).unwrap();
+        assert!(!format!("{:?}", env_plain.b).contains("html"));
+        assert!(!format!("{:?}", env_plain.b).contains("rtf"));
+        let back_plain: ClipSet = Envelope::from_cbor(&env_plain.to_cbor()).unwrap().body().unwrap();
+        assert_eq!(back_plain, plain);
+
+        let rich = ClipSet {
+            text: "Hello world".into(),
+            html: Some("<b>Hello</b> world".into()),
+            rtf: Some(r"{\rtf1\ansi\b Hello\b0  world}".into()),
+        };
+        assert!(rich.is_valid());
+        assert!(!format!("{rich:?}").contains("Hello"));
+        let env_rich = Envelope::new(types::CLIP_SET, &rich).unwrap();
+        let back_rich: ClipSet = Envelope::from_cbor(&env_rich.to_cbor()).unwrap().body().unwrap();
+        assert_eq!(back_rich, rich);
+
+        let oversized =
+            ClipSet { text: "a".repeat(CLIP_MAX_BYTES), html: Some("<b>a</b>".into()), rtf: None };
+        assert!(!oversized.is_valid());
+    }
+
+    #[test]
+    fn mirror_input_gamepad_round_trips_and_validates() {
+        let gp = MirrorInput::Gamepad {
+            buttons: 0x1001,
+            lx: -12345,
+            ly: 23456,
+            rx: 0,
+            ry: -32768,
+            lt: 128,
+            rt: 255,
+        };
+        assert!(gp.is_valid());
+        assert_eq!(format!("{gp:?}"), "Gamepad(0x1001)");
+        let env = mirror_input_envelope(&gp, mirror::SCREEN).unwrap();
+        let back: MirrorInput = Envelope::from_cbor(&env.to_cbor()).unwrap().body().unwrap();
+        assert_eq!(back, gp);
+
+        let env_app = mirror_input_envelope(&gp, 2).unwrap();
+        let back_app: MirrorInput = Envelope::from_cbor(&env_app.to_cbor()).unwrap().body().unwrap();
+        assert_eq!(back_app, gp);
+    }
+
+    #[test]
+    fn fuzz_all_message_bodies_cbor_and_json_10k() {
+        fn next_u64(seed: &mut u64) -> u64 {
+            *seed ^= *seed << 13;
+            *seed ^= *seed >> 7;
+            *seed ^= *seed << 17;
+            *seed
+        }
+
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut buf = Vec::with_capacity(256);
+        for i in 0..10_000usize {
+            let len = (next_u64(&mut seed) as usize) % 192;
+            buf.clear();
+            for _ in 0..len {
+                buf.push((next_u64(&mut seed) & 0xFF) as u8);
+            }
+            // Also mix in structured CBOR map prefixes so deeper serde paths run.
+            if i % 2 == 1 && !buf.is_empty() {
+                buf[0] = 0xA0 | ((buf[0] & 0x0F).min(8));
+            }
+
+            if let Ok(env) = Envelope::from_cbor(&buf) {
+                let _ = format!("{env:?}");
+                let _ = env.body::<Hello>().map(|m| format!("{m:?}"));
+                let _ = env.body::<HelloUpdate>().map(|m| format!("{m:?}"));
+                let _ = env.body::<DeviceInfo>().map(|m| m.sanitized());
+                let _ = env.body::<ScreenShape>().map(|m| m.sanitized());
+                let _ = env.body::<Battery>().map(|m| m.sanitized());
+                let _ = env.body::<Notification>().map(|m| m.sanitized());
+                let _ = env.body::<NotificationLive>().map(|m| m.sanitized());
+                let _ = env.body::<ClipSet>().map(|m| (m.is_valid(), format!("{m:?}")));
+                let _ = env.body::<MirrorInput>().map(|m| (m.is_valid(), format!("{m:?}")));
+                let _ = env.body::<TaskNotify>().map(|m| (m.is_valid(), m.sanitized()));
+            }
+
+            // Directly fuzz CBOR deserialization across message body types.
+            macro_rules! try_decode {
+                ($($ty:ty),+ $(,)?) => {{
+                    $(
+                        if let Ok(v) = ciborium::from_reader::<$ty, _>(buf.as_slice()) {
+                            let _ = format!("{v:?}");
+                        }
+                    )+
+                }};
+            }
+
+            match i % 6 {
+                0 => try_decode!(Hello, HelloUpdate, DeviceInfo, ScreenShape, Ping, Battery, Ring, ErrorBody),
+                1 => try_decode!(StreamHeader, PairRequest, PairAccept, PairCommit, PairNonce, PairReveal),
+                2 => try_decode!(
+                    Notification,
+                    NotificationLive,
+                    NotifySnapshot,
+                    NotifyKey,
+                    NotifyAction,
+                    ClipSet
+                ),
+                3 => try_decode!(MediaPlayer, MediaState, MediaCommand, PcPower, PcWakeInfo),
+                4 => try_decode!(
+                    MirrorStart,
+                    MirrorPower,
+                    MirrorSession,
+                    MirrorResize,
+                    PhoneApp,
+                    PhoneApps,
+                    MirrorInput
+                ),
+                _ => try_decode!(
+                    MirrorConfig,
+                    MirrorAudioConfig,
+                    WebcamStart,
+                    WebcamConfig,
+                    CallState,
+                    CallAction,
+                    CallLog,
+                    CallDial,
+                    SmsThreads,
+                    SmsMessages,
+                    SmsSend,
+                    ContactsListGet,
+                    ContactsList,
+                    PhotoNew,
+                    PhotoAlbumsList,
+                    PhotoListGet,
+                    PhotoItems,
+                    PhotoThumbsGet,
+                    PhotoThumbsList,
+                    PhotoGet,
+                    LinkOpen,
+                    TaskNotify,
+                    CameraCaptureRequest,
+                    CameraCaptureOk,
+                    CameraCaptureCancel,
+                    CameraCaptureResultMeta,
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_screen_shape_decode_and_sanitize_10k() {
+        fn next_u64(seed: &mut u64) -> u64 {
+            *seed ^= *seed << 13;
+            *seed ^= *seed >> 7;
+            *seed ^= *seed << 17;
+            *seed
+        }
+        fn next_f32(seed: &mut u64) -> f32 {
+            let r = next_u64(seed);
+            match r % 10 {
+                0 => f32::from_bits(r as u32), // includes NaN, Inf, subnormals
+                1 => 0.0,
+                2 => -0.0,
+                3 => 1.0,
+                4 => -1.0,
+                5 => ((r >> 8) as f32) / ((u64::MAX >> 8) as f32), // 0.0..=1.0
+                6 => (((r >> 8) as f32) / ((u64::MAX >> 8) as f32)) * 6.0 - 0.5, // -0.5..=5.5
+                _ => f32::from_bits((r >> 32) as u32),
+            }
+        }
+
+        let mut seed = 0xD1B5_4A32_D192_ED03u64;
+        for i in 0..10_000usize {
+            let v = if i % 5 == 0 { (next_u64(&mut seed) % 4) as u32 } else { screen_limits::VERSION };
+            let aspect = next_f32(&mut seed);
+            let corners = (next_u64(&mut seed) & 1 == 0).then(|| ScreenCorners {
+                tl: next_f32(&mut seed),
+                tr: next_f32(&mut seed),
+                br: next_f32(&mut seed),
+                bl: next_f32(&mut seed),
+            });
+            let cutout_count = (next_u64(&mut seed) % 8) as usize;
+            let mut cutouts = Vec::with_capacity(cutout_count);
+            for _ in 0..cutout_count {
+                cutouts.push(ScreenRect {
+                    x: next_f32(&mut seed),
+                    y: next_f32(&mut seed),
+                    w: next_f32(&mut seed),
+                    h: next_f32(&mut seed),
+                });
+            }
+            let cutout_path = match i % 4 {
+                0 => None,
+                1 => Some("M 0.45 0.01 L 0.55 0.01 Z".to_owned()),
+                2 => Some(format!("M {} {} L <script>", next_f32(&mut seed), next_f32(&mut seed))),
+                _ => {
+                    let len = (next_u64(&mut seed) as usize) % 600;
+                    let s: String = (0..len)
+                        .map(|_| {
+                            let b = (next_u64(&mut seed) & 0x7F) as u8;
+                            b as char
+                        })
+                        .collect();
+                    Some(s)
+                }
+            };
+
+            let shape = ScreenShape { v, aspect, corners, cutouts, cutout_path };
+            if let Some(clean) = shape.sanitized() {
+                assert_eq!(clean.v, screen_limits::VERSION);
+                assert!(clean.aspect.is_finite());
+                assert!((screen_limits::MIN_ASPECT..=screen_limits::MAX_ASPECT).contains(&clean.aspect));
+                if let Some(c) = clean.corners {
+                    for r in [c.tl, c.tr, c.br, c.bl] {
+                        assert!(r.is_finite() && (0.0..=screen_limits::MAX_CORNER_RADIUS).contains(&r));
+                    }
+                }
+                assert!(clean.cutouts.len() <= screen_limits::MAX_CUTOUTS);
+                for rect in &clean.cutouts {
+                    assert!(rect.x.is_finite() && (0.0..=1.0).contains(&rect.x));
+                    assert!(rect.y.is_finite() && (0.0..=1.0).contains(&rect.y));
+                    assert!(rect.w.is_finite() && rect.w > 0.0 && rect.x + rect.w <= 1.0002);
+                    assert!(rect.h.is_finite() && rect.h > 0.0 && rect.y + rect.h <= 1.0002);
+                }
+                if let Some(ref path) = clean.cutout_path {
+                    assert!(!path.is_empty() && path.len() <= screen_limits::MAX_CUTOUT_PATH_BYTES);
+                }
+                // Idempotence and CBOR round-trip of sanitized ScreenShape.
+                let again = clean.clone().sanitized().expect("sanitized shape stays valid");
+                assert_eq!(clean, again);
+                let mut cbor = Vec::new();
+                ciborium::into_writer(&clean, &mut cbor).unwrap();
+                let from_cbor: ScreenShape = ciborium::from_reader(cbor.as_slice()).unwrap();
+                assert_eq!(from_cbor.sanitized().unwrap(), clean);
+            }
+        }
+    }
+
+    #[test]
+    fn wake_relay_and_audio_pcm_cbor_roundtrip() {
+        let req =
+            WakeRelay { mac: [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff], broadcast: Some("192.168.1.255".into()) };
+        let env = crate::Envelope::new(types::WAKE_RELAY, &req).unwrap();
+        let decoded: WakeRelay = crate::Envelope::from_cbor(&env.to_cbor()).unwrap().body().unwrap();
+        assert_eq!(decoded, req);
+
+        let frame = AudioPcmFrame { sample_rate: 48_000, channels: 2, pcm: vec![0x01, 0x02, 0x03, 0x04] };
+        let env = crate::Envelope::new(types::AUDIO_PCM, &frame).unwrap();
+        let decoded: AudioPcmFrame = crate::Envelope::from_cbor(&env.to_cbor()).unwrap().body().unwrap();
+        assert_eq!(decoded, frame);
     }
 }

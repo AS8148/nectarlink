@@ -52,7 +52,7 @@ struct Cli {
     /// Material You seed color (#RRGGBB or RRGGBB) to announce in DeviceInfo.
     #[arg(long, global = true, value_name = "HEX")]
     accent: Option<String>,
-    /// Battery level (0–100) to report, to test a PC without a phone.
+    /// Battery level (0 to 100) to report, to test a PC without a phone.
     #[arg(long, global = true, value_parser = clap::value_parser!(u8).range(0..=100))]
     battery: Option<u8>,
     /// Report the battery as charging (with --battery).
@@ -74,6 +74,12 @@ struct Cli {
     /// TCP/UDP port for LocalSend v2.1 (default: 53317).
     #[arg(long, global = true, default_value_t = nectarlink_core::LOCALSEND_DEFAULT_PORT)]
     localsend_port: u16,
+    /// Loopback TCP port (`127.0.0.1:<port>`) for the USB tunnel with --as-phone.
+    #[arg(long, global = true)]
+    usb_port: Option<u16>,
+    /// ADB server address (`127.0.0.1:5037`) for automatic USB tunnel and pairing.
+    #[arg(long, global = true)]
+    adb_server: Option<SocketAddr>,
     /// Log verbosity (error, warn, info, debug, trace).
     #[arg(long, global = true, default_value = "warn")]
     log: String,
@@ -1053,7 +1059,7 @@ fn sample_texts(main_thread_count: usize) {
             "Looks good! Did you check the layout at 760x540 too?",
             "Yes, everything fits cleanly without clipping.",
             "Nice, how about dark mode and Bloom theme?",
-            "Tested both — contrast on the cards and headers is solid.",
+            "Tested both, and contrast on the cards and headers is solid.",
             "Can we also test scrolling through a long thread?",
             "On it right now, generating 500 messages to check frame pacing.",
             "Awesome, let me know when you're ready for dinner.",
@@ -2464,12 +2470,14 @@ async fn start_node(cli: &Cli) -> Result<Node> {
         None if cli.as_phone && is_demo => Some(0xFF3F_8F7B),
         None => None,
     };
-    let device = DeviceInfo { name, kind, os, os_ver, model: None, accent, screen };
+    let device = DeviceInfo { name, kind, os, os_ver, model: None, accent, screen, install_id: None };
     let power = node_power(cli);
     let mut config = NodeConfig::new(data_dir.clone(), device, env!("CARGO_PKG_VERSION"));
     config.downloads_dir = cli.downloads_dir.clone();
     config.port = cli.port;
     config.localsend_port = cli.localsend_port;
+    config.usb_port = cli.usb_port;
+    config.adb_server = cli.adb_server;
     config.lan_discovery = !cli.no_lan;
     config.away_mode = cli.away;
     config.power = power;
@@ -2501,10 +2509,13 @@ async fn start_node(cli: &Cli) -> Result<Node> {
     if cli.as_phone {
         let _ = TOGGLES_NODE.set(node.clone());
         let _ = node.toggles_changed(sample_toggles()).await;
-    } else {
+    } else if is_demo {
+        // Demo mode only: a sample PC for showing the phone app without a real one. A
+        // normal start must never overwrite a phone's real wake details or Deck state.
+        // Documentation-range addresses (RFC 7042 MAC, RFC 5737 network).
         node.set_wake_info(nectarlink_core::PcWakeInfo {
-            macs: vec!["02:42:ac:11:00:02".into()],
-            broadcasts: vec!["192.168.31.255".into()],
+            macs: vec!["02:00:5e:10:00:01".into()],
+            broadcasts: vec!["192.0.2.255".into()],
         })
         .await;
         let _ = node
@@ -2537,6 +2548,9 @@ async fn start_node(cli: &Cli) -> Result<Node> {
             charging: cli.charging,
             plugged,
             full_in: cli.charging.then_some(cli.full_in).flatten(),
+            cell_bars: None,
+            cell_type: None,
+            wifi_bars: None,
         })
         .await;
     }
@@ -4084,6 +4098,10 @@ async fn wait_for_outgoing_transfer(
                 TransferState::Requested | TransferState::Waiting => {
                     print!("\rWaiting for the device…          ")
                 }
+                TransferState::Paused => {
+                    let percent = (t.done * 100).checked_div(t.total).unwrap_or(100);
+                    print!("\rPaused at {percent}%…          ");
+                }
                 TransferState::Running => {
                     let percent = (t.done * 100).checked_div(t.total).unwrap_or(100);
                     print!("\rSending… {percent}%          ");
@@ -4536,6 +4554,11 @@ fn print_event(node: &Node, event: &NodeEvent) {
             name(device),
             device.short()
         ),
+        NodeEvent::PcMirrorRequested { device, .. } => println!(
+            "{}: asked to view this PC's screen (allow with: nectarlink toggle {} pc_mirror on)",
+            name(device),
+            device.short()
+        ),
         NodeEvent::StorageRequested { device } => println!(
             "{}: asked to browse phone storage (allow with: nectarlink toggle {} storage on)",
             name(device),
@@ -4579,7 +4602,7 @@ fn print_event(node: &Node, event: &NodeEvent) {
         NodeEvent::MediaChanged { device, players } => {
             for p in players {
                 println!(
-                    "{}: {} {} – {} ({}, {} of {}{}) [player {}]",
+                    "{}: {} {} - {} ({}, {} of {}{}) [player {}]",
                     name(device),
                     if p.playing { "▶" } else { "⏸" },
                     p.title.as_deref().unwrap_or("?"),
@@ -4663,7 +4686,7 @@ fn summarize_toggles(t: &nectarlink_core::PhoneToggles) -> String {
     let yn_opt = |b: Option<bool>| match b {
         Some(true) => "on",
         Some(false) => "off",
-        None => "—",
+        None => "n/a",
     };
     format!(
         "dnd={} ringer={} flash={} vol={}% bright={}% wifi={} bt={}",
@@ -4682,7 +4705,7 @@ fn summarize_deck_state(state: &nectarlink_core::DeckState) -> String {
     let mic = match state.mic_muted {
         Some(true) => "muted",
         Some(false) => "live",
-        None => "—",
+        None => "n/a",
     };
     let media = if state.playing { "playing" } else { "paused" };
     let out = state.default_output_name().map(|n| format!(" output={n:?}")).unwrap_or_default();
@@ -4747,7 +4770,7 @@ fn print_phone_toggles(node: &Node, id: DeviceId, t: &nectarlink_core::PhoneTogg
     let yn_opt = |b: Option<bool>| match b {
         Some(true) => "on".to_owned(),
         Some(false) => "off".to_owned(),
-        None => "—".to_owned(),
+        None => "n/a".to_owned(),
     };
     let rows = [
         ("dnd", yn(t.dnd), "toggles.dnd"),

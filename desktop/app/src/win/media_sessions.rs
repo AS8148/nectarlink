@@ -29,8 +29,9 @@ use super::toast::AUMID;
 
 /// The largest artwork sent as is; larger pictures are scaled down.
 const ART_BYTES: u64 = 256 * 1024;
-/// Changes come in bursts (title, then artwork, then position).
-const SETTLE: Duration = Duration::from_millis(300);
+/// Short settle window so burst updates (title + artwork + timeline) coalesce without noticeable lag.
+const SETTLE: Duration = Duration::from_millis(50);
+const MAX_SETTLE: Duration = Duration::from_millis(150);
 /// Windows' clock starts in 1601; Unix time in 1970.
 const WINDOWS_TO_UNIX_SECS: i64 = 11_644_473_600;
 
@@ -62,35 +63,93 @@ fn run(on_change: &OnChange) -> windows::core::Result<()> {
         let _ = signal.send(());
         Ok(())
     }))?;
+    let signal_current = changed.clone();
+    let _ = manager.CurrentSessionChanged(&TypedEventHandler::new(move |_, _| {
+        let _ = signal_current.send(());
+        Ok(())
+    }));
     let _ = MANAGER.set(manager.clone());
 
-    let mut watched: Vec<String> = Vec::new();
+    let mut watched: HashMap<String, GlobalSystemMediaTransportControlsSession> = HashMap::new();
     let mut art = ArtCache::default();
-    let mut last: Option<Vec<MediaPlayer>> = None;
+    let mut last: Option<(Vec<MediaPlayer>, Instant)> = None;
     loop {
-        // Hook up sessions that are new since last time.
-        let mut present = Vec::new();
+        // Hook up sessions that are new since last time, keeping their COM wrappers alive.
+        let mut present = HashSet::new();
         for session in manager.GetSessions()? {
             let id = session.SourceAppUserModelId()?.to_string();
-            if !watched.contains(&id) {
+            if watched.get(&id) != Some(&session) {
                 watch(&session, &changed)?;
-                watched.push(id.clone());
+                watched.insert(id.clone(), session);
             }
-            present.push(id);
+            present.insert(id);
         }
         // A session that ends and comes back is hooked up again.
-        watched.retain(|id| present.contains(id));
+        watched.retain(|id, _| present.contains(id));
         let players = snapshot(&manager, &mut art);
-        if last.as_ref() != Some(&players) {
+        let retry_soon = art.needs_retry(&players);
+        let should_emit = match &last {
+            None => true,
+            Some((prev, prev_at)) => players_meaningfully_changed(prev, &players, prev_at.elapsed()),
+        };
+        if should_emit {
             on_change(players.clone());
-            last = Some(players);
+            last = Some((players, Instant::now()));
         }
-        // Wait for a change, then let the burst settle.
-        if changes.recv().is_err() {
-            return Ok(());
+        // Wait for a change (or 400ms retry when a track's artwork stream is still loading, or 4s periodic rescan).
+        let wait = if retry_soon { Duration::from_millis(400) } else { Duration::from_secs(4) };
+        match changes.recv_timeout(wait) {
+            Ok(()) => {
+                let deadline = Instant::now() + MAX_SETTLE;
+                while let Some(rem) = deadline.checked_duration_since(Instant::now()) {
+                    if changes.recv_timeout(rem.min(SETTLE)).is_err() {
+                        break;
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         }
-        while changes.recv_timeout(SETTLE).is_ok() {}
     }
+}
+
+/// Compares two snapshots of [`MediaPlayer`]s while ignoring normal linear playback
+/// position progression so the 4-second poll does not trigger spurious UI/network updates.
+fn players_meaningfully_changed(old: &[MediaPlayer], new: &[MediaPlayer], elapsed: Duration) -> bool {
+    if old.len() != new.len() {
+        return true;
+    }
+    let elapsed_ms = elapsed.as_millis() as u64;
+    for (a, b) in old.iter().zip(new.iter()) {
+        if a.id != b.id
+            || a.app != b.app
+            || a.title != b.title
+            || a.artist != b.artist
+            || a.album != b.album
+            || a.playing != b.playing
+            || a.duration != b.duration
+            || a.actions != b.actions
+            || a.art_key != b.art_key
+            || a.art.is_some() != b.art.is_some()
+        {
+            return true;
+        }
+        match (a.position, b.position) {
+            (None, None) => {}
+            (Some(_), None) | (None, Some(_)) => return true,
+            (Some(old_pos), Some(new_pos)) => {
+                let expected = if a.playing {
+                    old_pos.saturating_add(elapsed_ms).min(a.duration.unwrap_or(u64::MAX))
+                } else {
+                    old_pos
+                };
+                if new_pos.abs_diff(expected) > 1500 {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn watch(
@@ -161,9 +220,9 @@ fn player(
     let properties = session.TryGetMediaPropertiesAsync()?.join()?;
     let text =
         |s: windows::core::Result<HSTRING>| s.ok().map(|s| s.to_string()).filter(|s| !s.trim().is_empty());
-    let title = text(properties.Title());
-    let artist = text(properties.Artist());
-    let album = text(properties.AlbumTitle());
+    let mut title = text(properties.Title());
+    let artist = text(properties.Artist()).filter(|a| !is_opaque_id(a));
+    let album = text(properties.AlbumTitle()).filter(|a| !is_opaque_id(a));
     if title.is_none() {
         return Ok(None);
     }
@@ -200,9 +259,27 @@ fn player(
         (None, None)
     };
 
-    let (art_key, art_bytes) = art.get(&id, &title, &artist, &album, || thumbnail(&properties)).unzip();
+    let mut resolved_app = app_name(&id);
+    let is_browser_app = matches!(
+        resolved_app.as_str(),
+        "Browser" | "Media" | "Chrome" | "Edge" | "Brave" | "Firefox" | "Vivaldi" | "Opera" | "Zen"
+    );
+    if is_browser_app
+        && let Some(t) = title.clone()
+        && let Some((clean_title, site)) = t.rsplit_once(" on ")
+    {
+        let site = site.trim();
+        let clean_title = clean_title.trim();
+        if !site.is_empty() && !clean_title.is_empty() && site.len() <= 28 && !is_opaque_id(site) {
+            resolved_app = site.to_owned();
+            title = Some(clean_title.to_owned());
+        }
+    }
+    let has_smtc_thumb = properties.Thumbnail().is_ok();
+    let (art_key, art_bytes) =
+        art.get(&id, &title, &artist, &album, has_smtc_thumb, || thumbnail(&properties)).unzip();
     Ok(Some(MediaPlayer {
-        app: app_name(&id),
+        app: resolved_app,
         id,
         title,
         artist,
@@ -216,30 +293,144 @@ fn player(
     }))
 }
 
+const MAX_ART_ATTEMPTS: u8 = 8;
+
+type CachedArtEntry = (u8, Option<(String, Vec<u8>)>);
+
 /// Artwork per track, read once: reading it takes a moment.
+/// If a player updates its title before its thumbnail stream is ready, we retry
+/// on subsequent snapshots instead of permanently locking out `None`, and also
+/// persist resolved covers on disk by track hash and album hash.
 #[derive(Default)]
 struct ArtCache {
-    by_track: HashMap<String, Option<(String, Vec<u8>)>>,
+    by_track: HashMap<String, CachedArtEntry>,
+    by_album: HashMap<String, (String, Vec<u8>)>,
 }
 
 impl ArtCache {
+    fn track_key(
+        id: &str,
+        title: &Option<String>,
+        artist: &Option<String>,
+        album: &Option<String>,
+    ) -> String {
+        format!("{id}\u{1}{title:?}\u{1}{artist:?}\u{1}{album:?}")
+    }
+
+    fn album_key(id: &str, artist: &Option<String>, album: &Option<String>) -> Option<String> {
+        let album_str = album.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+        let artist_str = artist.as_deref().map(str::trim).unwrap_or("");
+        Some(format!("{id}\u{1}{artist_str}\u{1}{album_str}"))
+    }
+
+    fn track_disk_path(track: &str) -> Option<std::path::PathBuf> {
+        Some(
+            crate::core_host::try_data_dir()?
+                .join("cache")
+                .join("art")
+                .join(format!("pc-track-{:016x}.img", fnv(track.as_bytes()))),
+        )
+    }
+
+    fn album_disk_path(album: &str) -> Option<std::path::PathBuf> {
+        Some(
+            crate::core_host::try_data_dir()?
+                .join("cache")
+                .join("art")
+                .join(format!("pc-album-{:016x}.img", fnv(album.as_bytes()))),
+        )
+    }
+
     fn get(
         &mut self,
         id: &str,
         title: &Option<String>,
         artist: &Option<String>,
         album: &Option<String>,
+        has_smtc_thumb: bool,
         read: impl FnOnce() -> Option<Vec<u8>>,
     ) -> Option<(String, Vec<u8>)> {
-        let track = format!("{id}\u{1}{title:?}\u{1}{artist:?}\u{1}{album:?}");
-        if !self.by_track.contains_key(&track) {
-            if self.by_track.len() > 32 {
-                self.by_track.clear();
-            }
-            let art = read().map(|bytes| (format!("{:016x}", fnv(&bytes)), bytes));
-            self.by_track.insert(track.clone(), art);
+        let track = Self::track_key(id, title, artist, album);
+        if let Some((_, Some(cached))) = self.by_track.get(&track) {
+            return Some(cached.clone());
         }
-        self.by_track.get(&track).cloned().flatten()
+        let alb_key = Self::album_key(id, artist, album);
+        let disk_path = Self::track_disk_path(&track);
+        if !self.by_track.contains_key(&track)
+            && let Some(path) = disk_path.as_ref()
+            && let Ok(bytes) = std::fs::read(path)
+            && !bytes.is_empty()
+        {
+            let entry = (format!("{:016x}", fnv(&bytes)), bytes);
+            if let Some(ak) = alb_key.as_ref() {
+                self.by_album.insert(ak.clone(), entry.clone());
+            }
+            self.by_track.insert(track, (1, Some(entry.clone())));
+            return Some(entry);
+        }
+
+        let prev_attempts = self.by_track.get(&track).map_or(0, |(a, _)| *a);
+        if prev_attempts >= MAX_ART_ATTEMPTS && !has_smtc_thumb {
+            return None;
+        }
+        if self.by_track.len() > 32 {
+            self.by_track.clear();
+        }
+        if self.by_album.len() > 32 {
+            self.by_album.clear();
+        }
+        let attempts = prev_attempts.saturating_add(1);
+        let resolved = if has_smtc_thumb { read() } else { None };
+        if let Some(bytes) = resolved {
+            if let Some(path) = disk_path.as_ref() {
+                let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")))
+                    .and_then(|()| std::fs::write(path, &bytes));
+            }
+            if let Some(ak) = alb_key.as_ref()
+                && let Some(album_path) = Self::album_disk_path(ak)
+            {
+                let _ = std::fs::create_dir_all(album_path.parent().unwrap_or(std::path::Path::new(".")))
+                    .and_then(|()| std::fs::write(album_path, &bytes));
+            }
+            let entry = (format!("{:016x}", fnv(&bytes)), bytes);
+            if let Some(ak) = alb_key {
+                self.by_album.insert(ak, entry.clone());
+            }
+            self.by_track.insert(track, (attempts, Some(entry.clone())));
+            return Some(entry);
+        }
+
+        // Fall back to cached album artwork if GSMTC reported no thumbnail or after initial read attempt.
+        if (!has_smtc_thumb || attempts >= 2)
+            && let Some(ak) = alb_key.as_ref()
+        {
+            if let Some(cached_album) = self.by_album.get(ak).cloned() {
+                self.by_track.insert(track, (attempts, Some(cached_album.clone())));
+                return Some(cached_album);
+            }
+            if let Some(album_path) = Self::album_disk_path(ak)
+                && let Ok(bytes) = std::fs::read(&album_path)
+                && !bytes.is_empty()
+            {
+                let entry = (format!("{:016x}", fnv(&bytes)), bytes);
+                self.by_album.insert(ak.clone(), entry.clone());
+                self.by_track.insert(track, (attempts, Some(entry.clone())));
+                return Some(entry);
+            }
+        }
+
+        self.by_track.insert(track, (attempts, None));
+        None
+    }
+
+    fn needs_retry(&self, players: &[MediaPlayer]) -> bool {
+        players.iter().any(|p| {
+            p.art.is_none()
+                && self
+                    .by_track
+                    .get(&Self::track_key(&p.id, &p.title, &p.artist, &p.album))
+                    .is_some_and(|(attempts, cached)| cached.is_none() && *attempts < MAX_ART_ATTEMPTS)
+        })
     }
 }
 
@@ -253,46 +444,158 @@ fn thumbnail(
     let read = || -> windows::core::Result<Vec<u8>> {
         let stream = properties.Thumbnail()?.OpenReadAsync()?.join()?;
         let size = stream.Size()?;
+        let to_load = u32::try_from(size).ok().filter(|&n| n > 0).unwrap_or(512 * 1024);
         let reader = DataReader::CreateDataReader(&stream)?;
-        let loaded = reader.LoadAsync(u32::try_from(size).unwrap_or(u32::MAX))?.join()?;
+        let loaded = reader.LoadAsync(to_load)?.join()?;
         let mut bytes = vec![0u8; loaded as usize];
         reader.ReadBytes(&mut bytes)?;
         Ok(bytes)
     };
     let bytes = read().ok().filter(|b| !b.is_empty())?;
-    if bytes.len() as u64 <= ART_BYTES {
+    let is_png_or_jpeg = bytes.starts_with(b"\x89PNG") || bytes.starts_with(b"\xFF\xD8\xFF");
+    if is_png_or_jpeg && bytes.len() as u64 <= ART_BYTES {
         return Some(bytes);
     }
-    // Too large to send: a smaller PNG.
+    // Either non-PNG/JPEG (e.g. WebP/BMP from browser SMTC) or larger than ART_BYTES:
+    // transcode/scale to PNG so Qt and Android always receive standard PNG/JPEG bytes.
     let bitmap = super::image::decode(&bytes).ok()?;
-    let small = super::image::encode_png(&super::image::scale_to(&bitmap, 360)).ok()?;
-    (small.len() as u64 <= ART_BYTES).then_some(small)
-}
-
-/// The app's name as Windows shows it, or a readable form of its ID.
-fn app_name(id: &str) -> String {
-    let display =
-        AppInfo::GetFromAppUserModelId(&HSTRING::from(id)).and_then(|info| info.DisplayInfo()?.DisplayName());
-    if let Ok(name) = display {
-        let name = name.to_string();
-        if !name.trim().is_empty() {
-            return name;
+    if (bytes.len() as u64) <= ART_BYTES
+        && let Ok(png) = super::image::encode_png(&bitmap)
+        && (png.len() as u64) <= ART_BYTES
+    {
+        return Some(png);
+    }
+    for max_side in [360, 280, 220, 160] {
+        if let Ok(small) = super::image::encode_png(&super::image::scale_to(&bitmap, max_side))
+            && (small.len() as u64) <= ART_BYTES
+        {
+            return Some(small);
         }
     }
-    readable_name(id)
+    None
 }
 
-/// "Spotify.exe" → "Spotify", `C:\…\vlc.exe` → "vlc", "Microsoft.ZuneMusic_8wekyb3d8bbwe!App" → "Microsoft.ZuneMusic".
+/// Returns true if `s` looks like an opaque hex hash (e.g. `F0DC299D809B9700`
+/// or `308046B0AF4A39CB` used by Chromium/Gecko AUMIDs) or a raw GUID/CRX id.
+fn is_opaque_id(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if trimmed.len() >= 8
+        && trimmed.chars().any(|c| c.is_ascii_digit())
+        && trimmed.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+    {
+        return true;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    lower.starts_with("_crx_")
+        || lower.starts_with("crx_")
+        || lower.starts_with('{')
+        || lower.contains("._crx_")
+}
+
+/// Looks up `Software\Classes\AppUserModelId\<id>` (`DisplayName`) in the Windows Registry,
+/// where unpackaged Win32 browsers (Chrome, Brave, Edge, Firefox, Zen) register their hashed AUMIDs.
+fn registry_aumid_display_name(id: &str) -> Option<String> {
+    use windows::Win32::System::Registry::{
+        HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW,
+    };
+    let subkey = HSTRING::from(format!(r"Software\Classes\AppUserModelId\{id}"));
+    let value_name = HSTRING::from("DisplayName");
+    for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        let mut buf = [0u16; 256];
+        let mut byte_len = (buf.len() * 2) as u32;
+        let status = unsafe {
+            RegGetValueW(
+                root,
+                &subkey,
+                &value_name,
+                RRF_RT_REG_SZ,
+                None,
+                Some(buf.as_mut_ptr().cast()),
+                Some(&mut byte_len),
+            )
+        };
+        if status.is_ok() && byte_len >= 2 {
+            let len = (byte_len as usize / 2).saturating_sub(1);
+            let name = String::from_utf16_lossy(&buf[..len]).trim().to_owned();
+            if !name.is_empty() && !name.starts_with('@') && !is_opaque_id(&name) {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
+static APP_NAME_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+/// The app's name as Windows shows it, or a readable form of its ID (memoized per AUMID).
+fn app_name(id: &str) -> String {
+    let cache = APP_NAME_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(cached) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned() {
+        return cached;
+    }
+    let resolved = (|| {
+        let display = AppInfo::GetFromAppUserModelId(&HSTRING::from(id))
+            .and_then(|info| info.DisplayInfo()?.DisplayName());
+        if let Ok(name) = display {
+            let name = name.to_string();
+            if !name.trim().is_empty() && !is_opaque_id(&name) {
+                return name;
+            }
+        }
+        if let Some(reg_name) = registry_aumid_display_name(id) {
+            return reg_name;
+        }
+        readable_name(id)
+    })();
+    cache.lock().unwrap_or_else(|e| e.into_inner()).insert(id.to_owned(), resolved.clone());
+    resolved
+}
+
+/// "Spotify.exe" → "Spotify", `C:\…\vlc.exe` → "vlc", "Microsoft.ZuneMusic_8wekyb3d8bbwe!App" → "Media Player",
+/// "F0DC299D809B9700" → "Browser".
 fn readable_name(id: &str) -> String {
     let id = id.rsplit(['\\', '/']).next().unwrap_or(id);
     let id = id.split('!').next().unwrap_or(id);
-    let id = id.split('_').next().unwrap_or(id);
-    let id = id.strip_suffix(".exe").or_else(|| id.strip_suffix(".EXE")).unwrap_or(id);
-    if id.is_empty() { "Media".into() } else { id.to_owned() }
+    let id = id.split("._crx_").next().unwrap_or(id);
+    let base = id.split('_').next().unwrap_or(id);
+    let base = base.strip_suffix(".exe").or_else(|| base.strip_suffix(".EXE")).unwrap_or(base);
+    let base = base.split('.').next_back().unwrap_or(base).trim();
+    let base = match base.rsplit_once('-') {
+        Some((prefix, suffix))
+            if !prefix.is_empty() && suffix.len() >= 8 && suffix.chars().all(|c| c.is_ascii_hexdigit()) =>
+        {
+            prefix
+        }
+        _ => base,
+    };
+    if base.is_empty() {
+        return "Media".into();
+    }
+    if is_opaque_id(base) {
+        return "Browser".into();
+    }
+    match base.to_ascii_lowercase().as_str() {
+        "msedge" => "Edge".into(),
+        "chrome" => "Chrome".into(),
+        "brave" => "Brave".into(),
+        "firefox" => "Firefox".into(),
+        "zunemusic" => "Media Player".into(),
+        "zunevideo" => "Movies & TV".into(),
+        "spotifymusic" | "spotify" => "Spotify".into(),
+        "applemusicwin" => "Apple Music".into(),
+        _ => base.to_owned(),
+    }
 }
 
 /// Runs a phone's command on one of this PC's sessions.
 pub fn command(player: &str, action: MediaAction, position: Option<u64>) -> Result<(), MediaError> {
+    // SAFETY: ensures the caller thread is in the multithreaded COM apartment before WinRT async calls.
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    }
     let manager = MANAGER.get().ok_or(MediaError::Unsupported)?;
     let failed = |e: windows::core::Error| MediaError::Failed(e.to_string());
     let session = manager
@@ -362,6 +665,10 @@ fn paused_for_call<T>(f: impl FnOnce(&mut PausedForCall) -> T) -> T {
 pub fn pause_for_call() {
     let Some(manager) = MANAGER.get().cloned() else { return };
     std::thread::spawn(move || {
+        // SAFETY: initialize COM for this worker thread.
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        }
         let _serial = CALL_MEDIA.lock().unwrap_or_else(|e| e.into_inner());
         let Ok(sessions) = manager.GetSessions() else { return };
         let now = Instant::now();
@@ -391,6 +698,10 @@ pub fn pause_for_call() {
 pub fn resume_after_call() {
     let Some(manager) = MANAGER.get().cloned() else { return };
     std::thread::spawn(move || {
+        // SAFETY: initialize COM for this worker thread.
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        }
         let _serial = CALL_MEDIA.lock().unwrap_or_else(|e| e.into_inner());
         let ids = paused_for_call(PausedForCall::take_to_resume);
         if ids.is_empty() {
@@ -423,10 +734,8 @@ mod tests {
     fn app_ids_read_as_names() {
         assert_eq!(readable_name("Spotify.exe"), "Spotify");
         assert_eq!(readable_name(r"C:\Program Files\VideoLAN\vlc.exe"), "vlc");
-        assert_eq!(
-            readable_name("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic"),
-            "Microsoft.ZuneMusic"
-        );
+        assert_eq!(readable_name("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic"), "Media Player");
+        assert_eq!(readable_name("F0DC299D809B9700"), "Browser");
         assert_eq!(readable_name("Chrome"), "Chrome");
         assert_eq!(readable_name(""), "Media");
     }
@@ -436,15 +745,18 @@ mod tests {
         let mut cache = ArtCache::default();
         let mut reads = 0;
         let title = Some("Song".to_owned());
+        let album = Some("Album".to_owned());
         for _ in 0..3 {
-            let art = cache.get("app", &title, &None, &None, || {
+            let art = cache.get("app", &title, &None, &album, true, || {
                 reads += 1;
                 Some(vec![1, 2, 3])
             });
             assert_eq!(art.map(|(_, b)| b), Some(vec![1, 2, 3]));
         }
         assert_eq!(reads, 1);
-        assert!(cache.get("app", &Some("Other".into()), &None, &None, || None).is_none());
+        assert!(cache.get("app", &Some("Other".into()), &None, &None, false, || None).is_none());
+        let album_fallback = cache.get("app", &Some("Track 2".into()), &None, &album, false, || None);
+        assert_eq!(album_fallback.map(|(_, b)| b), Some(vec![1, 2, 3]));
     }
 
     #[test]

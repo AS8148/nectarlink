@@ -198,6 +198,23 @@ mod dpapi {
     }
 }
 
+/// The install ID a device reports to its peers ([`DeviceInfo::install_id`]): a salted
+/// BLAKE3 hash of a platform ID that survives app reinstalls (Android's `ANDROID_ID`,
+/// Windows' `MachineGuid`). The raw ID never leaves the device; the salt keeps the hash
+/// specific to Nectarlink, so it can't be matched against other apps' identifiers.
+///
+/// [`DeviceInfo::install_id`]: nectarlink_protocol::messages::DeviceInfo::install_id
+pub fn install_id_from(platform_id: &str) -> Option<String> {
+    let raw = platform_id.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let mut hasher = blake3::Hasher::new_derive_key("nectarlink 2026 install id v1");
+    hasher.update(raw.as_bytes());
+    let hex = hasher.finalize().to_hex();
+    Some(hex[..nectarlink_protocol::messages::INSTALL_ID_LEN].to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,5 +251,15 @@ mod tests {
         wrong_method.extend_from_slice(&[0; 32]);
         fs::write(dir.path().join(FILE_NAME), wrong_method).unwrap();
         assert!(matches!(load_or_create(dir.path(), &PlainKeyProtector), Err(Error::Storage(_))));
+    }
+
+    #[test]
+    fn install_ids_are_stable_salted_and_well_formed() {
+        let a = install_id_from("9774d56d682e549c").unwrap();
+        assert_eq!(a, install_id_from(" 9774d56d682e549c ").unwrap(), "stable for the same device");
+        assert_ne!(a, install_id_from("9774d56d682e549d").unwrap(), "differs per device");
+        assert!(nectarlink_protocol::messages::is_valid_install_id(&a));
+        assert!(!a.contains("9774d56d682e549c"), "the raw ID never appears");
+        assert_eq!(install_id_from("  "), None);
     }
 }

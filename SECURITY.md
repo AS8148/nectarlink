@@ -28,5 +28,5 @@ the issue publicly.
 
 ## Supported versions
 
-Nectarlink is in pre-alpha. Until the first stable release, only the latest
-development version receives security fixes.
+Security fixes go into the latest release. Both apps update themselves from
+GitHub Releases, so keeping **Check for updates** on is the way to get them.

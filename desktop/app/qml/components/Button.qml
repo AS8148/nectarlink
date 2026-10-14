@@ -19,15 +19,21 @@ FocusScope {
     readonly property color background: {
         if (variant === "fill")
             return Theme.graphite ? Theme.surfaceContent : Theme.primary
-        if (variant === "tonal")
+        if (variant === "tonal") {
+            if (Theme.glass)
+                return Qt.tint(
+                    Qt.rgba(1, 1, 1, Theme.dark ? 0.10 : 0.54),
+                    Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, Theme.dark ? 0.18 : 0.14)
+                )
             return Theme.secondaryContainer
+        }
         return "transparent"
     }
     readonly property color foreground: {
         if (variant === "fill")
             return Theme.graphite ? Theme.surface : Theme.primaryContent
         if (variant === "tonal")
-            return Theme.secondaryContainerContent
+            return Theme.glass ? Theme.surfaceContent : Theme.secondaryContainerContent
         if (variant === "text")
             return Theme.graphite ? Theme.surfaceContent : Theme.primary
         return Theme.surfaceContent
@@ -63,19 +69,21 @@ FocusScope {
         height: parent.height
         radius: Theme.pill(height)
         color: button.background
-        border.width: button.variant === "outline" ? 1 : 0
-        border.color: Theme.outline
-        scale: tap.pressed && button.interactive ? Theme.pressScale : 1
-        Behavior on scale { SpringAnimation { spring: Theme.springSnappy; damping: Theme.dampingSnappy } }
-        Behavior on color { ColorAnimation { duration: Theme.fadeFast } }
+        Behavior on color { enabled: !Theme.reduceMotion; ColorAnimation { duration: Theme.fadeFast } }
+        border.width: button.variant === "outline" || (Theme.glass && (button.variant === "tonal" || button.variant === "fill")) ? 1 : 0
+        border.color: button.variant === "outline"
+            ? (Theme.glass ? Qt.rgba(1, 1, 1, Theme.dark ? 0.14 : 0.38) : Theme.outline)
+            : Qt.rgba(1, 1, 1, Theme.dark ? 0.10 : 0.32)
+        scale: mouse.pressed && button.interactive ? Theme.pressScale : 1
+        Behavior on scale { enabled: !Theme.reduceMotion; NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
-        // Hover and press state layer.
+        // Hover & Press state layer.
         Rectangle {
             anchors.fill: parent
             radius: parent.radius
             color: button.foreground
-            opacity: !button.interactive ? 0 : (tap.pressed ? 0.12 : (hover.hovered ? 0.08 : 0))
-            Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
+            opacity: !button.interactive ? 0 : (mouse.pressed ? 0.14 : (mouse.containsMouse ? 0.07 : 0))
+            Behavior on opacity { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast } }
         }
 
         Row {
@@ -102,6 +110,8 @@ FocusScope {
                 color: button.foreground
                 size: Theme.graphite ? 11 : (button.small ? 13 : 14)
                 font.underline: Theme.graphite && button.variant === "text"
+                maximumLineCount: 1
+                elide: Text.ElideRight
             }
         }
     }
@@ -117,10 +127,12 @@ FocusScope {
         visible: Theme.focusVisible(button)
     }
 
-    HoverHandler { id: hover; cursorShape: button.interactive ? Qt.PointingHandCursor : Qt.ArrowCursor }
-    TapHandler {
-        id: tap
+    MouseArea {
+        id: mouse
+        anchors.fill: parent
         enabled: button.interactive
-        onTapped: button.clicked()
+        hoverEnabled: true
+        cursorShape: button.interactive ? Qt.PointingHandCursor : Qt.ArrowCursor
+        onClicked: button.clicked()
     }
 }

@@ -16,11 +16,25 @@ import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.WifiInfo
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.telephony.CellSignalStrengthCdma
+import android.telephony.CellSignalStrengthGsm
+import android.telephony.CellSignalStrengthLte
+import android.telephony.CellSignalStrengthNr
+import android.telephony.CellSignalStrengthTdscdma
+import android.telephony.CellSignalStrengthWcdma
+import android.telephony.PhoneStateListener
+import android.telephony.SignalStrength
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyDisplayInfo
+import android.telephony.TelephonyManager
 import android.util.DisplayMetrics
 import android.view.Display
 import android.view.RoundedCorner
@@ -37,26 +51,95 @@ import java.util.Locale
 
 internal fun normalizeArgbSeed(argb: Int): UInt = (argb.toUInt() or 0xFF00_0000u)
 
+private val PRESET_SEEDS = mapOf(
+    "honey" to 0xFFB7_791Fu,
+    "lavender" to 0xFF7E_6AA8u,
+    "ocean" to 0xFF3D_7DA8u,
+    "sage" to 0xFF5B_8C5Au,
+)
+
+private fun parseSecureOverlaySeed(context: Context): UInt? = runCatching {
+    val json = Settings.Secure.getString(context.contentResolver, "theme_customization_overlay_packages")
+        ?.takeIf { it.isNotBlank() } ?: return null
+    val obj = org.json.JSONObject(json)
+    val hex = obj.optString("android.theme.customization.accent_color").ifBlank {
+        obj.optString("android.theme.customization.system_palette")
+    }.trim().removePrefix("#").removePrefix("0x").removePrefix("0X")
+    if (hex.length >= 6) {
+        val rgb = hex.takeLast(6).toUInt(16)
+        (rgb or 0xFF00_0000u)
+    } else {
+        null
+    }
+}.getOrNull()
+
 /**
- * Reads the phone's Material You seed color (`0xFFRRGGBB` ARGB) on Android 12+
- * (`API 31+`) without requiring any runtime permission.
+ * Reads the phone's active theme seed color (`0xFFRRGGBB` ARGB):
+ * 1. If the user selected "Media artwork color" or a preset seed ("honey",
+ *    "lavender", "ocean", "sage") in the Nectarlink Android app's Appearance
+ *    settings, uses that seed so "My phone's colors" on the PC matches the
+ *    phone app's chosen theme.
+ * 2. When Dynamic Color is enabled on Android 12+ (`API 31+`), reads the
+ *    live Material You seed from `Settings.Secure`, fresh configuration
+ *    resources (`system_accent1_500`), and `WallpaperManager.getWallpaperColors`.
  */
-fun materialYouAccent(context: Context, wallpaperColors: WallpaperColors? = null): UInt? {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
-    val sys = runCatching { context.getColor(android.R.color.system_accent1_500) }.getOrNull()
-    val wp = wallpaperColors?.primaryColor?.toArgb()
+fun materialYouAccent(
+    context: Context,
+    wallpaperColors: WallpaperColors? = null,
+    activeMediaColor: UInt? = null,
+): UInt? {
+    val prefs = runCatching {
+        context.applicationContext.getSharedPreferences("appearance", Context.MODE_PRIVATE)
+    }.getOrNull()
+    if (prefs != null) {
+        val seed = prefs.getString("seed", "honey") ?: "honey"
+        val dynamicColor = prefs.getBoolean("dynamic_color", true)
+        if (seed == "artwork" && activeMediaColor != null) {
+            return normalizeArgbSeed(activeMediaColor.toInt())
+        }
+        if (!dynamicColor || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return PRESET_SEEDS[seed] ?: PRESET_SEEDS["honey"]
+        }
+    }
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return PRESET_SEEDS["honey"]
+
+    // Kept as is so the stock check below can see it (a neighboring shade of a stock
+    // palette is also stock, and would pass for a real choice).
+    val sys = runCatching {
+        normalizeArgbSeed(context.getColor(android.R.color.system_accent1_500))
+    }.getOrNull()
+    val secure = parseSecureOverlaySeed(context)
+    val wp = (wallpaperColors?.primaryColor?.toArgb()
         ?: runCatching {
-            context.getSystemService(WallpaperManager::class.java)
-                ?.getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
+            val wm = context.getSystemService(WallpaperManager::class.java)
+            (wm?.getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
+                ?: wm?.getWallpaperColors(WallpaperManager.FLAG_LOCK))
                 ?.primaryColor
                 ?.toArgb()
-        }.getOrNull()
-    val raw = sys ?: wp ?: return null
-    return normalizeArgbSeed(raw)
+        }.getOrNull())?.let(::normalizeArgbSeed)
+
+    // On Samsung One UI, when the user hasn't enabled One UI's optional Color Palette
+    // toggle, system_accent1_500 is a static stock slate-blue (0xFF697E9B). Prefer the
+    // live system_accent1_500 or secure accent_color when configured, otherwise wallpaper.
+    val isStockUnconfiguredSys = sys == null || sys == 0xFF69_7E9Bu || sys == 0xFF00_6782u
+    return when {
+        sys != null && !isStockUnconfiguredSys -> sys
+        secure != null && secure != 0xFF69_7E9Bu && secure != 0xFF00_6782u -> secure
+        wp != null -> wp
+        secure != null -> secure
+        else -> sys
+    }
+}
+
+/** "Maker Model", without repeating the maker when the model already starts with it. */
+internal fun modelName(manufacturer: String, model: String): String {
+    val maker = manufacturer.trim().replaceFirstChar(Char::uppercase)
+    val name = model.trim()
+    return if (maker.isEmpty() || name.startsWith(maker, ignoreCase = true)) name else "$maker $name"
 }
 
 /** How this phone presents itself to PCs. */
-fun deviceInfo(context: Context): DeviceInfo {
+fun deviceInfo(context: Context, activeMediaColor: UInt? = null): DeviceInfo {
     val name = Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
         ?.takeIf { it.isNotBlank() } ?: Build.MODEL
     val tablet = context.resources.configuration.smallestScreenWidthDp >= 600
@@ -65,11 +148,22 @@ fun deviceInfo(context: Context): DeviceInfo {
         kind = if (tablet) DeviceKind.TABLET else DeviceKind.PHONE,
         os = "android",
         osVersion = Build.VERSION.RELEASE,
-        model = "${Build.MANUFACTURER.replaceFirstChar(Char::uppercase)} ${Build.MODEL}",
-        accent = materialYouAccent(context),
+        model = modelName(Build.MANUFACTURER, Build.MODEL),
+        accent = materialYouAccent(context, activeMediaColor = activeMediaColor),
         screen = measureScreenShape(context),
+        installId = installId(context),
     )
 }
+
+/**
+ * Identifies this phone across app reinstalls, so a PC replaces the old pairing instead of
+ * listing the phone twice. ANDROID_ID is stable for this app's signing key on this phone;
+ * only a salted hash of it leaves the phone (see `install_id_from` in the core).
+ */
+private fun installId(context: Context): String? = runCatching {
+    Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+        ?.let { app.nectarlink.core.installIdFrom(it) }
+}.getOrNull()
 
 /**
  * Measures the phone's physical front screen shape in its natural (`ROTATION_0`)
@@ -307,7 +401,15 @@ class BatteryMonitor(private val context: Context, private val onChange: (Batter
             } else {
                 null
             }
-            val battery = Battery((level * 100 / scale).coerceIn(0, 100).toUByte(), charging, plugged, fullIn)
+            val battery = Battery(
+                level = (level * 100 / scale).coerceIn(0, 100).toUByte(),
+                charging = charging,
+                plugged = plugged,
+                fullIn = fullIn,
+                cellBars = null,
+                cellType = null,
+                wifiBars = null,
+            )
             if (battery != last) {
                 last = battery
                 onChange(battery)
@@ -324,6 +426,277 @@ class BatteryMonitor(private val context: Context, private val onChange: (Batter
 
     fun stop() {
         runCatching { context.unregisterReceiver(receiver) }
+    }
+}
+
+/** Cellular and Wi-Fi signal snapshot reported alongside battery state. */
+data class SignalSnapshot(
+    val cellBars: UByte? = null,
+    val cellType: String? = null,
+    val wifiBars: UByte? = null,
+)
+
+/**
+ * Maps a Wi-Fi RSSI in dBm to `0..4` signal bars, or `null` if the RSSI is
+ * invalid (`<= -127` or `>= 0`).
+ */
+internal fun rssiToWifiBars(rssiDbm: Int): UByte? {
+    if (rssiDbm <= -127 || rssiDbm >= 0) return null
+    return when {
+        rssiDbm >= -55 -> 4u
+        rssiDbm >= -67 -> 3u
+        rssiDbm >= -78 -> 2u
+        rssiDbm >= -88 -> 1u
+        else -> 0u
+    }
+}
+
+/**
+ * Maps Android's [TelephonyManager] network type and [TelephonyDisplayInfo]
+ * override network type to a short generation label (`"5G"`, `"LTE"`, `"3G"`, `"2G"`).
+ */
+@Suppress("DEPRECATION")
+internal fun networkTypeLabel(networkType: Int, overrideNetworkType: Int = 0): String? {
+    when (overrideNetworkType) {
+        TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA,
+        4, // OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE
+        TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED,
+        -> return "5G"
+        TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_CA,
+        TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_ADVANCED_PRO,
+        -> return "LTE"
+    }
+    return when (networkType) {
+        TelephonyManager.NETWORK_TYPE_NR -> "5G"
+        TelephonyManager.NETWORK_TYPE_LTE,
+        TelephonyManager.NETWORK_TYPE_IWLAN,
+        19, // NETWORK_TYPE_LTE_CA
+        -> "LTE"
+        TelephonyManager.NETWORK_TYPE_HSPAP,
+        TelephonyManager.NETWORK_TYPE_HSPA,
+        TelephonyManager.NETWORK_TYPE_HSDPA,
+        TelephonyManager.NETWORK_TYPE_HSUPA,
+        TelephonyManager.NETWORK_TYPE_UMTS,
+        TelephonyManager.NETWORK_TYPE_EVDO_0,
+        TelephonyManager.NETWORK_TYPE_EVDO_A,
+        TelephonyManager.NETWORK_TYPE_EVDO_B,
+        TelephonyManager.NETWORK_TYPE_EHRPD,
+        TelephonyManager.NETWORK_TYPE_TD_SCDMA,
+        -> "3G"
+        TelephonyManager.NETWORK_TYPE_EDGE,
+        TelephonyManager.NETWORK_TYPE_GPRS,
+        TelephonyManager.NETWORK_TYPE_CDMA,
+        TelephonyManager.NETWORK_TYPE_1xRTT,
+        TelephonyManager.NETWORK_TYPE_IDEN,
+        TelephonyManager.NETWORK_TYPE_GSM,
+        -> "2G"
+        else -> null
+    }
+}
+
+/**
+ * Event-driven cellular and Wi-Fi signal monitor. Uses Android system callbacks
+ * without polling and without requiring any new permissions.
+ */
+class SignalMonitor(private val context: Context, private val onChange: (SignalSnapshot) -> Unit) {
+    private val connectivity = context.getSystemService(ConnectivityManager::class.java)
+    private val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
+    private val telephony = context.getSystemService(TelephonyManager::class.java)
+
+    private var current = SignalSnapshot()
+    private var cellBars: UByte? = null
+    private var signalCellType: String? = null
+    private var overrideNetworkType: Int = 0
+    private var wifiBars: UByte? = null
+
+    private var signalCallback: Any? = null
+    private var displayInfoCallback: Any? = null
+    private var phoneStateListener: Any? = null
+
+    private val wifiNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            val caps = runCatching { connectivity?.getNetworkCapabilities(network) }.getOrNull()
+            wifiBars = extractWifiBars(capabilities = caps)
+            emitIfChanged()
+        }
+
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            wifiBars = extractWifiBars(capabilities = networkCapabilities)
+            emitIfChanged()
+        }
+
+        override fun onLost(network: Network) {
+            wifiBars = null
+            emitIfChanged()
+        }
+    }
+
+    private val wifiReceiver = object : BroadcastReceiver() {
+        @Suppress("DEPRECATION")
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                WifiManager.RSSI_CHANGED_ACTION -> {
+                    val rssi = intent.getIntExtra(WifiManager.EXTRA_NEW_RSSI, -127)
+                    wifiBars = rssiToWifiBars(rssi) ?: extractWifiBars()
+                    emitIfChanged()
+                }
+                WifiManager.NETWORK_STATE_CHANGED_ACTION -> {
+                    wifiBars = extractWifiBars()
+                    emitIfChanged()
+                }
+            }
+        }
+    }
+
+    private fun extractWifiBars(capabilities: NetworkCapabilities? = null): UByte? {
+        val caps = capabilities ?: runCatching {
+            connectivity?.activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
+        }.getOrNull()
+        if (caps != null) {
+            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return null
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val transportRssi = (caps.transportInfo as? WifiInfo)?.rssi
+                if (transportRssi != null) {
+                    rssiToWifiBars(transportRssi)?.let { return it }
+                }
+                rssiToWifiBars(caps.signalStrength)?.let { return it }
+            }
+            @Suppress("DEPRECATION")
+            val info = runCatching { wifiManager?.connectionInfo }.getOrNull()
+            if (info != null && info.networkId != -1) {
+                rssiToWifiBars(info.rssi)?.let { return it }
+            }
+            return 3u
+        }
+        return null
+    }
+
+    private fun updateFromSignalStrength(signalStrength: SignalStrength?) {
+        if (signalStrength == null) return
+        val level = runCatching { signalStrength.level }.getOrNull()
+        cellBars = level?.coerceIn(0, 4)?.toUByte()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val strengths = runCatching { signalStrength.cellSignalStrengths }.getOrNull().orEmpty()
+            val inferred = when {
+                strengths.any { it is CellSignalStrengthNr } -> "5G"
+                strengths.any { it is CellSignalStrengthLte } -> "LTE"
+                strengths.any { it is CellSignalStrengthWcdma || it is CellSignalStrengthTdscdma } -> "3G"
+                strengths.any { it is CellSignalStrengthGsm || it is CellSignalStrengthCdma } -> "2G"
+                else -> null
+            }
+            if (inferred != null) {
+                signalCellType = inferred
+            }
+        }
+    }
+
+    private fun resolveCellType(): String? {
+        @Suppress("MissingPermission")
+        val dataNetType = runCatching { telephony?.dataNetworkType ?: TelephonyManager.NETWORK_TYPE_UNKNOWN }
+            .getOrDefault(TelephonyManager.NETWORK_TYPE_UNKNOWN)
+        val fromManager = networkTypeLabel(dataNetType, overrideNetworkType)
+        return when {
+            fromManager == "5G" || signalCellType == "5G" -> "5G"
+            fromManager != null -> fromManager
+            else -> signalCellType
+        }
+    }
+
+    private var running = false
+
+    private fun emitIfChanged() {
+        val next = SignalSnapshot(
+            cellBars = cellBars,
+            cellType = resolveCellType(),
+            wifiBars = wifiBars,
+        )
+        if (next != current) {
+            current = next
+            onChange(next)
+        }
+    }
+
+    fun start() {
+        if (running) return
+        running = true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching { updateFromSignalStrength(telephony?.signalStrength) }
+        }
+        wifiBars = extractWifiBars()
+
+        runCatching {
+            val request = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .build()
+            connectivity?.registerNetworkCallback(request, wifiNetworkCallback)
+        }
+        @Suppress("DEPRECATION")
+        runCatching {
+            val filter = IntentFilter().apply {
+                addAction(WifiManager.RSSI_CHANGED_ACTION)
+                addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
+            }
+            ContextCompat.registerReceiver(context, wifiReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val sigCb = object : TelephonyCallback(), TelephonyCallback.SignalStrengthsListener {
+                override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
+                    updateFromSignalStrength(signalStrength)
+                    emitIfChanged()
+                }
+            }
+            signalCallback = sigCb
+            runCatching { telephony?.registerTelephonyCallback(context.mainExecutor, sigCb) }
+
+            val dispCb = object : TelephonyCallback(), TelephonyCallback.DisplayInfoListener {
+                override fun onDisplayInfoChanged(telephonyDisplayInfo: TelephonyDisplayInfo) {
+                    overrideNetworkType = telephonyDisplayInfo.overrideNetworkType
+                    emitIfChanged()
+                }
+            }
+            displayInfoCallback = dispCb
+            runCatching { telephony?.registerTelephonyCallback(context.mainExecutor, dispCb) }
+        } else {
+            @Suppress("DEPRECATION")
+            val listener = object : PhoneStateListener() {
+                @Deprecated("Deprecated in Java")
+                override fun onSignalStrengthsChanged(signalStrength: SignalStrength?) {
+                    updateFromSignalStrength(signalStrength)
+                    emitIfChanged()
+                }
+            }
+            phoneStateListener = listener
+            @Suppress("DEPRECATION")
+            runCatching {
+                telephony?.listen(listener, PhoneStateListener.LISTEN_SIGNAL_STRENGTHS)
+            }
+        }
+
+        emitIfChanged()
+    }
+
+    fun stop() {
+        if (!running) return
+        running = false
+        runCatching { connectivity?.unregisterNetworkCallback(wifiNetworkCallback) }
+        runCatching { context.unregisterReceiver(wifiReceiver) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (signalCallback as? TelephonyCallback)?.let { cb ->
+                runCatching { telephony?.unregisterTelephonyCallback(cb) }
+            }
+            (displayInfoCallback as? TelephonyCallback)?.let { cb ->
+                runCatching { telephony?.unregisterTelephonyCallback(cb) }
+            }
+            signalCallback = null
+            displayInfoCallback = null
+        } else {
+            @Suppress("DEPRECATION")
+            (phoneStateListener as? PhoneStateListener)?.let { listener ->
+                runCatching { telephony?.listen(listener, PhoneStateListener.LISTEN_NONE) }
+            }
+            phoneStateListener = null
+        }
     }
 }
 
@@ -366,30 +739,33 @@ class NetworkMonitor(context: Context, private val onChange: () -> Unit) {
 }
 
 /**
- * Listens for Material You wallpaper and configuration color changes on
- * Android 12+ (`API 31+`) without polling and without any permission.
+ * Listens for Nectarlink appearance preference changes, media artwork color
+ * changes, and Material You wallpaper/configuration color changes without polling.
  */
 class AccentMonitor(private val context: Context, private val onChange: (UInt?) -> Unit) {
-    private var lastSys: UInt? = null
     private var lastReported: UInt? = null
+    private var activeMediaColor: UInt? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val prefs = runCatching {
+        context.applicationContext.getSharedPreferences("appearance", Context.MODE_PRIVATE)
+    }.getOrNull()
+
+    private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        emitIfChanged()
+    }
+
+    private val secureObserver = object : android.database.ContentObserver(mainHandler) {
+        override fun onChange(selfChange: Boolean) {
+            emitIfChanged()
+        }
+    }
 
     private val colorsListener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         WallpaperManager.OnColorsChangedListener { colors, which ->
-            if ((which and WallpaperManager.FLAG_SYSTEM) == 0) return@OnColorsChangedListener
-            val sys = runCatching { normalizeArgbSeed(context.getColor(android.R.color.system_accent1_500)) }.getOrNull()
-            val wp = colors?.primaryColor?.toArgb()?.let(::normalizeArgbSeed)
-            val next = when {
-                sys != null && sys != lastSys -> {
-                    lastSys = sys
-                    sys
-                }
-                wp != null -> wp
-                else -> sys
+            if ((which and (WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)) == 0) {
+                return@OnColorsChangedListener
             }
-            if (next != null && next != lastReported) {
-                lastReported = next
-                onChange(next)
-            }
+            emitIfChanged(colors)
         }
     } else {
         null
@@ -397,39 +773,67 @@ class AccentMonitor(private val context: Context, private val onChange: (UInt?) 
 
     private val componentCallbacks = object : ComponentCallbacks {
         override fun onConfigurationChanged(newConfig: Configuration) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-            val sys = runCatching { normalizeArgbSeed(context.getColor(android.R.color.system_accent1_500)) }.getOrNull()
-            if (sys != null) lastSys = sys
-            val next = materialYouAccent(context)
-            if (next != null && next != lastReported) {
-                lastReported = next
-                onChange(next)
-            }
+            emitIfChanged()
         }
 
         @Deprecated("Deprecated in Java")
         override fun onLowMemory() = Unit
     }
 
+    @Synchronized
+    private fun emitIfChanged(wallpaperColors: WallpaperColors? = null, force: Boolean = false) {
+        val next = materialYouAccent(
+            context = context,
+            wallpaperColors = wallpaperColors,
+            activeMediaColor = activeMediaColor,
+        )
+        if (next != null && (force || next != lastReported)) {
+            lastReported = next
+            onChange(next)
+        }
+    }
+
+    @Synchronized
+    fun updateMediaColor(color: UInt?) {
+        if (activeMediaColor == color) return
+        activeMediaColor = color
+        emitIfChanged()
+    }
+
+    @Synchronized
+    fun syncNow() {
+        emitIfChanged(force = true)
+    }
+
     fun start() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        lastSys = runCatching { normalizeArgbSeed(context.getColor(android.R.color.system_accent1_500)) }.getOrNull()
-        lastReported = materialYouAccent(context)
-        colorsListener?.let { listener ->
-            runCatching {
-                context.getSystemService(WallpaperManager::class.java)
-                    ?.addOnColorsChangedListener(listener, Handler(Looper.getMainLooper()))
+        prefs?.registerOnSharedPreferenceChangeListener(prefsListener)
+        runCatching {
+            val uri = Settings.Secure.getUriFor("theme_customization_overlay_packages")
+            if (uri != null) {
+                context.contentResolver.registerContentObserver(uri, false, secureObserver)
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            colorsListener?.let { listener ->
+                runCatching {
+                    context.getSystemService(WallpaperManager::class.java)
+                        ?.addOnColorsChangedListener(listener, mainHandler)
+                }
             }
         }
         runCatching { context.registerComponentCallbacks(componentCallbacks) }
+        emitIfChanged(force = true)
     }
 
     fun stop() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        colorsListener?.let { listener ->
-            runCatching {
-                context.getSystemService(WallpaperManager::class.java)
-                    ?.removeOnColorsChangedListener(listener)
+        prefs?.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        runCatching { context.contentResolver.unregisterContentObserver(secureObserver) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            colorsListener?.let { listener ->
+                runCatching {
+                    context.getSystemService(WallpaperManager::class.java)
+                        ?.removeOnColorsChangedListener(listener)
+                }
             }
         }
         runCatching { context.unregisterComponentCallbacks(componentCallbacks) }

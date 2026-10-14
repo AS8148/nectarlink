@@ -58,3 +58,25 @@ sources; nothing generated is checked in except the theme tokens
 The identity lives in `noBackupFilesDir`, so it's never restored onto
 another phone. `nectarlink://pair?...` links (a PC's QR code scanned with any
 camera app) open the app and pair.
+
+## Release & Signing
+
+Release builds enable R8 code and resource shrinking (`isMinifyEnabled = true`,
+`isShrinkResources = true` with `proguard-rules.pro` keeping JNA, UniFFI
+bindings, Conscrypt, and the Elevated shell helper entrypoint).
+
+No signing keys or passwords are stored in the repository:
+
+- **Android:** set `NECTARLINK_KEYSTORE` (path to the `.jks` keystore, key alias
+  `nectarlink`) and `NECTARLINK_KEYSTORE_PASSWORD` in the environment before
+  running `./gradlew assembleRelease`. In CI (`.github/workflows/release.yml`),
+  these come from the `ANDROID_KEYSTORE` (base64) and
+  `ANDROID_KEYSTORE_PASSWORD` repository secrets, and the temporary `.jks` file
+  is deleted immediately after `apksigner verify`. When `NECTARLINK_KEYSTORE` is
+  unset locally, `assembleRelease` signs `app-release.apk` with the debug key,
+  for testing only; never publish that build.
+- **Windows:** `./scripts/package.ps1` builds `Nectarlink-<version>-x64-setup.exe`,
+  and `.github/workflows/release.yml` publishes `SHA256SUMS.txt` alongside the
+  release artifacts so both the Windows and Android in-app updaters verify the
+  SHA-256 digest before installing.
+

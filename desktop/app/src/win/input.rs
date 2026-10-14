@@ -5,17 +5,17 @@
 
 use std::sync::Mutex;
 
-use nectarlink_core::{ButtonAction, KeyMod, MouseButton, PowerAction, SlideAction};
+use nectarlink_core::{ButtonAction, KeyMod, MouseButton, PowerAction, SlideAction, TouchAction};
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
         INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-        KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN,
-        MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
-        MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY,
-        VK_A, VK_B, VK_BACK, VK_C, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F5, VK_HOME,
-        VK_INSERT, VK_LEFT, VK_LWIN, VK_MEDIA_NEXT_TRACK, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_PREV_TRACK, VK_MENU,
-        VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP, VK_V, VK_VOLUME_DOWN,
-        VK_VOLUME_MUTE, VK_VOLUME_UP, VK_X, VK_Y, VK_Z,
+        KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
+        MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT,
+        SendInput, VIRTUAL_KEY, VK_A, VK_B, VK_BACK, VK_C, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE,
+        VK_F1, VK_F5, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MEDIA_NEXT_TRACK, VK_MEDIA_PLAY_PAUSE,
+        VK_MEDIA_PREV_TRACK, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB,
+        VK_UP, VK_V, VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP, VK_X, VK_Y, VK_Z,
     },
     WindowsAndMessaging::WHEEL_DELTA,
 };
@@ -109,6 +109,43 @@ pub fn move_relative(dx: f32, dy: f32) {
     if ix != 0 || iy != 0 {
         send_inputs(&[mouse_input(ix, iy, 0, MOUSEEVENTF_MOVE)]);
     }
+}
+
+/// Moves the mouse cursor to normalized coordinates `(x, y)` on the primary
+/// display (`0.0..=1.0`).
+pub fn move_absolute(x: f32, y: f32) {
+    if !x.is_finite() || !y.is_finite() {
+        return;
+    }
+    let ax = (x.clamp(0.0, 1.0) * 65535.0).round() as i32;
+    let ay = (y.clamp(0.0, 1.0) * 65535.0).round() as i32;
+    send_inputs(&[mouse_input(ax, ay, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE)]);
+}
+
+/// Injects a normalized touch event (`0.0..=1.0`) from reverse PC mirroring as
+/// absolute mouse movement + left button press/release.
+pub fn mirror_touch(action: TouchAction, x: f32, y: f32) {
+    if !x.is_finite() || !y.is_finite() {
+        return;
+    }
+    let ax = (x.clamp(0.0, 1.0) * 65535.0).round() as i32;
+    let ay = (y.clamp(0.0, 1.0) * 65535.0).round() as i32;
+    let flags = match action {
+        TouchAction::Down => {
+            if let Ok(mut s) = STATE.lock() {
+                s.held_left = true;
+            }
+            MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTDOWN
+        }
+        TouchAction::Move => MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+        TouchAction::Up => {
+            if let Ok(mut s) = STATE.lock() {
+                s.held_left = false;
+            }
+            MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP
+        }
+    };
+    send_inputs(&[mouse_input(ax, ay, 0, flags)]);
 }
 
 /// Presses, releases or clicks a mouse button.
@@ -326,6 +363,29 @@ pub fn slide(action: SlideAction) {
         SlideAction::Black => (VK_B, false),
     };
     send_inputs(&[vk_input(vk, extended, false), vk_input(vk, extended, true)]);
+}
+
+#[repr(C)]
+struct LastInputInfo {
+    cb_size: u32,
+    dw_time: u32,
+}
+
+unsafe extern "system" {
+    fn GetLastInputInfo(plii: *mut LastInputInfo) -> i32;
+    fn GetTickCount() -> u32;
+}
+
+/// Returns `true` when the user has moved the mouse or pressed a key on this PC
+/// within the last `max_idle_ms` milliseconds.
+pub fn is_user_active_within_ms(max_idle_ms: u32) -> bool {
+    let mut info = LastInputInfo { cb_size: std::mem::size_of::<LastInputInfo>() as u32, dw_time: 0 };
+    let ok = unsafe { GetLastInputInfo(&mut info) };
+    if ok == 0 {
+        return false;
+    }
+    let now = unsafe { GetTickCount() };
+    now.wrapping_sub(info.dw_time) <= max_idle_ms
 }
 
 #[cfg(test)]

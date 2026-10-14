@@ -8,16 +8,21 @@
 pub mod audio;
 pub mod audio_out;
 pub mod autostart;
+pub mod ble_beacon;
+pub mod bt_hfp;
 pub mod clipboard;
 pub mod doctor;
+pub mod elevated;
 pub mod h264;
 pub mod http;
 pub mod icon;
 pub mod image;
 pub mod input;
+pub mod jumplist;
 pub mod media_sessions;
 pub mod mp4;
 pub mod net;
+pub mod share_target;
 pub mod shell;
 pub mod shortcut;
 pub mod single_instance;
@@ -27,6 +32,7 @@ pub mod toast;
 pub mod tray;
 pub mod vcam;
 pub mod wallpaper;
+pub mod widget;
 pub mod wol;
 
 use windows::{
@@ -64,8 +70,15 @@ fn reg_dword(root: HKEY, key: &str, value: &str) -> Option<u32> {
     (status == ERROR_SUCCESS).then_some(data)
 }
 
-fn reg_string(root: HKEY, key: &str, value: &str) -> Option<String> {
-    let mut buf = [0u16; 64];
+/// Windows' per-installation machine GUID. It stays the same across app reinstalls, so a
+/// hash of it lets phones recognise this PC after Nectarlink is reinstalled.
+pub fn machine_guid() -> Option<String> {
+    reg_string(HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography", "MachineGuid")
+}
+
+pub(crate) fn reg_string(root: HKEY, key: &str, value: &str) -> Option<String> {
+    // Long enough for a path (an install folder) as well as short values.
+    let mut buf = [0u16; 1024];
     let mut size = std::mem::size_of_val(&buf) as u32;
     // SAFETY: buf/size describe a live UTF-16 buffer of the given byte size.
     let status = unsafe {
@@ -129,6 +142,35 @@ pub fn reduce_motion() -> bool {
     }
     .is_ok();
     ok && !enabled.as_bool()
+}
+
+/// The primary display's work area (the screen minus the taskbar), in physical pixels:
+/// `(left, top, width, height)`. Qt only reports its size, not where it starts.
+pub fn work_area() -> Option<(i32, i32, i32, i32)> {
+    let mut rect = windows::Win32::Foundation::RECT::default();
+    // SAFETY: SPI_GETWORKAREA writes a RECT to the given pointer.
+    unsafe {
+        SystemParametersInfoW(
+            windows::Win32::UI::WindowsAndMessaging::SPI_GETWORKAREA,
+            0,
+            Some(std::ptr::from_mut(&mut rect).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    }
+    .ok()?;
+    (rect.right > rect.left && rect.bottom > rect.top).then_some((
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+    ))
+}
+
+/// Fills `buf` from the system-preferred cryptographic RNG (CNG). False on failure.
+pub fn secure_random(buf: &mut [u8]) -> bool {
+    use windows::Win32::Security::Cryptography::{BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom};
+    // SAFETY: BCryptGenRandom writes exactly `buf.len()` bytes into `buf`.
+    unsafe { BCryptGenRandom(None, buf, BCRYPT_USE_SYSTEM_PREFERRED_RNG) }.is_ok()
 }
 
 /// Runs `f` with COM available on this thread.

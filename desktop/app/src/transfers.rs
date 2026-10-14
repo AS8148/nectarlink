@@ -61,7 +61,9 @@ fn send_with_mode(device: DeviceId, paths: Vec<PathBuf>, handoff: bool) {
             node.send_files(device, files).await
         };
         match res {
-            Ok(_) => {}
+            Ok(transfer_id) => {
+                crate::bridge::app::show_offline_queued_toast(device, Some(transfer_id));
+            }
             Err(Error::Denied) => show_message("Files are turned off for that device."),
             Err(e) => show_message(describe(&e)),
         }
@@ -78,6 +80,131 @@ pub fn accept(id: &str) {
 pub fn cancel(id: &str) {
     if let Some(node) = core_host::node() {
         node.cancel_transfer(id);
+        let _ = node.cancel_queue_item(id);
+    }
+}
+
+/// Cancels a single queued outgoing item by ID.
+pub fn cancel_queue_item(id: &str) {
+    let id_owned = id.trim();
+    if id_owned.is_empty() {
+        return;
+    }
+    cancel(id_owned);
+}
+
+/// Cancels all active (`Waiting` / `Sending`) queued items for `device` (or all paired devices when `None`).
+pub fn cancel_all_queued(device: Option<DeviceId>) {
+    if let Some(node) = core_host::node() {
+        let _ = node.cancel_all_queue_items(device);
+    }
+}
+
+/// Retries a failed or expired queue item by ID.
+pub fn retry_queue_item(id: &str) {
+    let Some(node) = core_host::node() else { return };
+    let id_trimmed = id.trim();
+    if id_trimmed.is_empty() {
+        return;
+    }
+    if let Err(e) = node.retry_queue_item(id_trimmed) {
+        show_message(describe(&e));
+    }
+}
+
+/// Clears all failed and expired items from the send queue (for `device`, or all peers when `None`).
+pub fn clear_finished_queue(device: Option<DeviceId>) {
+    if let Some(node) = core_host::node() {
+        let _ = node.clear_finished_queue(device);
+    }
+}
+
+/// Serializes the current `send_queue` into `(json, waiting_count, total_count, has_failed_or_expired)`.
+pub fn send_queue_snapshot() -> (String, i32, i32, bool) {
+    use nectarlink_core::{QueueKind, QueueStatus};
+
+    core_host::host().hub.read(|s| {
+        let mut waiting_count: i32 = 0;
+        let mut has_failed_or_expired = false;
+        let mut arr = Vec::with_capacity(s.send_queue.len());
+
+        for item in &s.send_queue {
+            let (status_str, reason) = match &item.status {
+                QueueStatus::Waiting => {
+                    waiting_count = waiting_count.saturating_add(1);
+                    ("waiting", "")
+                }
+                QueueStatus::Sending => {
+                    waiting_count = waiting_count.saturating_add(1);
+                    ("sending", "")
+                }
+                QueueStatus::Failed { error } => {
+                    has_failed_or_expired = true;
+                    ("failed", error.as_str())
+                }
+                QueueStatus::Expired { error } => {
+                    has_failed_or_expired = true;
+                    ("expired", error.as_str())
+                }
+            };
+            let icon = match item.kind {
+                QueueKind::Folder => "folder",
+                QueueKind::Files | QueueKind::HandoffDocument | QueueKind::Recording => "file",
+                QueueKind::Clipboard | QueueKind::ClipboardImage => "clipboard",
+                QueueKind::Link => "link",
+                QueueKind::TaskNotify => "task",
+                QueueKind::CameraRequest => "camera",
+            };
+            let device_name = s.name_of(&item.peer).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| {
+                if item.peer_name.trim().is_empty() {
+                    "your phone".to_owned()
+                } else {
+                    item.peer_name.clone()
+                }
+            });
+            let progress = if item.bytes_total == 0 {
+                0.0
+            } else {
+                (item.bytes_done as f64 / item.bytes_total as f64).clamp(0.0, 1.0)
+            };
+            arr.push(serde_json::json!({
+                "id": item.id,
+                "deviceId": item.peer.to_string(),
+                "deviceName": device_name,
+                "kind": item.kind.as_str(),
+                "icon": icon,
+                "title": item.title,
+                "subtitle": item.detail,
+                "status": status_str,
+                "reason": reason,
+                "totalBytes": item.bytes_total,
+                "doneBytes": item.bytes_done,
+                "progress": progress,
+                "filesTotal": item.files_total,
+                "filesDone": item.files_done,
+                "createdAt": item.created_at,
+                "expiresAt": item.expires_at,
+                "attempts": item.attempts,
+            }));
+        }
+
+        let total_count = i32::try_from(s.send_queue.len()).unwrap_or(i32::MAX);
+        let json = serde_json::Value::Array(arr).to_string();
+        (json, waiting_count, total_count, has_failed_or_expired)
+    })
+}
+
+/// Pauses an active transfer (`Waiting` or `Running`).
+pub fn pause(id: &str) {
+    if let Some(node) = core_host::node() {
+        node.pause_transfer(id);
+    }
+}
+
+/// Resumes a paused transfer (`TransferState::Paused`).
+pub fn resume(id: &str) {
+    if let Some(node) = core_host::node() {
+        node.resume_transfer(id);
     }
 }
 
@@ -142,6 +269,9 @@ pub fn on_event(event: &NodeEvent) {
         return crate::recordings::on_done(t.clone());
     }
     let Some(first) = saved.first() else { return };
+    if saved.len() <= 10 {
+        let _ = crate::clipboard::copy_received_files_to_clipboard(saved);
+    }
     let auto_open = t.open_on_arrival
         && saved.len() == 1
         && first.is_file()

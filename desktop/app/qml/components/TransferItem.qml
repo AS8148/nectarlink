@@ -19,7 +19,7 @@ Item {
     required property string reason
     required property string savedPath
 
-    readonly property bool active: status === "requested" || status === "waiting" || status === "running"
+    readonly property bool active: status === "requested" || status === "waiting" || status === "running" || status === "paused"
 
     implicitHeight: column.height + 20
 
@@ -45,6 +45,8 @@ Item {
             return rate > 0
                 ? qsTr("%1 of %2 · %3/s").arg(size(done)).arg(size(total)).arg(size(rate))
                 : qsTr("%1 of %2").arg(size(done)).arg(size(total))
+        case "paused":
+            return qsTr("Paused · %1 of %2").arg(size(done)).arg(size(total))
         case "done":
             return item.incoming ? qsTr("From %1 · %2").arg(item.deviceName).arg(size(total))
                                  : qsTr("Sent to %1 · %2").arg(item.deviceName).arg(size(total))
@@ -55,6 +57,7 @@ Item {
             case "denied": return qsTr("%1 doesn't accept files from this PC").arg(item.deviceName)
             case "unreachable": return qsTr("Couldn't reach %1").arg(item.deviceName)
             case "noSpace": return qsTr("Not enough space on %1").arg(item.deviceName)
+            case "integrity": return qsTr("Integrity check failed · partial file kept to resume")
             default: return qsTr("Didn't go through")
             }
         }
@@ -90,14 +93,14 @@ Item {
                 width: parent.width
                 height: 4
                 radius: 2
-                visible: item.status === "waiting" || item.status === "running"
+                visible: item.status === "waiting" || item.status === "running" || item.status === "paused"
                 color: Theme.surfaceContainerHighest
                 Rectangle {
                     height: parent.height
                     radius: parent.radius
                     width: parent.width * Math.max(0, Math.min(1, item.progress))
                     color: Theme.primary
-                    opacity: item.status === "waiting" ? 0.45 : 1
+                    opacity: (item.status === "waiting" || item.status === "paused") ? 0.45 : 1
                     Behavior on width { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.reduceMotion ? 0 : 180 } }
                 }
             }
@@ -143,6 +146,18 @@ Item {
             }
             IconButton {
                 visible: item.status === "waiting" || item.status === "running"
+                iconPath: Icons.pause
+                label: qsTr("Pause")
+                onClicked: TransferList.pause(item.transferId)
+            }
+            IconButton {
+                visible: item.status === "paused"
+                iconPath: Icons.play
+                label: qsTr("Resume")
+                onClicked: TransferList.resume(item.transferId)
+            }
+            IconButton {
+                visible: item.status === "waiting" || item.status === "running" || item.status === "paused"
                 iconPath: Icons.close
                 label: qsTr("Cancel")
                 onClicked: TransferList.cancel(item.transferId)

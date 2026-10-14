@@ -29,9 +29,9 @@ phone's shared storage root:
 
 - `""` (empty string) names the storage root itself (valid in `storage.list`
   and `storage.changed`).
-- Non-root paths (`"DCIM/Camera"`, `"Download/report.pdf"`) consist of 1–32
+- Non-root paths (`"DCIM/Camera"`, `"Download/report.pdf"`) consist of 1 to 32
   `/`-separated segments, at most 1 024 UTF-8 bytes in total.
-- Each segment is 1–255 UTF-8 bytes, never `"."` or `".."`, and contains no
+- Each segment is 1 to 255 UTF-8 bytes, never `"."` or `".."`, and contains no
   `/`, `\`, NUL (`\0`) or control characters.
 - Leading or trailing `/` is rejected.
 - The phone resolves paths strictly inside its shared root (rejecting symlinks
@@ -51,7 +51,7 @@ t = "storage.changed"            b = { path: text }
 
 ```
 StorageEntry = {
-  name:     text,        // Entry name (single path segment, 1–255 bytes)
+  name:     text,        // Entry name (single path segment, 1 to 255 bytes)
   size:     uint,        // Bytes (0 for directories)
   modified: int,         // Last-modified timestamp (Unix milliseconds)
   is_dir:   bool,        // True for directories, false for regular files

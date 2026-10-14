@@ -1586,7 +1586,9 @@ async fn connect_peer_stream(shared: &Shared, host: &str, port: u16, use_tls: bo
         .map_err(|_| Error::Offline)?;
     if use_tls {
         let connector = TlsConnector::from(shared.localsend.client_tls.clone());
-        let server_name = ServerName::try_from("localsend.org").expect("static valid DNS name");
+        let Ok(server_name) = ServerName::try_from("localsend.org") else {
+            return Err(Error::Internal("invalid server name".into()));
+        };
         let tls = tokio::time::timeout(CONNECT_TIMEOUT, connector.connect(server_name, tcp))
             .await
             .map_err(|_| Error::Offline)?
@@ -1698,7 +1700,9 @@ async fn read_chunked_vec<S: AsyncRead + Unpin>(
             }
             buf.extend_from_slice(&tmp[..n]);
         }
-        let line_end = find_crlf(&buf).unwrap();
+        let Some(line_end) = find_crlf(&buf) else {
+            break;
+        };
         let size_line = String::from_utf8_lossy(&buf[..line_end]);
         let hex_part = size_line.split(';').next().unwrap_or("").trim();
         let chunk_size = usize::from_str_radix(hex_part, 16)
@@ -1759,7 +1763,9 @@ where
                 }
                 buf.extend_from_slice(&tmp[..n]);
             }
-            let line_end = find_crlf(&buf).unwrap();
+            let Some(line_end) = find_crlf(&buf) else {
+                return Ok(());
+            };
             let size_line = String::from_utf8_lossy(&buf[..line_end]).into_owned();
             let hex_part = size_line.split(';').next().unwrap_or("").trim();
             let Ok(chunk_size) = usize::from_str_radix(hex_part, 16) else {
@@ -2208,5 +2214,85 @@ mod tests {
         let state2 =
             LocalSendState::open(dir.path(), Arc::new(PlainKeyProtector), LOCALSEND_DEFAULT_PORT).unwrap();
         assert_eq!(state2.identity.fingerprint, fp1);
+    }
+
+    #[tokio::test]
+    async fn fuzz_localsend_http_parser_and_dtos_10k() {
+        let mut seed = 0x7F4A_7C15_9E37_79B9u64;
+        let mut next_u64 = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        let mut buf = Vec::with_capacity(512);
+        for i in 0..10_000usize {
+            let len = (next_u64() as usize) % 256;
+            buf.clear();
+            for _ in 0..len {
+                buf.push((next_u64() & 0xFF) as u8);
+            }
+
+            // Mix structured HTTP headers, chunked bodies, and JSON payloads with random bytes.
+            match i % 6 {
+                0 => {
+                    let cl = next_u64() % 64;
+                    let mut req = format!(
+                        "POST /api/localsend/v2/prepare-upload?sessionId=abc&fileId=1 HTTP/1.1\r\nContent-Length: {cl}\r\n\r\n"
+                    )
+                    .into_bytes();
+                    req.extend_from_slice(&buf);
+                    buf = req;
+                }
+                1 => {
+                    let chunk_len = buf.len().min(32);
+                    let mut req = format!(
+                        "POST /api/localsend/v2/upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n{chunk_len:x};ext=1\r\n"
+                    )
+                    .into_bytes();
+                    req.extend_from_slice(&buf[..chunk_len]);
+                    req.extend_from_slice(b"\r\n0\r\n\r\n");
+                    buf = req;
+                }
+                2 => {
+                    // Ensure header terminator exists so read_http_head reaches header line parsing.
+                    buf.extend_from_slice(b"\r\n\r\n");
+                }
+                _ => {}
+            }
+
+            let mut reader = buf.as_slice();
+            if let Ok(head) = read_http_head(&mut reader).await {
+                // Only read body if content_length is small or chunked, to keep 10k iterations fast.
+                if head.chunked || head.content_length.unwrap_or(0) <= 4096 {
+                    let _ = read_http_body(&mut reader, &head).await;
+                }
+            }
+
+            let mut empty_stream: &[u8] = &[];
+            let _ = read_chunked_vec(&mut empty_stream, &buf, 1024).await;
+
+            // Fuzz DTO deserialization and path/query helpers.
+            let _ = serde_json::from_slice::<MulticastDto>(&buf);
+            let _ = serde_json::from_slice::<InfoDto>(&buf);
+            let _ = serde_json::from_slice::<FileDto>(&buf);
+            let _ = serde_json::from_slice::<PrepareUploadRequestDto>(&buf);
+            let _ = serde_json::from_slice::<PrepareUploadResponseDto>(&buf);
+            let _ = serde_json::from_slice::<StoredLocalSendState>(&buf);
+
+            let s = String::from_utf8_lossy(&buf);
+            let _ = parse_query(&s);
+            let (folder, file_name) = split_localsend_file_name(&s);
+            assert!(!file_name.is_empty());
+            assert_ne!(file_name, ".");
+            assert_ne!(file_name, "..");
+            assert!(!file_name.contains('/') && !file_name.contains('\\'));
+            if let Some(ref f) = folder {
+                assert!(!f.split('/').any(|seg| seg.is_empty() || seg == "." || seg == ".."));
+            }
+            let _ = guess_mime(&file_name);
+            let _ = peer_device_id(&s, "192.168.1.42", 53317);
+        }
     }
 }

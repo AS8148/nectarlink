@@ -173,6 +173,179 @@ class MmsPduTest {
         assertNull(groupConv.avatar)
     }
 
+    @Test
+    fun `fuzz MmsPdu build and parse across 10000 deterministic iterations`() {
+        val rng = java.util.Random(0x4E435452_2026L)
+        val mimes = listOf("image/jpeg", "image/png", "audio/mp4", "", "   ", "application/octet-stream")
+
+        for (iter in 0 until 10_000) {
+            when (iter % 3) {
+                0 -> {
+                    // Pure random / corrupted byte arrays, oversized uintvars, truncated headers
+                    val len = rng.nextInt(512)
+                    val randomBytes = ByteArray(len).also(rng::nextBytes)
+                    if (len >= 5 && iter % 9 == 0) {
+                        // Inject 5+ continuation MSB bytes to test uintvar overflow guard
+                        for (k in 0 until minOf(len, 8)) {
+                            randomBytes[k] = (randomBytes[k].toInt() or 0x80).toByte()
+                        }
+                    }
+                    val uintvar = PhoneSms.readUintvar(randomBytes, if (len > 0) rng.nextInt(len) else 0)
+                    if (uintvar != null) {
+                        assertTrue(uintvar.first >= 0)
+                        assertTrue(uintvar.second <= randomBytes.size)
+                    }
+                    // Must never throw on arbitrary/corrupted bytes
+                    PhoneSms.parseMmsPdu(randomBytes)
+                }
+                1 -> {
+                    // Valid round-trip buildMmsSendReqPdu + parseMmsPdu
+                    val recipientCount = rng.nextInt(4)
+                    val recipients = List(recipientCount) { idx ->
+                        if (idx % 2 == 0) "+1555010${rng.nextInt(100)}" else "user$idx@example.com"
+                    }
+                    val bodyBytes = ByteArray(rng.nextInt(96)).also(rng::nextBytes)
+                    val body = if (iter % 5 == 0) "" else String(bodyBytes, Charsets.UTF_8)
+                    val attCount = rng.nextInt(3)
+                    val attachments = List(attCount) {
+                        val payload = ByteArray(rng.nextInt(320)).also(rng::nextBytes)
+                        SmsAttachment(mime = mimes[rng.nextInt(mimes.size)], data = payload)
+                    }
+                    val txId = "nl-$iter"
+                    val pdu = PhoneSms.buildMmsSendReqPdu(
+                        to = recipients,
+                        body = body,
+                        attachments = attachments,
+                        transactionId = txId,
+                    )
+                    val parsed = PhoneSms.parseMmsPdu(pdu)
+                    assertNotNull("Valid SendReq PDU should parse at iter=$iter", parsed)
+                    assertEquals(0x80, parsed!!.messageType)
+                    assertEquals(txId, parsed.transactionId)
+                    assertEquals(attachments.size, parsed.attachments.size)
+                }
+                else -> {
+                    // Mutated / truncated SendReq PDU fuzzing
+                    val base = PhoneSms.buildMmsSendReqPdu(
+                        to = listOf("+15550199"),
+                        body = "Hello \uD83D\uDC1D $iter",
+                        attachments = listOf(
+                            SmsAttachment(
+                                mime = "image/jpeg",
+                                data = ByteArray(rng.nextInt(200)).also(rng::nextBytes),
+                            ),
+                        ),
+                        transactionId = "tx-$iter",
+                    )
+                    val mutated = if (rng.nextBoolean() && base.isNotEmpty()) {
+                        // Truncate at random point
+                        base.copyOf(rng.nextInt(base.size))
+                    } else {
+                        base.copyOf().also { arr ->
+                            repeat(1 + rng.nextInt(6)) {
+                                if (arr.isNotEmpty()) {
+                                    arr[rng.nextInt(arr.size)] = rng.nextInt(256).toByte()
+                                }
+                            }
+                        }
+                    }
+                    PhoneSms.parseMmsPdu(mutated)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `fuzz MessagingStyle and ProgressStyle extraction across 10000 deterministic iterations`() {
+        val rng = java.util.Random(0x4245455F_3335L)
+
+        fun randomNullableString(maxLen: Int): String? = when (rng.nextInt(5)) {
+            0 -> null
+            1 -> ""
+            2 -> "   \t\n  "
+            else -> {
+                val raw = ByteArray(rng.nextInt(maxLen + 1)).also(rng::nextBytes)
+                String(raw, Charsets.UTF_8)
+            }
+        }
+
+        fun randomAvatar(): ByteArray? = when (rng.nextInt(4)) {
+            0 -> null
+            1 -> ByteArray(0)
+            2 -> ByteArray(1 + rng.nextInt(16 * 1024)) { 1 }
+            else -> ByteArray(16 * 1024 + 1 + rng.nextInt(8 * 1024)) { 2 }
+        }
+
+        for (iter in 0 until 10_000) {
+            val msgCount = rng.nextInt(35)
+            val messages = List(msgCount) {
+                NotificationChatMessage(
+                    sender = randomNullableString(48),
+                    text = randomNullableString(120).orEmpty(),
+                    time = rng.nextLong(),
+                    selfSent = rng.nextBoolean(),
+                    avatar = randomAvatar(),
+                )
+            }
+            val conv = NotificationReader.buildConversation(
+                styleTitle = randomNullableString(64),
+                fallbackTitle = randomNullableString(64),
+                isGroup = rng.nextBoolean(),
+                convAvatar = randomAvatar(),
+                messages = messages,
+            )
+            if (messages.none { it.text.isNotBlank() }) {
+                assertNull(conv)
+            }
+            if (conv != null) {
+                assertTrue(conv.title.isNotBlank() && conv.title.length <= 256)
+                assertTrue(conv.messages.size in 1..25)
+                if (conv.avatar != null) {
+                    assertTrue(conv.avatar!!.size <= 16 * 1024)
+                }
+                for (m in conv.messages) {
+                    assertTrue(m.text.isNotBlank())
+                    if (m.selfSent) assertNull(m.sender)
+                    if (m.avatar != null) assertTrue(m.avatar!!.size <= 16 * 1024)
+                }
+            }
+
+            val segCount = rng.nextInt(20)
+            val segments = List(segCount) {
+                app.nectarlink.core.LiveSegment(
+                    length = rng.nextInt(500).coerceAtLeast(0).toUInt(),
+                    color = if (rng.nextBoolean()) rng.nextInt().toUInt() else null,
+                )
+            }
+            val ptCount = rng.nextInt(20)
+            val points = List(ptCount) {
+                app.nectarlink.core.LivePoint(
+                    position = rng.nextInt(500).coerceAtLeast(0).toUInt(),
+                    color = if (rng.nextBoolean()) rng.nextInt().toUInt() else null,
+                )
+            }
+            val live = NotificationReader.buildLive(
+                progress = rng.nextInt(400) - 100,
+                progressMax = rng.nextInt(400) - 100,
+                indeterminate = rng.nextBoolean(),
+                chip = randomNullableString(48),
+                segments = segments,
+                points = points,
+                chronometer = rng.nextBoolean(),
+                countdown = rng.nextBoolean(),
+                promoted = rng.nextBoolean(),
+            )
+            if (live != null) {
+                live.max?.let { maxVal ->
+                    live.progress?.let { p -> assertTrue(p <= maxVal) }
+                }
+                live.chip?.let { chip -> assertTrue(chip.length <= 16) }
+                assertTrue(live.segments.size <= 16)
+                assertTrue(live.points.size <= 16)
+            }
+        }
+    }
+
     private fun ByteArray.indexOf(byte: Byte, startIndex: Int): Int {
         for (i in startIndex until size) {
             if (this[i] == byte) return i

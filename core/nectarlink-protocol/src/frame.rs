@@ -141,4 +141,58 @@ mod tests {
         let mut reader = &frame[..5];
         assert!(matches!(read_frame(&mut reader).await, Err(ProtocolError::Closed)));
     }
+
+    #[tokio::test]
+    async fn fuzz_frame_decode_arbitrary_bytes_10k() {
+        let mut seed = 0x517C_C1B7_2722_0A95u64;
+        let mut next_u64 = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        let mut buf = Vec::with_capacity(512);
+        for i in 0..10_000usize {
+            let len = (next_u64() as usize) % 256;
+            buf.clear();
+            for _ in 0..len {
+                buf.push((next_u64() & 0xFF) as u8);
+            }
+            // Exercise boundary LEB128 prefixes (0, 127, 128, 16383, MAX_FRAME_LEN, MAX_FRAME_LEN + 1, 5-byte varints)
+            match i % 7 {
+                0 if !buf.is_empty() => buf[0] = (buf.len().saturating_sub(1).min(127)) as u8,
+                1 if buf.len() >= 4 => {
+                    buf[0] = 0x80;
+                    buf[1] = 0x80;
+                    buf[2] = 0x80;
+                    buf[3] = 0x80;
+                }
+                2 => {
+                    buf.clear();
+                    encode_len(MAX_FRAME_LEN + (i % 16), &mut buf);
+                }
+                _ => {}
+            }
+
+            if let Ok(Some((payload, consumed))) = decode_frame(&buf) {
+                assert!(payload.len() <= MAX_FRAME_LEN);
+                assert!(consumed <= buf.len());
+                assert!(consumed > payload.len());
+                let reencoded = encode_frame(payload).unwrap();
+                let (decoded_again, re_consumed) = decode_frame(&reencoded).unwrap().unwrap();
+                assert_eq!(decoded_again, payload);
+                assert_eq!(re_consumed, reencoded.len());
+            }
+
+            // Also fuzz async read_frame on small prefixes / arbitrary slices where declared length <= buf.len()
+            // so we don't allocate 1 MiB 10,000 times.
+            if buf.first().is_none_or(|&b| b < 0x80) {
+                let mut slice = buf.as_slice();
+                if let Ok(Some(async_payload)) = read_frame(&mut slice).await {
+                    assert!(async_payload.len() < 128);
+                }
+            }
+        }
+    }
 }

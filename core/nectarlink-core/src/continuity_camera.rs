@@ -35,6 +35,22 @@ fn detail_for_mode(mode: CameraCaptureMode) -> &'static str {
     }
 }
 
+pub(crate) async fn request_on_session(
+    shared: &Shared,
+    session: &Session,
+    request_id: String,
+    mode: CameraCaptureMode,
+) -> Result<()> {
+    if !valid_request_id(&request_id) {
+        return Err(Error::Protocol("invalid continuity camera request_id".into()));
+    }
+    if !shared.toggle_on(&session.peer, TOGGLE) {
+        return Err(Error::Denied);
+    }
+    let env = Envelope::new(types::CAMERA_CAPTURE_REQUEST, &CameraCaptureRequest { request_id, mode })?;
+    session.send(env).await
+}
+
 /// Asks a paired phone to open its camera UI and capture a photo or scan a document.
 pub(crate) async fn request(
     shared: &Shared,
@@ -51,9 +67,21 @@ pub(crate) async fn request(
     if !shared.toggle_on(&peer, TOGGLE) {
         return Err(Error::Denied);
     }
-    let session = shared.session(&peer).ok_or(Error::Offline)?;
-    let env = Envelope::new(types::CAMERA_CAPTURE_REQUEST, &CameraCaptureRequest { request_id, mode })?;
-    session.send(env).await
+    if !shared.store.has_active_queue_for_peer(&peer).unwrap_or(false)
+        && let Some(session) = shared.session(&peer)
+    {
+        match request_on_session(shared, &session, request_id.clone(), mode).await {
+            Ok(()) => return Ok(()),
+            Err(e) if !crate::actions::is_transient_send_error(&e) => return Err(e),
+            Err(_) => {}
+        }
+    }
+    let id = crate::transfer::new_id();
+    let payload = crate::QueuePayload::CameraRequest { request_id, mode };
+    shared.store.enqueue_send_item(&id, &peer, &payload, None, crate::now_unix_ms())?;
+    shared.emit(NodeEvent::QueueChanged);
+    shared.queue_notify.notify_waiters();
+    Ok(())
 }
 
 /// Cancels an in-flight Continuity Camera capture request on either side.

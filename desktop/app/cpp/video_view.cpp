@@ -203,12 +203,13 @@ void video_frame(rust::Str stream, uint32_t width, uint32_t height, rust::Slice<
 {
     if (bgrx.size() < size_t(width) * height * 4)
         return;
-    // One copy, into an image Qt owns.
+    // One copy, into an image Qt owns, performed outside the shared mutex.
     QImage image(reinterpret_cast<const uchar *>(bgrx.data()), int(width), int(height), int(width) * 4,
                  QImage::Format_RGB32);
+    QImage copy = image.copy();
     const QString key = QString::fromUtf8(stream.data(), qsizetype(stream.size()));
     std::lock_guard guard(lock);
-    latest.insert(key, Latest{image.copy(), nextSerial++});
+    latest.insert(key, Latest{std::move(copy), nextSerial++});
     wakeViews(key);
 }
 

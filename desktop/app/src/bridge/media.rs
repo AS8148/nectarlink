@@ -40,6 +40,8 @@ pub mod qobject {
         #[qproperty(i32, count)]
         /// Bumped when players come or go, for bindings on [`first_for`].
         #[qproperty(i32, revision)]
+        #[qproperty(QString, active_art, cxx_name = "activeArt")]
+        #[qproperty(QString, active_colors, cxx_name = "activeColors")]
         type MediaList = super::MediaListRust;
     }
 
@@ -92,6 +94,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "firstFor"]
         fn first_for(self: &MediaList, device: &QString) -> i32;
+        /// Whether the player at `row` is currently playing.
+        #[qinvokable]
+        #[cxx_name = "isPlaying"]
+        fn is_playing(self: &MediaList, row: i32) -> bool;
     }
 
     impl cxx_qt::Threading for MediaList {}
@@ -102,6 +108,8 @@ pub mod qobject {
 pub struct MediaListRust {
     count: i32,
     revision: i32,
+    active_art: QString,
+    active_colors: QString,
     rows: Vec<PlayerView>,
 }
 
@@ -131,7 +139,13 @@ fn role_value(row: &PlayerView, role: &str) -> QVariant {
     let p = &row.player;
     let can = |action: &str| QVariant::from(&p.actions.iter().any(|a| a == action));
     match role {
-        "deviceId" => text(&row.device.to_string()),
+        "deviceId" => {
+            if row.device == media::LOCAL_DEVICE {
+                text("local")
+            } else {
+                text(&row.device.to_string())
+            }
+        }
         "playerId" => text(&p.id),
         "app" => text(&p.app),
         "title" => text(p.title.as_deref().unwrap_or_default()),
@@ -172,7 +186,8 @@ impl cxx_qt::Initialize for qobject::MediaList {
 
 impl qobject::MediaList {
     fn refresh(mut self: Pin<&mut Self>) {
-        let new: Vec<PlayerView> = core_host::host().hub.read(|s| s.media.clone());
+        let mut new: Vec<PlayerView> = core_host::host().hub.read(|s| s.media.clone());
+        new.extend(media::local_views());
         let root = QModelIndex::default();
         for edit in diff(&self.rows, &new, |r| (r.device, r.player.id.clone())) {
             match edit {
@@ -203,13 +218,41 @@ impl qobject::MediaList {
         }
         let count = self.rows.len() as i32;
         self.as_mut().set_count(count);
+        let (art_url, colors_json) = match media::active_artwork() {
+            Some((path, colors)) => {
+                let url = QUrl::from_local_file(&QString::from(&*path.to_string_lossy())).to_qstring();
+                (url, QString::from(&colors))
+            }
+            None => (QString::default(), QString::default()),
+        };
+        if *self.active_art() != art_url {
+            self.as_mut().set_active_art(art_url);
+        }
+        if *self.active_colors() != colors_json {
+            self.as_mut().set_active_colors(colors_json);
+        }
         let revision = self.revision.wrapping_add(1);
         self.set_revision(revision);
     }
 
     pub fn first_for(&self, device: &QString) -> i32 {
         let device = String::from(device);
-        self.rows.iter().position(|r| r.device.to_string() == device).map_or(-1, |row| row as i32)
+        let matches_dev = |r: &PlayerView| {
+            if device == "local" {
+                r.device == media::LOCAL_DEVICE
+            } else {
+                r.device != media::LOCAL_DEVICE && r.device.to_string() == device
+            }
+        };
+        self.rows
+            .iter()
+            .position(|r| matches_dev(r) && r.player.playing)
+            .or_else(|| self.rows.iter().position(matches_dev))
+            .map_or(-1, |row| row as i32)
+    }
+
+    pub fn is_playing(&self, row: i32) -> bool {
+        usize::try_from(row).ok().and_then(|r| self.rows.get(r)).is_some_and(|r| r.player.playing)
     }
 
     pub fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
@@ -234,8 +277,58 @@ impl qobject::MediaList {
     }
 
     pub fn command(&self, device: &QString, player: &QString, action: &QString, position_ms: f64) {
-        let Some(device) = super::parse_device(device) else { return };
-        let Some(action) = MediaAction::parse(&String::from(action)) else { return };
+        let device_str = String::from(device);
+        let action_str = String::from(action);
+        let resolved_device =
+            if device_str == "local" { Some(media::LOCAL_DEVICE) } else { super::parse_device(device) };
+        let Some(device) = resolved_device else { return };
+        if action_str == "volume" {
+            let level = (position_ms.round() as i32).clamp(0, 100) as u8;
+            if device == media::LOCAL_DEVICE {
+                let _ = crate::win::audio::set_speaker_volume(level);
+                crate::deck::broadcast_live_state();
+            } else if let Some(node) = core_host::node() {
+                core_host::host().hub.update(|s| {
+                    let Some(mut next) = s.toggles.get(&device).cloned() else { return Changes::NONE };
+                    next.volume = level;
+                    s.set_toggles(device, Some(next))
+                });
+                core_host::spawn(async move {
+                    let _ = node
+                        .set_phone_toggle(
+                            device,
+                            "volume".into(),
+                            nectarlink_core::PhoneToggleValue::Level(level),
+                        )
+                        .await;
+                });
+            }
+            return;
+        }
+        if action_str == "mute" {
+            if device == media::LOCAL_DEVICE {
+                let _ = crate::win::audio::toggle_speaker_mute();
+                crate::deck::broadcast_live_state();
+            } else if let Some(node) = core_host::node() {
+                let target = if position_ms > 0.0 { 0u8 } else { 50u8 };
+                core_host::host().hub.update(|s| {
+                    let Some(mut next) = s.toggles.get(&device).cloned() else { return Changes::NONE };
+                    next.volume = target;
+                    s.set_toggles(device, Some(next))
+                });
+                core_host::spawn(async move {
+                    let _ = node
+                        .set_phone_toggle(
+                            device,
+                            "volume".into(),
+                            nectarlink_core::PhoneToggleValue::Level(target),
+                        )
+                        .await;
+                });
+            }
+            return;
+        }
+        let Some(action) = MediaAction::parse(&action_str) else { return };
         let position = (action == MediaAction::Seek).then(|| position_ms.max(0.0) as u64);
         media::command(device, String::from(player), action, position);
     }

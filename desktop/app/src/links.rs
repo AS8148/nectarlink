@@ -42,8 +42,9 @@ pub fn power(action: PowerAction) -> Result<(), String> {
     }
 }
 
-#[cfg(test)]
-fn as_link(text: &str) -> Option<&str> {
+/// `text` as a link this app may open for someone else (a phone, or a Timeline entry
+/// recorded from one): `http://`, `https://` or `geo:` only.
+pub fn as_link(text: &str) -> Option<&str> {
     let text = text.trim();
     if text.len() > 4096 || text.chars().any(char::is_whitespace) {
         return None;
@@ -92,7 +93,7 @@ pub fn is_handoff_text(text: &str) -> bool {
 /// `http://`/`https://` links, YouTube/video links with timestamps, `geo:` URIs,
 /// map links, and copied street addresses).
 pub fn handoff_from_clipboard() -> Option<HandoffLink> {
-    let Clip::Text(text) = clipboard::read() else { return None };
+    let Clip::Text { text, .. } = clipboard::read() else { return None };
     handoff_from_text(&text)
 }
 
@@ -116,7 +117,7 @@ fn notice(title: &str, body: &str) {
 /// "Open copied link on phone" (tray / Command Palette): opens the link, video
 /// with timestamp, or map location on the clipboard on a connected phone.
 pub fn open_copied_link_on_phone() {
-    let Clip::Text(_) = clipboard::read() else {
+    let Clip::Text { .. } = clipboard::read() else {
         return notice(
             "Copy a link or address first",
             "Copy a web link, video URL, or street address, then choose this again to open it on your phone.",
@@ -128,6 +129,7 @@ pub fn open_copied_link_on_phone() {
             "Copy a web link (https://…), geo: URI, or street address, then choose this again.",
         );
     };
+    let node = core_host::node();
     let phone = core_host::host().hub.read(|s| {
         s.devices
             .iter()
@@ -136,12 +138,19 @@ pub fn open_copied_link_on_phone() {
                 s.matrices.get(&d.id).and_then(|m| m.state("device.links_to_phone"))
                     == Some(FeatureState::Available)
             })
+            .or_else(|| {
+                s.devices.iter().find(|d| {
+                    node.as_ref().and_then(|n| n.device_toggles(d.id).ok()).is_none_or(|toggles| {
+                        toggles.into_iter().find(|(k, _)| *k == "links_to_phone").is_none_or(|(_, on)| on)
+                    })
+                })
+            })
             .map(|d| (d.id, d.info.name.clone()))
     });
     let Some((phone, name)) = phone else {
         return notice(
             "No phone to open it on",
-            "Your phone isn't connected right now, or its app needs an update.",
+            "Pair a phone first, or enable opening links on your phone.",
         );
     };
     send(phone, name, handoff);
@@ -165,15 +174,19 @@ fn send(phone: DeviceId, name: String, handoff: HandoffLink) {
     core_host::spawn(async move {
         let body = match handoff.kind {
             HandoffKind::MapLocation => {
-                format!("{} — tap the notification on your phone to open in Maps.", handoff.label)
+                format!("{}: tap the notification on your phone to open in Maps.", handoff.label)
             }
             HandoffKind::VideoLink if handoff.timestamp_secs.is_some() => {
-                format!("{} — tap the notification on your phone to continue watching.", handoff.label)
+                format!("{}: tap the notification on your phone to continue watching.", handoff.label)
             }
             _ => "Tap the notification on your phone to open it.".into(),
         };
         match node.open_link(phone, handoff.url).await {
-            Ok(()) => notice(&format!("Sent to {name}"), &body),
+            Ok(()) => {
+                if !crate::bridge::app::show_offline_queued_toast(phone, None) {
+                    notice(&format!("Sent to {name}"), &body);
+                }
+            }
             Err(Error::Unsupported) => notice("Couldn't send it", &format!("Update Nectarlink on {name}.")),
             Err(e) => notice("Couldn't send it", &describe(&e)),
         }

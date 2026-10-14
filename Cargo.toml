@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "core/nectarlink-adb",
     "core/nectarlink-protocol",
     "core/nectarlink-core",
     "core/nectarlink-cli",
@@ -12,9 +13,9 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.97"
 authors = ["The Nectarlink contributors"]
 repository = "https://github.com/thtbee/nectarlink"
 
@@ -24,9 +25,10 @@ repository = "https://github.com/thtbee/nectarlink"
 name = "Pollen"
 
 [workspace.dependencies]
-nectarlink-protocol = { path = "core/nectarlink-protocol", version = "0.0.1" }
-nectarlink-core = { path = "core/nectarlink-core", version = "0.0.1" }
-nectarlink-vcam = { path = "desktop/vcam", version = "0.0.1" }
+nectarlink-adb = { path = "core/nectarlink-adb", version = "0.1.0" }
+nectarlink-protocol = { path = "core/nectarlink-protocol", version = "0.1.0" }
+nectarlink-core = { path = "core/nectarlink-core", version = "0.1.0" }
+nectarlink-vcam = { path = "desktop/vcam", version = "0.1.0" }
 
 anyhow = "1"
 ciborium = "0.2"
@@ -50,6 +52,7 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_bytes = "0.11"
+blake3 = "1"
 bytes = "1"
 sha2 = "0.11"
 tempfile = "3"

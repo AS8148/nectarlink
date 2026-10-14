@@ -156,6 +156,7 @@ impl UpgradeAction {
             UpgradeAction::EnableAddon(addon) => ("enableAddon", addon.into()),
             UpgradeAction::EnablePath(ConnectionPath::Relay) => ("enablePath", "relay".into()),
             UpgradeAction::EnablePath(ConnectionPath::Lan) => ("enablePath", "lan".into()),
+            UpgradeAction::EnablePath(ConnectionPath::Usb) => ("enablePath", "usb".into()),
             UpgradeAction::EnableDeviceToggle(toggle) => ("enableToggle", toggle.into()),
             UpgradeAction::UpdateApp(Role::Phone) => ("updateApp", "phone".into()),
             UpgradeAction::UpdateApp(Role::Desktop) => ("updateApp", "desktop".into()),
@@ -346,6 +347,8 @@ pub const DEVICE_TOGGLES: &[(&str, bool)] = &[
     ("webcam", true),
     // Browsing the phone's storage on a PC is opt-in.
     ("storage", false),
+    // Viewing this PC's screen on a phone is opt-in.
+    ("pc_mirror", false),
     // Controlling this PC's mouse and keyboard is opt-in.
     ("remote_input", false),
     // Running custom Deck commands on this PC is opt-in.

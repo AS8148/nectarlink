@@ -39,7 +39,7 @@ internal class RecentPhotos(
     private val prefs = context.getSharedPreferences("photos", Context.MODE_PRIVATE)
     private val handler = Handler(Looper.getMainLooper())
     private var observer: ContentObserver? = null
-    private val check = Runnable { Thread { checkNow() }.start() }
+    private val check = Runnable { checkExecutor.execute { checkNow() } }
 
     /** Starts watching (when allowed); only photos from now on are new. */
     fun start() {
@@ -107,7 +107,9 @@ internal class RecentPhotos(
             Log.w(TAG, "can't look for new photos", it)
             return
         }
-        prefs.edit { putLong(LAST_SEEN, newest) }
+        if (newest > lastSeen) {
+            prefs.edit { putLong(LAST_SEEN, newest) }
+        }
         // A burst (a camera's burst mode, a downloaded album) isn't news
         // photo by photo: only the latest few.
         for (photo in found.takeLast(MAX_PER_CHECK)) {
@@ -120,6 +122,9 @@ internal class RecentPhotos(
 
     companion object {
         private const val TAG = "RecentPhotos"
+        private val checkExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "nectarlink-photos-check").apply { isDaemon = true }
+        }
         private const val LAST_SEEN = "lastSeen"
         private const val IMAGE_PREFIX = "media:"
         private const val VIDEO_PREFIX = "video:"

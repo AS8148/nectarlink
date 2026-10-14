@@ -23,7 +23,7 @@ On the control stream. Each request is answered with the matching answer
 or `error`.
 
 ```
-t = "contacts.list"     id = n   b = { ? query: text, ? offset: uint, limit: uint }   // limit 1–200
+t = "contacts.list"     id = n   b = { ? query: text, ? offset: uint, limit: uint }   // limit 1 to 200
 t = "contacts.list"     re = n   b = { contacts: [ contact ] }
 
 t = "contacts.changed"           b = {}                                               // phone → PC
@@ -31,7 +31,7 @@ t = "contacts.changed"           b = {}                                         
 contact = {
   id:        text,
   name:      text,
-  numbers:   [ { number: text, ? label: text } ],   // 1–16 phone numbers
+  numbers:   [ { number: text, ? label: text } ],   // 1 to 16 phone numbers
   ? starred: bool,                                  // Favorite contact (default false)
   ? photo:   bytes,                                 // Small JPEG, at most 16 KiB
 }

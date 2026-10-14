@@ -1,4 +1,4 @@
-# Phase 0: Foundations — execution plan
+# Phase 0: Foundations, execution plan
 
 Goal: prove the risky parts early and build the skeleton every later feature
 plugs into. Phase 0 ends when the exit criteria at the bottom are met.
@@ -10,7 +10,7 @@ plugs into. Phase 0 ends when the exit criteria at the bottom are met.
  W2 Repo & CI ──► scaffold ──► CI green                                  │
  W3 Core ─────────────► identity ► pairing ► session ► events ──┐        │
  S1 Qt + Rust proof (the gate) ──────────────────────► pass? ───┼──► W4 Desktop shell
- S2–S7 other spikes (parallel, timeboxed) ──────────────────────┘    W5 Android shell
+ S2 to S7 other spikes (parallel, timeboxed) ──────────────────────┘    W5 Android shell
 ```
 
 1. **W2 Repo & CI** and **W1 Design directions** start together.
@@ -18,7 +18,7 @@ plugs into. Phase 0 ends when the exit criteria at the bottom are met.
    the desktop stack.
 3. **W3 Core** proceeds in parallel; it doesn't depend on the UI choice.
 4. **W4/W5 shells** start once S1 passes and a design direction is picked.
-5. **S2–S7** run alongside, each timeboxed. A failed spike changes the plan,
+5. **S2 to S7** run alongside, each timeboxed. A failed spike changes the plan,
    it doesn't block Phase 0.
 
 ## 2. Repository scaffold (W2)
@@ -81,7 +81,7 @@ verdict. Spike code is throwaway; what we keep is the knowledge.
 | S4 | iroh on Android | Battery cost and reconnect behavior | < 2 %/day idle while connected; reconnect < 3 s after Wi-Fi switch, screen off, Doze | Tune keep-alives; lean on CDM wake |
 | S5 | USB transport | iroh custom transport (or TCP tunnel) over ADB | Session runs over USB with Wi-Fi off; ≥ 30 MB/s file throughput | TCP-framed tunnel fallback |
 | S6 | Toasts & identity | Sparse package identity + toasts with inline reply from an unpackaged installer | Toast with image, buttons and a reply box; reply text reaches the app, also when it was not running | Simpler toasts; reply opens the app |
-| S7 | Elevated self-pairing | Phone-only wireless-debugging pairing and re-arm after reboot | Pair from a notification on Android 11–16 (Pixel, Samsung, Xiaomi); helper process starts as `shell`; re-arm works where the OEM allows | Rely on PC-side re-arm and Shizuku |
+| S7 | Elevated self-pairing | Phone-only wireless-debugging pairing and re-arm after reboot | Pair from a notification on Android 11 to 16 (Pixel, Samsung, Xiaomi); helper process starts as `shell`; re-arm works where the OEM allows | Rely on PC-side re-arm and Shizuku |
 
 ## 5. Design (W1)
 

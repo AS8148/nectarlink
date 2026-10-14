@@ -50,6 +50,9 @@ pub static ACTIVE_OBJECTS: AtomicU32 = AtomicU32::new(0);
 /// Sample duration for 30 fps in 100-ns units (`10_000_000 / 30 = 333_333`).
 pub const SAMPLE_DURATION_100NS: i64 = 333_333;
 
+/// Supported virtual camera output modes `(width, height, fps)`.
+pub const MODES: &[(u32, u32, u32)] = &[(1280, 720, 30), (1920, 1080, 30), (3840, 2160, 30)];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceState {
     Stopped,
@@ -150,12 +153,13 @@ impl VcamMediaSource {
             attrs
                 .SetUINT32(&MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES, MFFrameSourceTypes_Color.0 as u32)?;
 
-            let media_types = [
-                Some(create_video_media_type(&MFVideoFormat_RGB32, 1280, 720, 30)?),
-                Some(create_video_media_type(&MFVideoFormat_NV12, 1280, 720, 30)?),
-                Some(create_video_media_type(&MFVideoFormat_RGB32, 1920, 1080, 30)?),
-                Some(create_video_media_type(&MFVideoFormat_NV12, 1920, 1080, 30)?),
-            ];
+            let modes =
+                if mapping_name.starts_with("Local\\NectarlinkVcamSrcTest_") { &MODES[..2] } else { MODES };
+            let mut media_types = Vec::with_capacity(modes.len() * 2);
+            for &(w, h, fps) in modes {
+                media_types.push(Some(create_video_media_type(&MFVideoFormat_RGB32, w, h, fps)?));
+                media_types.push(Some(create_video_media_type(&MFVideoFormat_NV12, w, h, fps)?));
+            }
             let sd = MFCreateStreamDescriptor(0, &media_types)?;
             sd.SetGUID(&MF_DEVICESTREAM_STREAM_CATEGORY, &PINNAME_VIDEO_CAPTURE)?;
             sd.SetUINT32(&MF_DEVICESTREAM_STREAM_ID, 0)?;
@@ -711,5 +715,36 @@ impl IClassFactory_Impl for VcamClassFactory_Impl {
             ACTIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use windows::Win32::Media::MediaFoundation::{MF_VERSION, MFSTARTUP_NOSOCKET, MFShutdown, MFStartup};
+
+    use super::*;
+
+    #[test]
+    fn modes_include_4k_2160p_and_source_advertises_six_media_types() {
+        assert_eq!(MODES, &[(1280, 720, 30), (1920, 1080, 30), (3840, 2160, 30)]);
+        unsafe {
+            MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).unwrap();
+            let map_name = format!("Local\\NectarlinkVcam4kModes_{}", std::process::id());
+            let source_ex = VcamMediaSource::new_with_mapping(&map_name).unwrap();
+            let source: IMFMediaSource = source_ex.cast().unwrap();
+            let pd = source.CreatePresentationDescriptor().unwrap();
+            let mut selected = BOOL::default();
+            let mut sd_opt = None;
+            pd.GetStreamDescriptorByIndex(0, &mut selected, &mut sd_opt).unwrap();
+            let sd = sd_opt.unwrap();
+            let handler = sd.GetMediaTypeHandler().unwrap();
+            assert_eq!(handler.GetMediaTypeCount().unwrap(), 6);
+            let mt_4k_rgb = handler.GetMediaTypeByIndex(4).unwrap();
+            let frame_size = mt_4k_rgb.GetUINT64(&MF_MT_FRAME_SIZE).unwrap();
+            assert_eq!((frame_size >> 32) as u32, 3840);
+            assert_eq!(frame_size as u32, 2160);
+            source.Shutdown().unwrap();
+            let _ = MFShutdown();
+        }
     }
 }

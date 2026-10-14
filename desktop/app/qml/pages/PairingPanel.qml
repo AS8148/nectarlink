@@ -10,6 +10,7 @@ Item {
     property bool running: false
     // Show "Cancel" (in a dialog) or not (first run).
     property bool cancellable: true
+    property bool compact: false
     signal finished
     signal cancelled
 
@@ -20,10 +21,13 @@ Item {
 
     onRunningChanged: {
         showNearby = false
-        if (running)
+        if (running && state_ !== "comparing" && state_ !== "confirmed" && state_ !== "connecting")
             Pairing.start()
     }
-    Component.onCompleted: if (running) Pairing.start()
+    Component.onCompleted: {
+        if (running && state_ !== "comparing" && state_ !== "confirmed" && state_ !== "connecting")
+            Pairing.start()
+    }
 
     // Leave the success message up briefly, then close.
     Timer {
@@ -45,7 +49,7 @@ Item {
     Column {
         id: content
         width: parent.width
-        spacing: 14
+        spacing: panel.compact ? 10 : 14
 
         // ---- Header ----
         Txt {
@@ -54,6 +58,7 @@ Item {
             role: "displaySmall"
             size: 24
             wrapMode: Text.WordWrap
+            visible: !panel.compact || panel.state_ === "comparing" || panel.state_ === "paired" || panel.state_ === "failed" || panel.showNearby
             text: {
                 switch (panel.state_) {
                 case "comparing": return qsTr("Check the code")
@@ -68,7 +73,7 @@ Item {
         Column {
             width: parent.width
             spacing: 12
-            visible: (panel.state_ === "hosting" || panel.state_ === "starting" || panel.state_ === "idle") && !panel.showNearby
+            visible: !panel.compact && (panel.state_ === "hosting" || panel.state_ === "starting" || panel.state_ === "idle") && !panel.showNearby
 
             Item {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -122,6 +127,81 @@ Item {
                 iconPath: Icons.wifi
                 text: qsTr("Pair nearby instead")
                 onClicked: panel.showNearby = true
+            }
+        }
+
+        // ---- Compact horizontal QR layout (used in Walkthrough Step 4) ----
+        Row {
+            width: parent.width
+            spacing: 24
+            visible: panel.compact && (panel.state_ === "hosting" || panel.state_ === "starting" || panel.state_ === "idle") && !panel.showNearby
+
+            Item {
+                width: 164; height: 164
+                anchors.verticalCenter: parent.verticalCenter
+                QrCode {
+                    anchors.fill: parent
+                    visible: panel.state_ === "hosting"
+                    path: Pairing.qrPath
+                    modules: Pairing.qrSize
+                    Accessible.role: Accessible.Graphic
+                    Accessible.name: qsTr("Pairing QR code")
+                }
+                Spinner {
+                    anchors.centerIn: parent
+                    visible: panel.state_ !== "hosting"
+                    width: 28; height: 28
+                }
+            }
+
+            Column {
+                width: Math.max(180, parent.width - 188)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 10
+
+                Txt {
+                    width: parent.width
+                    role: "title"
+                    text: qsTr("Scan with your phone")
+                }
+
+                Column {
+                    width: parent.width
+                    spacing: 6
+                    Repeater {
+                        model: [qsTr("Open Nectarlink on your phone"), qsTr("Tap “Pair with PC”"), qsTr("Scan this QR code")]
+                        delegate: Row {
+                            required property int index
+                            required property string modelData
+                            spacing: 8
+                            Rectangle {
+                                width: 20; height: 20; radius: Theme.graphite ? Theme.radiusXs : 10
+                                color: Theme.graphite ? "transparent" : Theme.secondaryContainer
+                                border.width: Theme.graphite ? 1 : 0
+                                border.color: Theme.outlineVariant
+                                Txt { anchors.centerIn: parent; text: index + 1; role: "caption"; weight: 700 }
+                            }
+                            Txt { anchors.verticalCenter: parent.verticalCenter; text: modelData; role: "bodySmall"; muted: true }
+                        }
+                    }
+                }
+
+                Txt {
+                    width: parent.width
+                    role: "caption"
+                    muted: true
+                    visible: panel.state_ === "hosting"
+                    text: qsTr("Code refreshes in %1:%2 · Works on this network")
+                          .arg(Math.floor(panel.secondsLeft / 60)).arg(("0" + panel.secondsLeft % 60).slice(-2))
+                }
+
+                Button {
+                    variant: "tonal"
+                    size: "sm"
+                    iconPath: Icons.wifi
+                    text: qsTr("Pair nearby instead")
+                    onClicked: panel.showNearby = true
+                }
             }
         }
 
@@ -248,7 +328,8 @@ Item {
                     if (panel.state_ === "paired")
                         return qsTr("%1 is paired with this PC.").arg(Pairing.peerName)
                     switch (Pairing.failure) {
-                    case "rejected": return qsTr("The codes didn't match, so nothing was paired. Try again.")
+                    // The other device's "They don't match" and Cancel look the same from here.
+                    case "rejected": return qsTr("Pairing was cancelled or the codes didn't match, so nothing was paired. Try again.")
                     case "declined": return qsTr("Pairing was declined on one of the devices.")
                     case "unreachable": return qsTr("Couldn't reach the phone. Make sure both devices are on the same network.")
                     case "expired": return qsTr("The code expired.")

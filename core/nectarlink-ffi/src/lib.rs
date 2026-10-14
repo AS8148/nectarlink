@@ -78,6 +78,9 @@ pub struct DeviceInfo {
     pub accent: Option<u32>,
     #[uniffi(default = None)]
     pub screen: Option<ScreenShape>,
+    /// Identifies the device across reinstalls; see [`install_id_from`].
+    #[uniffi(default = None)]
+    pub install_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -91,7 +94,7 @@ pub enum PowerLevel {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Battery {
-    /// 0–100.
+    /// 0-100.
     pub level: u8,
     pub charging: bool,
     /// "ac", "usb" or "wireless".
@@ -99,6 +102,15 @@ pub struct Battery {
     /// Estimated minutes until full when charging, if known.
     #[uniffi(default = None)]
     pub full_in: Option<u16>,
+    /// Cellular signal bars (0-4), if known.
+    #[uniffi(default = None)]
+    pub cell_bars: Option<u8>,
+    /// Cellular network type ("5G", "LTE", "4G", "3G", "2G"), if known.
+    #[uniffi(default = None)]
+    pub cell_type: Option<String>,
+    /// Wi-Fi signal bars (0-4), if known.
+    #[uniffi(default = None)]
+    pub wifi_bars: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -110,6 +122,8 @@ pub enum Link {
     Connecting,
     Online {
         relayed: bool,
+        #[uniffi(default = false)]
+        usb: bool,
         rtt_ms: u32,
     },
 }
@@ -479,14 +493,16 @@ pub enum TransferStatus {
     /// Waiting for the other device (to connect, or to continue).
     Waiting,
     Running,
+    /// Manually paused by either side; partial files are kept on the receiver.
+    Paused,
     /// `saved`: where received files are, one path per item in `names`:
     /// each file, and each sent folder (empty when
     /// sending).
     Done {
         saved: Vec<String>,
     },
-    /// `reason`: "denied", "unreachable", "noSpace", "interrupted" or
-    /// "other".
+    /// `reason`: "denied", "unreachable", "noSpace", "interrupted", "integrity"
+    /// or "other".
     Failed {
         reason: String,
     },
@@ -713,6 +729,49 @@ pub enum Event {
     TimelineChanged,
     /// The LocalSend compatibility setting or discovered LocalSend peers changed.
     LocalSendChanged,
+    /// A PCM audio frame arrived from a paired PC (`audio.pcm`).
+    PcAudioFrame {
+        device: String,
+        sample_rate: u32,
+        channels: u8,
+        pcm: Vec<u8>,
+    },
+    /// A paired PC started streaming its screen to this phone (`mirror` video stream config).
+    PcMirrorConfig {
+        id: String,
+        codec: String,
+        width: u32,
+        height: u32,
+    },
+    /// An encoded video frame arrived from a paired PC's screen stream.
+    PcMirrorFrame {
+        id: String,
+        keyframe: bool,
+        time_us: u64,
+        data: Vec<u8>,
+    },
+    /// A paired PC's screen stream ended.
+    PcMirrorEnded {
+        id: String,
+    },
+    /// The persistent outgoing send queue changed.
+    QueueChanged,
+    /// Pending outgoing queue items were dropped because the peer was unpaired.
+    QueueDroppedOnUnpair {
+        device_id: String,
+        device_name: String,
+        dropped_count: u32,
+    },
+}
+
+/// One file or folder returned by `list_remote_storage` (`storage.list`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RemoteStorageEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    pub size: u64,
+    pub modified: i64,
 }
 
 /// One tile on a PC's Deck (`docs/protocol/deck.md`).
@@ -923,7 +982,7 @@ pub enum VideoPacketKind {
     Keyframe,
 }
 
-/// The PC's mouse or keyboard on the mirrored screen. Positions are
+/// The PC's mouse, keyboard, or gamepad on the mirrored screen. Positions are
 /// fractions of the screen (0 to 1).
 #[derive(Clone, PartialEq, uniffi::Enum)]
 pub enum MirrorInputEvent {
@@ -947,7 +1006,19 @@ pub enum MirrorInputEvent {
     Text {
         text: String,
     },
+    /// Gamepad controller state (XInput-style buttons bitmask, stick axes, and triggers).
+    Gamepad {
+        buttons: u16,
+        lx: i16,
+        ly: i16,
+        rx: i16,
+        ry: i16,
+        lt: u8,
+        rt: u8,
+    },
 }
+
+pub type MirrorInput = MirrorInputEvent;
 
 /// Never prints typed text (protocol v0 §11).
 impl std::fmt::Debug for MirrorInputEvent {
@@ -957,6 +1028,7 @@ impl std::fmt::Debug for MirrorInputEvent {
             MirrorInputEvent::Touch { action, .. } => write!(f, "Touch({action:?})"),
             MirrorInputEvent::Scroll { .. } => f.write_str("Scroll"),
             MirrorInputEvent::Key { key } => write!(f, "Key({key})"),
+            MirrorInputEvent::Gamepad { buttons, .. } => write!(f, "Gamepad({buttons:#06x})"),
         }
     }
 }
@@ -983,6 +1055,31 @@ impl From<core::MirrorInput> for MirrorInputEvent {
             core::MirrorInput::Scroll { x, y, dx, dy } => MirrorInputEvent::Scroll { x, y, dx, dy },
             core::MirrorInput::Key { key } => MirrorInputEvent::Key { key },
             core::MirrorInput::Text { text } => MirrorInputEvent::Text { text },
+            core::MirrorInput::Gamepad { buttons, lx, ly, rx, ry, lt, rt } => {
+                MirrorInputEvent::Gamepad { buttons, lx, ly, rx, ry, lt, rt }
+            }
+        }
+    }
+}
+
+impl From<MirrorInputEvent> for core::MirrorInput {
+    fn from(input: MirrorInputEvent) -> Self {
+        match input {
+            MirrorInputEvent::Touch { action, x, y } => core::MirrorInput::Touch {
+                action: match action {
+                    TouchPhase::Down => core::TouchAction::Down,
+                    TouchPhase::Move => core::TouchAction::Move,
+                    TouchPhase::Up => core::TouchAction::Up,
+                },
+                x,
+                y,
+            },
+            MirrorInputEvent::Scroll { x, y, dx, dy } => core::MirrorInput::Scroll { x, y, dx, dy },
+            MirrorInputEvent::Key { key } => core::MirrorInput::Key { key },
+            MirrorInputEvent::Text { text } => core::MirrorInput::Text { text },
+            MirrorInputEvent::Gamepad { buttons, lx, ly, rx, ry, lt, rt } => {
+                core::MirrorInput::Gamepad { buttons, lx, ly, rx, ry, lt, rt }
+            }
         }
     }
 }
@@ -1032,6 +1129,12 @@ impl MirrorStream {
 #[uniffi::export]
 pub fn mirror_config(width: u32, height: u32, session: u32) -> Vec<u8> {
     core::MirrorConfig { codec: "h264".into(), width, height, session }.to_cbor()
+}
+
+/// The bytes of a config packet for a stream of `codec` (`"h264"`, `"h265"`, or `"av1"`).
+#[uniffi::export]
+pub fn mirror_config_codec(codec: String, width: u32, height: u32, session: u32) -> Vec<u8> {
+    core::MirrorConfig { codec, width, height, session }.to_cbor()
 }
 
 /// What a PC asked to mirror, and how (docs/protocol/mirror.md).
@@ -1258,7 +1361,7 @@ pub enum CallCommand {
     Hold {
         on: bool,
     },
-    /// A keypad tone: "0"–"9", "*" or "#".
+    /// A keypad tone: "0"-"9", "*" or "#".
     Dtmf {
         digit: String,
     },
@@ -1452,6 +1555,16 @@ pub struct TimelineEntry {
 
 impl From<core::TimelineEntry> for TimelineEntry {
     fn from(e: core::TimelineEntry) -> Self {
+        let (title, detail, target) =
+            if e.kind == core::TimelineKind::Clip && !e.title.is_empty() && e.title != "Image clip" {
+                let raw = e.title.clone();
+                let (friendly, raw_detail) = core::format_clip_display(&e.title);
+                let det = raw_detail.unwrap_or(e.detail);
+                let tgt = if e.target.is_empty() { raw } else { e.target };
+                (friendly, det, tgt)
+            } else {
+                (e.title, e.detail, e.target)
+            };
         TimelineEntry {
             id: e.id,
             kind: e.kind.into(),
@@ -1459,9 +1572,9 @@ impl From<core::TimelineEntry> for TimelineEntry {
             device_name: e.device_name,
             incoming: e.incoming,
             timestamp: e.timestamp,
-            title: e.title,
-            detail: e.detail,
-            target: e.target,
+            title,
+            detail,
+            target,
             size_bytes: e.size_bytes,
             duration_secs: e.duration_secs,
             ref_id: e.ref_id,
@@ -1528,7 +1641,133 @@ impl From<core::DataRetentionCounts> for DataRetentionCounts {
     }
 }
 
-private_debug!(PhotoAlbum, PhotoItem, PhotoThumb, StorageEntry, ClipboardHistoryEntry, TimelineEntry);
+/// Kind of item in the persistent outgoing send queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiQueueKind {
+    Files,
+    Folder,
+    Clipboard,
+    ClipboardImage,
+    Link,
+    HandoffDocument,
+    Recording,
+    TaskNotify,
+    CameraRequest,
+}
+
+impl From<core::QueueKind> for FfiQueueKind {
+    fn from(k: core::QueueKind) -> Self {
+        match k {
+            core::QueueKind::Files => FfiQueueKind::Files,
+            core::QueueKind::Folder => FfiQueueKind::Folder,
+            core::QueueKind::Clipboard => FfiQueueKind::Clipboard,
+            core::QueueKind::ClipboardImage => FfiQueueKind::ClipboardImage,
+            core::QueueKind::Link => FfiQueueKind::Link,
+            core::QueueKind::HandoffDocument => FfiQueueKind::HandoffDocument,
+            core::QueueKind::Recording => FfiQueueKind::Recording,
+            core::QueueKind::TaskNotify => FfiQueueKind::TaskNotify,
+            core::QueueKind::CameraRequest => FfiQueueKind::CameraRequest,
+        }
+    }
+}
+
+/// Lifecycle state of an item in the persistent outgoing send queue.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiQueueStatus {
+    Waiting,
+    Sending,
+    Failed { error: String },
+    Expired { error: String },
+}
+
+impl From<core::QueueStatus> for FfiQueueStatus {
+    fn from(s: core::QueueStatus) -> Self {
+        match s {
+            core::QueueStatus::Waiting => FfiQueueStatus::Waiting,
+            core::QueueStatus::Sending => FfiQueueStatus::Sending,
+            core::QueueStatus::Failed { error } => FfiQueueStatus::Failed { error },
+            core::QueueStatus::Expired { error } => FfiQueueStatus::Expired { error },
+        }
+    }
+}
+
+/// Source or staged file metadata for a queued file, folder, handoff, or recording item.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiQueueFile {
+    pub path: String,
+    pub name: String,
+    pub folder: Option<String>,
+    pub size: u64,
+    pub mtime_ms: i64,
+    pub staged: bool,
+}
+
+impl From<core::QueuedFileSpec> for FfiQueueFile {
+    fn from(f: core::QueuedFileSpec) -> Self {
+        FfiQueueFile {
+            path: f.path.to_string_lossy().into_owned(),
+            name: f.name,
+            folder: f.folder,
+            size: f.size,
+            mtime_ms: f.mtime_ms,
+            staged: f.staged,
+        }
+    }
+}
+
+/// One item in the persistent outgoing send queue.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiQueueItem {
+    pub id: String,
+    pub seq: i64,
+    pub device_id: String,
+    pub device_name: String,
+    pub kind: FfiQueueKind,
+    pub status: FfiQueueStatus,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub attempts: u32,
+    pub title: String,
+    pub detail: String,
+    pub bytes_total: u64,
+    pub bytes_done: u64,
+    pub files_total: u32,
+    pub files_done: u32,
+    pub files: Vec<FfiQueueFile>,
+}
+
+impl From<core::QueueItem> for FfiQueueItem {
+    fn from(i: core::QueueItem) -> Self {
+        FfiQueueItem {
+            id: i.id,
+            seq: i.seq,
+            device_id: i.peer.to_string(),
+            device_name: i.peer_name,
+            kind: i.kind.into(),
+            status: i.status.into(),
+            created_at: i.created_at,
+            expires_at: i.expires_at,
+            attempts: i.attempts,
+            title: i.title,
+            detail: i.detail,
+            bytes_total: i.bytes_total,
+            bytes_done: i.bytes_done,
+            files_total: i.files_total,
+            files_done: i.files_done,
+            files: i.files.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+private_debug!(
+    PhotoAlbum,
+    PhotoItem,
+    PhotoThumb,
+    StorageEntry,
+    ClipboardHistoryEntry,
+    TimelineEntry,
+    FfiQueueItem
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum NectarlinkError {
@@ -1552,6 +1791,8 @@ pub enum NectarlinkError {
     NotFound,
     #[error("too large to send")]
     TooLarge,
+    #[error("send queue is full: {reason}")]
+    QueueFull { reason: String },
     #[error("no pairing in progress")]
     NotPairing,
     #[error("invalid pairing link")]
@@ -1580,6 +1821,7 @@ impl From<core::Error> for NectarlinkError {
             core::Error::Unsupported => NectarlinkError::Unsupported,
             core::Error::NotFound => NectarlinkError::NotFound,
             core::Error::TooLarge => NectarlinkError::TooLarge,
+            core::Error::QueueFull(reason) => NectarlinkError::QueueFull { reason },
             core::Error::NotPairing => NectarlinkError::NotPairing,
             core::Error::InvalidPairingLink(_) => NectarlinkError::InvalidPairingLink,
             core::Error::Network(reason) => NectarlinkError::Network { reason },
@@ -1678,6 +1920,7 @@ impl From<core::DeviceInfo> for DeviceInfo {
             model: i.model,
             accent: i.accent,
             screen: i.screen.map(Into::into),
+            install_id: i.install_id,
         }
     }
 }
@@ -1692,6 +1935,7 @@ impl From<DeviceInfo> for core::DeviceInfo {
             model: i.model,
             accent: i.accent,
             screen: i.screen.map(Into::into),
+            install_id: i.install_id,
         }
         .sanitized()
     }
@@ -1721,7 +1965,15 @@ impl From<PowerLevel> for core::PowerLevel {
 
 impl From<core::Battery> for Battery {
     fn from(b: core::Battery) -> Self {
-        Battery { level: b.level, charging: b.charging, plugged: b.plugged, full_in: b.full_in }
+        Battery {
+            level: b.level,
+            charging: b.charging,
+            plugged: b.plugged,
+            full_in: b.full_in,
+            cell_bars: b.cell_bars,
+            cell_type: b.cell_type,
+            wifi_bars: b.wifi_bars,
+        }
     }
 }
 
@@ -1732,6 +1984,9 @@ impl From<Battery> for core::Battery {
             charging: b.charging,
             plugged: b.plugged,
             full_in: b.full_in,
+            cell_bars: b.cell_bars,
+            cell_type: b.cell_type,
+            wifi_bars: b.wifi_bars,
         }
         .sanitized()
     }
@@ -1742,9 +1997,11 @@ impl From<LinkState> for Link {
         match l {
             LinkState::Offline { last_seen } => Link::Offline { last_seen },
             LinkState::Connecting => Link::Connecting,
-            LinkState::Online { path, rtt_ms } => {
-                Link::Online { relayed: path == ConnectionPath::Relay, rtt_ms }
-            }
+            LinkState::Online { path, rtt_ms } => Link::Online {
+                relayed: path == ConnectionPath::Relay,
+                usb: path == ConnectionPath::Usb,
+                rtt_ms,
+            },
         }
     }
 }
@@ -2011,6 +2268,7 @@ impl From<core::Transfer> for Transfer {
                 core::TransferState::Requested => TransferStatus::Requested,
                 core::TransferState::Waiting => TransferStatus::Waiting,
                 core::TransferState::Running => TransferStatus::Running,
+                core::TransferState::Paused => TransferStatus::Paused,
                 core::TransferState::Done { saved } => TransferStatus::Done {
                     saved: saved.into_iter().map(|p| p.to_string_lossy().into_owned()).collect(),
                 },
@@ -2020,6 +2278,7 @@ impl From<core::Transfer> for Transfer {
                         core::TransferFailure::Unreachable => "unreachable",
                         core::TransferFailure::NoSpace => "noSpace",
                         core::TransferFailure::Interrupted => "interrupted",
+                        core::TransferFailure::Integrity => "integrity",
                         core::TransferFailure::Other(_) => "other",
                     }
                     .into(),
@@ -2144,7 +2403,8 @@ impl Event {
             NodeEvent::Webcam { device, on } => Event::Webcam { id: device.to_string(), on },
             NodeEvent::CameraCaptureRequested { .. }
             | NodeEvent::CameraCaptureReceived { .. }
-            | NodeEvent::CameraCaptureCancelled { .. } => return None,
+            | NodeEvent::CameraCaptureCancelled { .. }
+            | NodeEvent::PcMirrorRequested { .. } => return None,
             NodeEvent::RemoteInputRequested { device } => {
                 Event::RemoteInputRequested { id: device.to_string() }
             }
@@ -2166,6 +2426,17 @@ impl Event {
             }
             NodeEvent::TimelineChanged => Event::TimelineChanged,
             NodeEvent::LocalSendChanged => Event::LocalSendChanged,
+            NodeEvent::QueueChanged => Event::QueueChanged,
+            NodeEvent::QueueDroppedOnUnpair { peer, peer_name, dropped_count } => {
+                Event::QueueDroppedOnUnpair {
+                    device_id: peer.to_string(),
+                    device_name: peer_name,
+                    dropped_count,
+                }
+            }
+            NodeEvent::PcAudioFrame { device, sample_rate, channels, pcm } => {
+                Event::PcAudioFrame { device: device.to_string(), sample_rate, channels, pcm }
+            }
         })
     }
 }
@@ -2291,6 +2562,9 @@ pub trait Platform: Send + Sync {
     ) -> Result<(), NotificationFailure>;
     /// A PC sent this text: put it on the clipboard. False if that failed.
     fn set_clipboard(&self, text: String) -> bool;
+    /// A PC sent this text (with optional HTML and RTF rich text): put it on
+    /// the clipboard. False if that failed.
+    fn set_clipboard_rich(&self, text: String, html: Option<String>, rtf: Option<String>) -> bool;
     /// A PC sent this image (`image/png` or `image/jpeg`): put it on the
     /// clipboard. False if that failed.
     fn set_clipboard_image(&self, mime: String, bytes: Vec<u8>) -> bool;
@@ -2378,7 +2652,7 @@ pub trait Platform: Send + Sync {
     /// A PC asked for a conversation's messages before `before` (Unix ms;
     /// the latest when null), newest first.
     fn sms_messages(&self, thread: String, before: Option<i64>, limit: u32) -> Vec<SmsMessage>;
-    /// A PC asked to send a text (checked: 1–20 recipients, not empty).
+    /// A PC asked to send a text (checked: 1-20 recipients, not empty).
     /// False if it couldn't be sent.
     fn sms_send(&self, to: Vec<String>, body: String) -> bool;
     /// A PC asked to send a text or MMS with optional image attachments.
@@ -2429,7 +2703,37 @@ pub trait EventListener: Send + Sync {
     fn on_event(&self, event: Event);
 }
 
-struct PlatformAdapter(Arc<dyn Platform>);
+struct FfiMirrorSink {
+    id: String,
+    listener: Arc<dyn EventListener>,
+}
+
+impl std::fmt::Debug for FfiMirrorSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FfiMirrorSink").field("id", &self.id).finish_non_exhaustive()
+    }
+}
+
+impl core::MirrorSink for FfiMirrorSink {
+    fn config(&self, config: core::MirrorConfig) {
+        self.listener.on_event(Event::PcMirrorConfig {
+            id: self.id.clone(),
+            codec: config.codec,
+            width: config.width,
+            height: config.height,
+        });
+    }
+
+    fn packet(&self, keyframe: bool, time_us: u64, data: Vec<u8>) {
+        self.listener.on_event(Event::PcMirrorFrame { id: self.id.clone(), keyframe, time_us, data });
+    }
+
+    fn ended(&self) {
+        self.listener.on_event(Event::PcMirrorEnded { id: self.id.clone() });
+    }
+}
+
+struct PlatformAdapter(Arc<dyn Platform>, Arc<dyn EventListener>);
 
 impl std::fmt::Debug for PlatformAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -2457,6 +2761,13 @@ impl core::Platform for PlatformAdapter {
     }
     fn set_clipboard(&self, text: &str) -> Result<(), String> {
         if self.0.set_clipboard(text.to_owned()) { Ok(()) } else { Err("the clipboard rejected it".into()) }
+    }
+    fn set_clipboard_rich(&self, text: &str, html: Option<&str>, rtf: Option<&str>) -> Result<(), String> {
+        if self.0.set_clipboard_rich(text.to_owned(), html.map(str::to_owned), rtf.map(str::to_owned)) {
+            Ok(())
+        } else {
+            Err("the clipboard rejected it".into())
+        }
     }
     fn media_command(
         &self,
@@ -2764,6 +3075,12 @@ impl core::Platform for PlatformAdapter {
     fn storage_delete(&self, path: &str, confirmed: bool) -> Result<(), core::StorageError> {
         Ok(self.0.storage_delete(path.to_owned(), confirmed)?)
     }
+    fn mirror_sink(&self, peer: &DeviceId, session: u32) -> Option<Arc<dyn core::MirrorSink>> {
+        if session != core::MIRROR_SCREEN {
+            return None;
+        }
+        Some(Arc::new(FfiMirrorSink { id: peer.to_string(), listener: self.1.clone() }))
+    }
 }
 
 struct KeyProtectorAdapter(Arc<dyn KeyProtector>);
@@ -2797,6 +3114,9 @@ pub struct NodeOptions {
     /// Where received files are put once complete (the app then moves them
     /// where the user finds them).
     pub downloads_dir: String,
+    /// Loopback TCP port (`127.0.0.1:<port>`) for the USB tunnel on Android.
+    #[uniffi(default = Some(53319))]
+    pub usb_port: Option<u16>,
 }
 
 /// The Nectarlink engine. One per app process.
@@ -2820,6 +3140,15 @@ impl NectarlinkNode {
             Ok(value) => value,
             Err(e) => std::panic::resume_unwind(e.into_panic()),
         }
+    }
+
+    /// Runs `fut` on the node's runtime and blocks the calling thread until it finishes.
+    fn block_on_rt<T: Send + 'static>(&self, fut: impl Future<Output = T> + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.runtime.spawn(async move {
+            let _ = tx.send(fut.await);
+        });
+        rx.recv().expect("nectarlink-core runtime task panicked")
     }
 }
 
@@ -2846,8 +3175,11 @@ impl NectarlinkNode {
         config.power = options.power.into();
         config.away_mode = options.away_mode;
         config.downloads_dir = Some(PathBuf::from(options.downloads_dir));
+        config.usb_port = options.usb_port;
         config.key_protector = Some(Arc::new(KeyProtectorAdapter(key_protector)));
-        let node = runtime.block_on(Node::start(config, Arc::new(PlatformAdapter(platform))))?;
+        config.capabilities.push(core::MIRROR_VIEW.into());
+        let node =
+            runtime.block_on(Node::start(config, Arc::new(PlatformAdapter(platform, listener.clone()))))?;
 
         let mut events = node.events();
         runtime.spawn(async move {
@@ -2992,10 +3324,86 @@ impl NectarlinkNode {
         self.node.accept_transfer(&transfer_id);
     }
 
+    /// Pauses an active transfer in either direction, preserving partial files on the receiver.
+    pub fn pause_transfer(&self, transfer_id: String) {
+        self.node.pause_transfer(&transfer_id);
+    }
+
+    /// Resumes a manually paused transfer in either direction.
+    pub fn resume_transfer(&self, transfer_id: String) {
+        self.node.resume_transfer(&transfer_id);
+    }
+
     /// Cancels a transfer in either direction (or declines a pending incoming
     /// LocalSend transfer).
     pub fn cancel_transfer(&self, transfer_id: String) {
         self.node.cancel_transfer(&transfer_id);
+    }
+
+    // ---- Persistent outgoing send queue ----
+
+    /// Lists items in the persistent outgoing send queue (ordered by `seq ASC`),
+    /// optionally filtered to a single paired `peer_id`.
+    pub fn send_queue(&self, peer_id: Option<String>) -> Result<Vec<FfiQueueItem>> {
+        let peer = match peer_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(id) => Some(parse_id(id)?),
+            None => None,
+        };
+        Ok(self.node.send_queue(peer)?.into_iter().map(Into::into).collect())
+    }
+
+    /// Returns the ID of the most recently queued active (`Waiting` or `Sending`) item for `peer_id`.
+    pub fn latest_queued_id_for_peer(&self, peer_id: String) -> Option<String> {
+        let peer = parse_id(peer_id.trim()).ok()?;
+        self.node.latest_queued_id_for_peer(peer)
+    }
+
+    /// Cancels and removes a single item from the outgoing send queue (and cancels
+    /// its active file transfer and cleans up staged files if applicable).
+    pub fn cancel_queue_item(&self, id: String) -> Result<bool> {
+        Ok(self.node.cancel_queue_item(&id)?)
+    }
+
+    /// Cancels and removes all active (`Waiting` and `Sending`) items in the outgoing
+    /// send queue (optionally filtered to `peer_id`), returning the number of items cancelled.
+    pub fn cancel_all_queue_items(&self, peer_id: Option<String>) -> Result<u32> {
+        let peer = match peer_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(id) => Some(parse_id(id)?),
+            None => None,
+        };
+        Ok(self.node.cancel_all_queue_items(peer)?)
+    }
+
+    /// Resets a failed or expired queue item back to `Waiting` so it retries immediately.
+    pub fn retry_queue_item(&self, id: String) -> Result<bool> {
+        Ok(self.node.retry_queue_item(&id)?)
+    }
+
+    /// Resets all failed or expired queue items (optionally filtered to `peer_id`)
+    /// back to `Waiting` and returns the number of items reset.
+    pub fn retry_all_failed_queue_items(&self, peer_id: Option<String>) -> Result<u32> {
+        let peer = match peer_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(id) => Some(parse_id(id)?),
+            None => None,
+        };
+        Ok(self.node.retry_all_failed_queue_items(peer)?)
+    }
+
+    /// Removes all failed and expired items from the outgoing send queue
+    /// (optionally filtered to `peer_id`), cleans up their staged files, and returns
+    /// the number of items removed.
+    pub fn clear_finished_queue_items(&self, peer_id: Option<String>) -> Result<u32> {
+        let peer = match peer_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(id) => Some(parse_id(id)?),
+            None => None,
+        };
+        Ok(self.node.clear_finished_queue_items(peer)?)
+    }
+
+    /// Marks any `Waiting` queue items whose TTL has elapsed as `Expired` and
+    /// returns the number of items expired.
+    pub fn expire_stale_queue_items(&self) -> Result<u32> {
+        Ok(self.node.expire_stale_queue_items()?)
     }
 
     // ---- LocalSend compatibility ----
@@ -3038,6 +3446,20 @@ impl NectarlinkNode {
         let id = parse_id(&id)?;
         let node = self.node.clone();
         self.run(async move { Ok(node.send_clipboard(id, text).await?) }).await
+    }
+
+    /// Puts text (and optional HTML and RTF rich text) on a paired PC's
+    /// clipboard.
+    pub async fn send_clipboard_rich(
+        &self,
+        id: String,
+        text: String,
+        html: Option<String>,
+        rtf: Option<String>,
+    ) -> Result<()> {
+        let id = parse_id(&id)?;
+        let node = self.node.clone();
+        self.run(async move { Ok(node.send_clipboard_rich(id, text, html, rtf).await?) }).await
     }
 
     /// Puts an image (`image/png` or `image/jpeg`) on a paired PC's
@@ -3247,9 +3669,22 @@ impl NectarlinkNode {
 
     /// Updates this phone's power level and the capabilities it offers on
     /// top of the built-in ones (they depend on permissions and power).
-    pub async fn update_power(&self, power: PowerLevel, capabilities: Vec<String>) {
+    pub async fn update_power(&self, power: PowerLevel, mut capabilities: Vec<String>) {
+        if !capabilities.iter().any(|c| c == core::MIRROR_VIEW) {
+            capabilities.push(core::MIRROR_VIEW.into());
+        }
         let node = self.node.clone();
         self.run(async move { node.update_power(power.into(), capabilities).await }).await;
+    }
+
+    /// Whether remote / mobile data connections outside the local Wi-Fi/LAN are allowed.
+    pub fn away_mode(&self) -> bool {
+        self.node.away_mode()
+    }
+
+    /// Enables or disables connecting over mobile data / non-LAN paths at runtime.
+    pub fn set_away_mode(&self, enabled: bool) {
+        self.node.set_away_mode(enabled);
     }
 
     /// Locks a paired PC (`sleep`: puts it to sleep instead).
@@ -3448,6 +3883,42 @@ impl NectarlinkNode {
         .await
     }
 
+    /// Asks a paired PC to stream its screen to this phone (`mirror.start`, `session == 0`).
+    pub async fn start_pc_mirror(&self, pc_id: String, max_size: u32, fps: u32, bitrate: u32) -> Result<()> {
+        let id = parse_id(&pc_id)?;
+        let node = self.node.clone();
+        let options = core::MirrorStart {
+            max_size,
+            fps,
+            bitrate,
+            audio: false,
+            session: core::MIRROR_SCREEN,
+            app: None,
+            stay_awake: false,
+            screen_off: false,
+        };
+        self.run(async move { Ok(node.mirror_start(id, options).await?) }).await
+    }
+
+    /// Asks a paired PC for a fresh keyframe on its screen stream (`mirror.keyframe`).
+    pub async fn request_pc_mirror_keyframe(&self, pc_id: String) -> Result<()> {
+        let id = parse_id(&pc_id)?;
+        let node = self.node.clone();
+        self.run(async move {
+            node.mirror_keyframe(id, core::MIRROR_SCREEN).await;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Sends touch, scroll, key, or text input to a paired PC's mirrored screen (`mirror.input`).
+    pub async fn send_pc_mirror_input(&self, pc_id: String, input: MirrorInputEvent) -> Result<()> {
+        let id = parse_id(&pc_id)?;
+        let node = self.node.clone();
+        let input: core::MirrorInput = input.into();
+        self.run(async move { Ok(node.mirror_input(id, core::MIRROR_SCREEN, input).await?) }).await
+    }
+
     /// Opens this phone's camera stream to a paired PC (`docs/protocol/webcam.md`).
     pub async fn webcam_open(&self, pc_id: String) -> Result<Arc<MirrorStream>> {
         let id = parse_id(&pc_id)?;
@@ -3627,6 +4098,84 @@ impl NectarlinkNode {
         let node = self.node.clone();
         self.run(async move { node.network_changed().await }).await;
     }
+
+    /// Lists entries in a directory on a connected paired device (`storage.list`).
+    pub fn list_remote_storage(&self, peer: String, path: String) -> Vec<RemoteStorageEntry> {
+        let Ok(peer_id) = parse_id(&peer) else {
+            return Vec::new();
+        };
+        let node = self.node.clone();
+        let req_path = path.clone();
+        let entries =
+            self.block_on_rt(async move { node.list_storage(&peer_id, &req_path).await }).unwrap_or_default();
+        let prefix = path.trim_matches('/');
+        entries
+            .into_iter()
+            .map(|e| RemoteStorageEntry {
+                path: if prefix.is_empty() { e.name.clone() } else { format!("{prefix}/{}", e.name) },
+                name: e.name,
+                kind: if e.is_dir { "dir".into() } else { "file".into() },
+                size: e.size,
+                modified: e.modified,
+            })
+            .collect()
+    }
+
+    /// Downloads a remote file from a connected paired device (`storage.read`) in
+    /// 128 KiB chunks into `local_dest`.
+    pub fn download_remote_storage(&self, peer: String, remote_path: String, local_dest: String) -> bool {
+        let Ok(peer_id) = parse_id(&peer) else {
+            return false;
+        };
+        let node = self.node.clone();
+        self.block_on_rt(async move {
+            use std::io::Write;
+            if let Some(parent) = std::path::Path::new(&local_dest).parent()
+                && !parent.as_os_str().is_empty()
+            {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let Ok(mut f) = std::fs::File::create(&local_dest) else {
+                return false;
+            };
+            let mut offset = 0u64;
+            let chunk_len = 128 * 1024u64;
+            loop {
+                let Ok((meta, chunk)) =
+                    node.storage_read(peer_id, remote_path.clone(), offset, Some(chunk_len)).await
+                else {
+                    return false;
+                };
+                if chunk.is_empty() {
+                    break;
+                }
+                if f.write_all(&chunk).is_err() {
+                    return false;
+                }
+                offset += chunk.len() as u64;
+                if offset >= meta.size || (chunk.len() as u64) < chunk_len {
+                    break;
+                }
+            }
+            true
+        })
+    }
+
+    /// Asks a connected paired peer on the target LAN to broadcast a Wake-on-LAN
+    /// magic packet for `mac` (`wake.relay`).
+    pub fn wake_via_relay(&self, relay_peer: String, mac: String, broadcast: Option<String>) -> Result<()> {
+        let peer_id = parse_id(&relay_peer)?;
+        let mac_bytes = core::parse_mac(&mac)
+            .ok_or_else(|| NectarlinkError::Internal { reason: "invalid MAC address".into() })?;
+        let bcast = match broadcast.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(s) => Some(s.parse::<std::net::Ipv4Addr>().map_err(|_| NectarlinkError::Internal {
+                reason: "invalid broadcast IPv4 address".into(),
+            })?),
+            None => None,
+        };
+        let node = self.node.clone();
+        self.block_on_rt(async move { Ok(node.wake_via_relay(&peer_id, mac_bytes, bcast).await?) })
+    }
 }
 
 /// Classifies a text clip into a single context chip suggestion (`None` for
@@ -3715,6 +4264,110 @@ pub fn is_safe_handoff_document(name: String) -> bool {
     core::is_safe_handoff_document(&name)
 }
 
+/// 15 Material 3 / Bloom color roles (`0xRRGGBB` each) for light or dark mode.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiRolePalette {
+    pub primary: u32,
+    pub on_primary: u32,
+    pub primary_container: u32,
+    pub on_primary_container: u32,
+    pub secondary_container: u32,
+    pub on_secondary_container: u32,
+    pub surface: u32,
+    pub surface_container_low: u32,
+    pub surface_container: u32,
+    pub surface_container_high: u32,
+    pub surface_container_highest: u32,
+    pub on_surface: u32,
+    pub on_surface_variant: u32,
+    pub outline: u32,
+    pub outline_variant: u32,
+}
+
+impl From<core::RolePalette> for FfiRolePalette {
+    fn from(p: core::RolePalette) -> Self {
+        Self {
+            primary: p.primary,
+            on_primary: p.on_primary,
+            primary_container: p.primary_container,
+            on_primary_container: p.on_primary_container,
+            secondary_container: p.secondary_container,
+            on_secondary_container: p.on_secondary_container,
+            surface: p.surface,
+            surface_container_low: p.surface_container_low,
+            surface_container: p.surface_container,
+            surface_container_high: p.surface_container_high,
+            surface_container_highest: p.surface_container_highest,
+            on_surface: p.on_surface,
+            on_surface_variant: p.on_surface_variant,
+            outline: p.outline,
+            outline_variant: p.outline_variant,
+        }
+    }
+}
+
+/// Complete light + dark theme scheme generated by the shared Rust perceptual color engine.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiThemeScheme {
+    pub seed_rgb: u32,
+    pub achromatic: bool,
+    pub light: FfiRolePalette,
+    pub dark: FfiRolePalette,
+}
+
+impl From<core::ThemeScheme> for FfiThemeScheme {
+    fn from(s: core::ThemeScheme) -> Self {
+        let to_role = |p: core::RolePalette| FfiRolePalette {
+            primary: p.primary,
+            on_primary: p.on_primary,
+            primary_container: p.primary_container,
+            on_primary_container: p.on_primary_container,
+            secondary_container: p.secondary_container,
+            on_secondary_container: p.on_secondary_container,
+            surface: p.surface,
+            surface_container_low: p.surface_container_low,
+            surface_container: p.surface_container,
+            surface_container_high: p.surface_container_high,
+            surface_container_highest: p.surface_container_highest,
+            on_surface: p.on_surface,
+            on_surface_variant: p.on_surface_variant,
+            outline: p.outline,
+            outline_variant: p.outline_variant,
+        };
+        Self {
+            seed_rgb: s.seed_rgb,
+            achromatic: s.achromatic,
+            light: to_role(s.light),
+            dark: to_role(s.dark),
+        }
+    }
+}
+
+/// Downsamples an RGBA8 image buffer to `<= 112×112`, trims borders, extracts the
+/// perceptual seed (or detects a monochrome cover), and returns its [`FfiThemeScheme`].
+#[uniffi::export]
+pub fn extract_artwork_scheme(
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    cache_key: Option<String>,
+) -> Option<FfiThemeScheme> {
+    core::extract_artwork_scheme_rgba(&rgba, width, height, cache_key.as_deref()).map(Into::into)
+}
+
+/// Builds a complete light + dark [`FfiThemeScheme`] from a `0xRRGGBB` seed color.
+#[uniffi::export]
+pub fn theme_scheme_from_seed(seed_rgb: u32) -> FfiThemeScheme {
+    core::scheme_from_seed_rgb(seed_rgb).into()
+}
+
+/// The install ID for a platform ID that survives reinstalls (Android's `ANDROID_ID`):
+/// a salted hash, so the raw ID never leaves the device. `None` for an empty input.
+#[uniffi::export]
+pub fn install_id_from(platform_id: String) -> Option<String> {
+    core::install_id_from(&platform_id)
+}
+
 /// Sends core logs to the platform log (logcat on Android). Call once,
 /// before starting the node. `filter` uses tracing's syntax, e.g. "info".
 #[uniffi::export]
@@ -3761,15 +4414,59 @@ mod tests {
                 cutouts: vec![ScreenRect { x: 0.46, y: 0.018, w: 0.08, h: 0.036 }],
                 cutout_path: None,
             }),
+            install_id: None,
         };
         assert_eq!(DeviceInfo::from(core::DeviceInfo::from(info.clone())), info);
     }
 
     #[test]
     fn batteries_are_clamped() {
-        let b: core::Battery =
-            Battery { level: 140, charging: true, plugged: None, full_in: Some(30) }.into();
+        let b: core::Battery = Battery {
+            level: 140,
+            charging: true,
+            plugged: None,
+            full_in: Some(30),
+            cell_bars: Some(7),
+            cell_type: Some("  5G\n".into()),
+            wifi_bars: Some(9),
+        }
+        .into();
         assert_eq!(b.level, 100);
         assert_eq!(b.full_in, Some(30));
+        assert_eq!(b.cell_bars, Some(4));
+        assert_eq!(b.cell_type.as_deref(), Some("5G"));
+        assert_eq!(b.wifi_bars, Some(4));
+        let back = Battery::from(b);
+        assert_eq!(back.cell_bars, Some(4));
+        assert_eq!(back.cell_type.as_deref(), Some("5G"));
+        assert_eq!(back.wifi_bars, Some(4));
+    }
+
+    #[test]
+    fn pc_audio_frame_event_and_remote_storage_entry() {
+        let id = DeviceId([7u8; 32]);
+        let ev = Event::from_node(NodeEvent::PcAudioFrame {
+            device: id,
+            sample_rate: 48_000,
+            channels: 2,
+            pcm: vec![1, 2, 3, 4],
+        });
+        assert_eq!(
+            ev,
+            Some(Event::PcAudioFrame {
+                device: id.to_string(),
+                sample_rate: 48_000,
+                channels: 2,
+                pcm: vec![1, 2, 3, 4],
+            })
+        );
+        let entry = RemoteStorageEntry {
+            name: "photo.jpg".into(),
+            path: "DCIM/photo.jpg".into(),
+            kind: "file".into(),
+            size: 4096,
+            modified: 1_700_000_000,
+        };
+        assert_eq!(entry.kind, "file");
     }
 }

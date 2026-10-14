@@ -5,7 +5,7 @@
 use std::{
     collections::{BTreeSet, HashMap},
     net::SocketAddr,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Mutex,
 };
 
@@ -16,7 +16,7 @@ use nectarlink_protocol::{
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::{
-    Error, Result,
+    CameraCaptureMode, Error, RecordingMarker, Result, TaskNotify,
     timeline::{
         DEFAULT_TIMELINE_PAGE_LIMIT, MAX_TIMELINE_PAGE_LIMIT, NewTimelineEntry, TimelineEntry, TimelineKind,
         TimelinePage, TimelineQuery, TimelineRetention,
@@ -24,6 +24,361 @@ use crate::{
 };
 
 const FILE_NAME: &str = "nectarlink.db";
+
+/// Maximum active (`Waiting` + `Sending`) items in `send_queue` across all peers.
+pub const MAX_QUEUE_ACTIVE_ITEMS: usize = 200;
+/// Maximum pending bytes across all active (`Waiting` + `Sending`) file-based and clipboard-image queue items (10 GiB).
+pub const MAX_QUEUE_ACTIVE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+/// Maximum size in bytes of a single queued clipboard image (`payload_blob`) (50 MiB).
+pub const MAX_QUEUE_CLIPBOARD_IMAGE_BYTES: usize = 50 * 1024 * 1024;
+
+/// Returns a file's modification time in Unix milliseconds (or `0` if unavailable).
+#[must_use]
+pub fn file_mtime_ms(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| i64::try_from(d.as_millis()).ok())
+        .unwrap_or(0)
+}
+
+/// Kind of outgoing action stored in the persistent send queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueKind {
+    Files,
+    Folder,
+    Clipboard,
+    ClipboardImage,
+    Link,
+    HandoffDocument,
+    Recording,
+    TaskNotify,
+    CameraRequest,
+}
+
+impl QueueKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            QueueKind::Files => "files",
+            QueueKind::Folder => "folder",
+            QueueKind::Clipboard => "clipboard",
+            QueueKind::ClipboardImage => "clipboard_image",
+            QueueKind::Link => "link",
+            QueueKind::HandoffDocument => "handoff_document",
+            QueueKind::Recording => "recording",
+            QueueKind::TaskNotify => "task_notify",
+            QueueKind::CameraRequest => "camera_request",
+        }
+    }
+
+    #[must_use]
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s {
+            "files" => Some(QueueKind::Files),
+            "folder" => Some(QueueKind::Folder),
+            "clipboard" => Some(QueueKind::Clipboard),
+            "clipboard_image" => Some(QueueKind::ClipboardImage),
+            "link" => Some(QueueKind::Link),
+            "handoff_document" => Some(QueueKind::HandoffDocument),
+            "recording" => Some(QueueKind::Recording),
+            "task_notify" => Some(QueueKind::TaskNotify),
+            "camera_request" => Some(QueueKind::CameraRequest),
+            _ => None,
+        }
+    }
+
+    /// Per-type time-to-live in milliseconds (`task-queue.md` §4).
+    #[must_use]
+    pub const fn ttl_ms(self) -> i64 {
+        match self {
+            QueueKind::CameraRequest => 2 * 60 * 1000,
+            QueueKind::Link | QueueKind::Clipboard | QueueKind::ClipboardImage | QueueKind::TaskNotify => {
+                24 * 60 * 60 * 1000
+            }
+            QueueKind::Files | QueueKind::Folder | QueueKind::HandoffDocument | QueueKind::Recording => {
+                7 * 24 * 60 * 60 * 1000
+            }
+        }
+    }
+
+    /// Human-readable expiry message when an item exceeds its TTL.
+    #[must_use]
+    pub const fn expiry_error_message(self) -> &'static str {
+        match self {
+            QueueKind::CameraRequest => "Expired (camera requests expire after 2 minutes)",
+            QueueKind::Link | QueueKind::Clipboard | QueueKind::ClipboardImage | QueueKind::TaskNotify => {
+                "Expired (waited more than 24 hours)"
+            }
+            QueueKind::Files | QueueKind::Folder | QueueKind::HandoffDocument | QueueKind::Recording => {
+                "Expired (waited more than 7 days)"
+            }
+        }
+    }
+
+    #[must_use]
+    pub const fn is_clipboard(self) -> bool {
+        matches!(self, QueueKind::Clipboard | QueueKind::ClipboardImage)
+    }
+
+    #[must_use]
+    pub const fn is_file_based(self) -> bool {
+        matches!(
+            self,
+            QueueKind::Files | QueueKind::Folder | QueueKind::HandoffDocument | QueueKind::Recording
+        )
+    }
+}
+
+/// On-disk file reference and integrity snapshot for a queued file transfer.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct QueuedFileSpec {
+    /// Absolute path on disk (or staged path under `<data_dir>/queue_staging/<id>/` when `staged == true`).
+    pub path: PathBuf,
+    /// Sanitized file name sent to the peer.
+    pub name: String,
+    /// Relative folder path inside a folder transfer (`None` for flat files).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// File size in bytes recorded at enqueue time.
+    pub size: u64,
+    /// Last-modified timestamp (Unix ms) recorded at enqueue time.
+    pub mtime_ms: i64,
+    /// `true` if the file was copied into `<data_dir>/queue_staging/<id>/` from an ephemeral FD/URI.
+    #[serde(default)]
+    pub staged: bool,
+}
+
+impl QueuedFileSpec {
+    /// Verifies that the file still exists on disk and has the exact same `size` and `mtime_ms`
+    /// recorded when it was enqueued.
+    pub fn verify_integrity(&self) -> std::result::Result<(), String> {
+        let meta = std::fs::metadata(&self.path)
+            .map_err(|_| format!("File was deleted before sending: {}", self.name))?;
+        if meta.len() != self.size || file_mtime_ms(&meta) != self.mtime_ms {
+            return Err(format!("File was modified before sending: {}", self.name));
+        }
+        Ok(())
+    }
+}
+
+/// Typed payload persisted in `send_queue.payload_json`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum QueuePayload {
+    Files {
+        files: Vec<QueuedFileSpec>,
+    },
+    Folder {
+        root_name: String,
+        files: Vec<QueuedFileSpec>,
+    },
+    Clipboard {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        html: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rtf: Option<String>,
+    },
+    ClipboardImage {
+        mime: String,
+        width: u32,
+        height: u32,
+    },
+    Link {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+    },
+    HandoffDocument {
+        file: QueuedFileSpec,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position_json: Option<String>,
+    },
+    Recording {
+        file: QueuedFileSpec,
+        markers: Vec<RecordingMarker>,
+    },
+    TaskNotify {
+        task: TaskNotify,
+    },
+    CameraRequest {
+        request_id: String,
+        mode: CameraCaptureMode,
+    },
+}
+
+impl QueuePayload {
+    #[must_use]
+    pub const fn kind(&self) -> QueueKind {
+        match self {
+            QueuePayload::Files { .. } => QueueKind::Files,
+            QueuePayload::Folder { .. } => QueueKind::Folder,
+            QueuePayload::Clipboard { .. } => QueueKind::Clipboard,
+            QueuePayload::ClipboardImage { .. } => QueueKind::ClipboardImage,
+            QueuePayload::Link { .. } => QueueKind::Link,
+            QueuePayload::HandoffDocument { .. } => QueueKind::HandoffDocument,
+            QueuePayload::Recording { .. } => QueueKind::Recording,
+            QueuePayload::TaskNotify { .. } => QueueKind::TaskNotify,
+            QueuePayload::CameraRequest { .. } => QueueKind::CameraRequest,
+        }
+    }
+
+    #[must_use]
+    pub fn files_vec(&self) -> Vec<QueuedFileSpec> {
+        match self {
+            QueuePayload::Files { files } | QueuePayload::Folder { files, .. } => files.clone(),
+            QueuePayload::HandoffDocument { file, .. } | QueuePayload::Recording { file, .. } => {
+                vec![file.clone()]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn totals(&self, payload_blob: Option<&[u8]>) -> (u64, u32) {
+        match self {
+            QueuePayload::Files { files } | QueuePayload::Folder { files, .. } => {
+                let bytes = files.iter().map(|f| f.size).fold(0u64, u64::saturating_add);
+                let count = u32::try_from(files.len()).unwrap_or(u32::MAX);
+                (bytes, count)
+            }
+            QueuePayload::HandoffDocument { file, .. } | QueuePayload::Recording { file, .. } => {
+                (file.size, 1)
+            }
+            QueuePayload::ClipboardImage { .. } => (payload_blob.map_or(0, |b| b.len() as u64), 0),
+            _ => (0, 0),
+        }
+    }
+
+    #[must_use]
+    pub fn title_and_detail(&self) -> (String, String) {
+        match self {
+            QueuePayload::Files { files } => {
+                let title = match files.len() {
+                    0 => "Files".into(),
+                    1 => files[0].name.clone(),
+                    n => format!("{} (+{} more)", files[0].name, n - 1),
+                };
+                let detail = match files.len() {
+                    1 => "1 file".into(),
+                    n => format!("{n} files"),
+                };
+                (title, detail)
+            }
+            QueuePayload::Folder { root_name, files } => {
+                let title = if root_name.trim().is_empty() {
+                    files
+                        .first()
+                        .and_then(|f| f.folder.as_deref())
+                        .and_then(|f| f.split('/').next())
+                        .unwrap_or("Folder")
+                        .to_owned()
+                } else {
+                    root_name.clone()
+                };
+                let detail = match files.len() {
+                    1 => "Folder · 1 file".into(),
+                    n => format!("Folder · {n} files"),
+                };
+                (title, detail)
+            }
+            QueuePayload::Clipboard { text, .. } => {
+                let collapsed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                let title = if collapsed.chars().count() > 80 {
+                    let prefix: String = collapsed.chars().take(79).collect();
+                    format!("{prefix}…")
+                } else if collapsed.is_empty() {
+                    "Copied text".into()
+                } else {
+                    collapsed
+                };
+                (title, "Clipboard text".into())
+            }
+            QueuePayload::ClipboardImage { mime, width, height } => {
+                let detail = if *width > 0 && *height > 0 {
+                    format!("{mime} · {width}×{height}")
+                } else {
+                    mime.clone()
+                };
+                ("Copied image".into(), detail)
+            }
+            QueuePayload::Link { url, title } => {
+                let display_title = title
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(url.as_str())
+                    .to_owned();
+                (display_title, url.clone())
+            }
+            QueuePayload::HandoffDocument { file, .. } => (file.name.clone(), "Document handoff".into()),
+            QueuePayload::Recording { file, markers } => {
+                let detail = match markers.len() {
+                    0 => "Voice recording".into(),
+                    1 => "Voice recording · 1 marker".into(),
+                    n => format!("Voice recording · {n} markers"),
+                };
+                (file.name.clone(), detail)
+            }
+            QueuePayload::TaskNotify { task } => {
+                let detail = if task.active { "Task started".into() } else { "Task finished".into() };
+                (task.title.clone(), detail)
+            }
+            QueuePayload::CameraRequest { mode, .. } => {
+                let title = match mode {
+                    CameraCaptureMode::Photo => "Take photo with phone".into(),
+                    CameraCaptureMode::Scan => "Scan document with phone".into(),
+                };
+                (title, "Camera request".into())
+            }
+        }
+    }
+}
+
+/// Lifecycle state of an item in the persistent send queue.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum QueueStatus {
+    Waiting,
+    Sending,
+    Failed { error: String },
+    Expired { error: String },
+}
+
+impl QueueStatus {
+    #[must_use]
+    pub const fn as_db_str(&self) -> &'static str {
+        match self {
+            QueueStatus::Waiting => "waiting",
+            QueueStatus::Sending => "sending",
+            QueueStatus::Failed { .. } => "failed",
+            QueueStatus::Expired { .. } => "expired",
+        }
+    }
+}
+
+/// An item in the persistent outgoing send queue.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct QueueItem {
+    pub id: String,
+    pub seq: i64,
+    pub peer: DeviceId,
+    pub peer_name: String,
+    pub kind: QueueKind,
+    pub status: QueueStatus,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub attempts: u32,
+    pub title: String,
+    pub detail: String,
+    pub bytes_total: u64,
+    pub bytes_done: u64,
+    pub files_total: u32,
+    pub files_done: u32,
+    pub files: Vec<QueuedFileSpec>,
+}
 
 /// Retention window for persisted notification-backed chat threads (90 days).
 pub const CHAT_RETENTION_SECS: i64 = 90 * 86_400;
@@ -192,6 +547,33 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_time
         ON chat_messages (peer, thread_id, time_ms DESC, id DESC);",
+    // v7: persistent bidirectional outgoing send queue.
+    "CREATE TABLE IF NOT EXISTS send_queue (
+        id              TEXT PRIMARY KEY,
+        seq             INTEGER NOT NULL,
+        peer_id         TEXT NOT NULL,
+        kind            TEXT NOT NULL,
+        status          TEXT NOT NULL,
+        created_at      INTEGER NOT NULL,
+        expires_at      INTEGER NOT NULL,
+        next_retry_ms   INTEGER NOT NULL DEFAULT 0,
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        title           TEXT NOT NULL,
+        detail          TEXT NOT NULL,
+        payload_json    TEXT NOT NULL,
+        payload_blob    BLOB,
+        bytes_total     INTEGER NOT NULL DEFAULT 0,
+        bytes_done      INTEGER NOT NULL DEFAULT 0,
+        files_total     INTEGER NOT NULL DEFAULT 0,
+        files_done      INTEGER NOT NULL DEFAULT 0,
+        error_msg       TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_send_queue_peer_fifo
+        ON send_queue(peer_id, status, seq ASC);
+    CREATE INDEX IF NOT EXISTS idx_send_queue_status_wake
+        ON send_queue(status, next_retry_ms ASC, expires_at ASC);",
+    // v8: a device's install-stable ID, the only key used to merge re-paired entries
+    "ALTER TABLE peers ADD COLUMN install_id TEXT;",
 ];
 
 /// A paired device as stored on disk.
@@ -212,11 +594,12 @@ pub(crate) struct PeerRecord {
 #[derive(Debug)]
 pub(crate) struct Store {
     conn: Mutex<Connection>,
+    data_dir: Option<PathBuf>,
 }
 
 impl Store {
     pub fn open(dir: &Path) -> Result<Self> {
-        Self::init(Connection::open(dir.join(FILE_NAME))?)
+        Self::init_with_dir(Connection::open(dir.join(FILE_NAME))?, Some(dir.to_path_buf()))
     }
 
     #[cfg(test)]
@@ -224,11 +607,19 @@ impl Store {
         Self::init(Connection::open_in_memory()?)
     }
 
+    #[cfg(test)]
     fn init(conn: Connection) -> Result<Self> {
+        Self::init_with_dir(conn, None)
+    }
+
+    fn init_with_dir(conn: Connection, data_dir: Option<PathBuf>) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "busy_timeout", 5000)?;
+        conn.pragma_update(None, "temp_store", "MEMORY")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         migrate(&conn)?;
-        Ok(Store { conn: Mutex::new(conn) })
+        Ok(Store { conn: Mutex::new(conn), data_dir })
     }
 
     fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
@@ -241,14 +632,15 @@ impl Store {
         let screen = encode_screen(info.screen.as_ref());
         self.with(|c| {
             c.execute(
-                "INSERT INTO peers (id, name, kind, os, os_ver, model, accent, paired_at, screen)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                "INSERT INTO peers (id, name, kind, os, os_ver, model, accent, paired_at, screen, install_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                  ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name, kind = excluded.kind, os = excluded.os,
                     os_ver = excluded.os_ver, model = excluded.model,
                     accent = COALESCE(excluded.accent, peers.accent),
                     paired_at = excluded.paired_at,
-                    screen = CASE WHEN excluded.screen = '' THEN peers.screen ELSE excluded.screen END",
+                    screen = CASE WHEN excluded.screen = '' THEN peers.screen ELSE excluded.screen END,
+                    install_id = COALESCE(excluded.install_id, peers.install_id)",
                 params![
                     id.as_bytes().as_slice(),
                     info.name,
@@ -258,10 +650,22 @@ impl Store {
                     info.model,
                     info.accent.map(i64::from),
                     paired_at,
-                    screen
+                    screen,
+                    valid_install_id(info)
                 ],
+            )?;
+            cleanup_peers(c, Some(id))
+        })
+    }
+
+    /// Reassigns timeline entries from `from` to `to` when deduplicating a
+    /// re-paired physical device.
+    pub fn reassign_timeline(&self, from: &DeviceId, to: &DeviceId) -> Result<usize> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE timeline SET device_id = ?1 WHERE device_id = ?2",
+                params![to.as_bytes().as_slice(), from.as_bytes().as_slice()],
             )
-            .map(drop)
         })
     }
 
@@ -272,7 +676,8 @@ impl Store {
             c.execute(
                 "UPDATE peers SET name = ?2, kind = ?3, os = ?4, os_ver = ?5, model = ?6,
                     accent = COALESCE(?7, accent),
-                    screen = CASE WHEN ?8 = '' THEN screen ELSE ?8 END
+                    screen = CASE WHEN ?8 = '' THEN screen ELSE ?8 END,
+                    install_id = COALESCE(?9, install_id)
                  WHERE id = ?1",
                 params![
                     id.as_bytes().as_slice(),
@@ -282,9 +687,13 @@ impl Store {
                     info.os_ver,
                     info.model,
                     info.accent.map(i64::from),
-                    screen
+                    screen,
+                    valid_install_id(info)
                 ],
             )?;
+            if valid_install_id(info).is_some() {
+                cleanup_peers(c, Some(id))?;
+            }
             c.execute(
                 "UPDATE timeline SET device_name = ?2 WHERE device_id = ?1",
                 params![id.as_bytes().as_slice(), info.name],
@@ -339,7 +748,7 @@ impl Store {
     /// callers apply the defaults.
     pub fn toggles(&self, id: &DeviceId) -> Result<HashMap<String, bool>> {
         self.with(|c| {
-            let mut stmt = c.prepare("SELECT toggle, enabled FROM peer_toggles WHERE peer = ?1")?;
+            let mut stmt = c.prepare_cached("SELECT toggle, enabled FROM peer_toggles WHERE peer = ?1")?;
             stmt.query_map([id.as_bytes().as_slice()], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0))
             })?
@@ -381,7 +790,7 @@ impl Store {
 
     pub fn list_peers(&self) -> Result<Vec<PeerRecord>> {
         self.with(|c| {
-            let mut stmt = c.prepare(&format!("{SELECT} ORDER BY paired_at"))?;
+            let mut stmt = c.prepare_cached(&format!("{SELECT} ORDER BY paired_at"))?;
             stmt.query_map([], row_to_peer)?.collect()
         })
     }
@@ -394,24 +803,28 @@ impl Store {
 
     pub fn set_timeline_retention(&self, retention: TimelineRetention, now_unix: i64) -> Result<()> {
         self.with(|c| {
-            c.execute(
+            let tx = c.unchecked_transaction()?;
+            tx.execute(
                 "INSERT INTO meta (key, value) VALUES ('timeline_max_days', ?1)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 params![retention.max_days.to_string()],
             )?;
-            c.execute(
+            tx.execute(
                 "INSERT INTO meta (key, value) VALUES ('timeline_max_entries', ?1)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 params![retention.max_entries.to_string()],
             )?;
-            purge_timeline_conn(c, now_unix, retention)
+            purge_timeline_conn(&tx, now_unix, retention)?;
+            tx.commit()?;
+            Ok(())
         })
     }
 
     pub fn insert_timeline(&self, entry: &NewTimelineEntry, now_unix: i64) -> Result<i64> {
         self.with(|c| {
-            let retention = read_retention_conn(c)?;
-            c.execute(
+            let tx = c.unchecked_transaction()?;
+            let retention = read_retention_conn(&tx)?;
+            tx.execute(
                 "INSERT INTO timeline (
                     kind, device_id, device_name, incoming, timestamp,
                     title, detail, target, size_bytes, duration_secs, ref_id
@@ -430,8 +843,9 @@ impl Store {
                     entry.ref_id,
                 ],
             )?;
-            let id = c.last_insert_rowid();
-            purge_timeline_conn(c, now_unix, retention)?;
+            let id = tx.last_insert_rowid();
+            purge_timeline_conn(&tx, now_unix, retention)?;
+            tx.commit()?;
             Ok(id)
         })
     }
@@ -560,7 +974,7 @@ impl Store {
             let page_sql = format!(
                 "{SELECT_TIMELINE}{where_sql} ORDER BY timestamp DESC, id DESC LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
             );
-            let mut stmt = c.prepare(&page_sql)?;
+            let mut stmt = c.prepare_cached(&page_sql)?;
             let entries: Vec<TimelineEntry> = stmt
                 .query_map(rusqlite::params_from_iter(values.iter()), row_to_timeline)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -588,10 +1002,12 @@ impl Store {
         };
         if conv.messages.is_empty() || conv.title.trim().is_empty() {
             return Ok(None);
-        }
+        };
         let thread_id = chat_thread_id(&n.app, &conv.title);
         let reply_action_id = n.actions.iter().find(|a| a.reply).map(|a| a.id.clone());
-        let latest = conv.messages.last().expect("checked non-empty");
+        let Some(latest) = conv.messages.last() else {
+            return Ok(None);
+        };
         let snippet = latest.text.clone();
         let last_sender = if latest.self_sent { None } else { latest.sender.clone() };
         let updated_ms = conv.messages.iter().map(|m| m.time).max().unwrap_or(n.when).max(n.when);
@@ -599,8 +1015,9 @@ impl Store {
         let icon_bytes = app_icon.or(n.icon.as_deref());
 
         self.with(|c| {
+            let tx = c.unchecked_transaction()?;
             let existing: Vec<(String, String, bool)> = {
-                let mut stmt = c.prepare(
+                let mut stmt = tx.prepare_cached(
                     "SELECT IFNULL(sender, ''), text, self_sent
                      FROM (
                          SELECT id, sender, text, time_ms, self_sent
@@ -634,7 +1051,7 @@ impl Store {
 
             let mut new_incoming_count = 0i64;
             for msg in conv.messages.iter().skip(matched_prefix) {
-                let exists: Option<i64> = c
+                let exists: Option<i64> = tx
                     .query_row(
                         "SELECT id FROM chat_messages
                          WHERE peer = ?1 AND thread_id = ?2
@@ -655,7 +1072,7 @@ impl Store {
                     )
                     .optional()?;
                 if exists.is_none() {
-                    c.execute(
+                    tx.execute(
                         "INSERT INTO chat_messages (peer, thread_id, sender, text, time_ms, self_sent, avatar)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                         params![
@@ -676,7 +1093,7 @@ impl Store {
 
             let snapshot_unread = new_incoming_count.min(conv.messages.len() as i64);
             let initial_unread = if is_snapshot { snapshot_unread } else { new_incoming_count };
-            c.execute(
+            tx.execute(
                 "INSERT INTO chat_threads (
                     peer, thread_id, app, app_name, notification_key, reply_action_id,
                     title, is_group, snippet, last_sender, updated_ms, unread, active, avatar, app_icon
@@ -722,7 +1139,8 @@ impl Store {
                 ],
             )?;
 
-            prune_chat_conn(c, &peer_str, &thread_id)?;
+            prune_chat_conn(&tx, &peer_str, &thread_id)?;
+            tx.commit()?;
             Ok(Some(thread_id))
         })
     }
@@ -740,7 +1158,8 @@ impl Store {
         }
         let peer_str = peer.to_string();
         self.with(|c| {
-            let exists_thread: Option<i64> = c
+            let tx = c.unchecked_transaction()?;
+            let exists_thread: Option<i64> = tx
                 .query_row(
                     "SELECT 1 FROM chat_threads WHERE peer = ?1 AND thread_id = ?2",
                     params![peer_str, thread_id],
@@ -750,7 +1169,7 @@ impl Store {
             if exists_thread.is_none() {
                 return Ok(false);
             }
-            let dup: Option<i64> = c
+            let dup: Option<i64> = tx
                 .query_row(
                     "SELECT id FROM chat_messages
                      WHERE peer = ?1 AND thread_id = ?2 AND self_sent = 1
@@ -761,14 +1180,14 @@ impl Store {
                 )
                 .optional()?;
             if dup.is_none() {
-                c.execute(
+                tx.execute(
                     "INSERT INTO chat_messages (peer, thread_id, sender, text, time_ms, self_sent, avatar)
                      VALUES (?1, ?2, NULL, ?3, ?4, 1, NULL)",
                     params![peer_str, thread_id, trimmed, time_ms],
                 )?;
             }
             let snippet = format!("You: {trimmed}");
-            c.execute(
+            tx.execute(
                 "UPDATE chat_threads
                  SET snippet = ?3,
                      last_sender = NULL,
@@ -777,7 +1196,8 @@ impl Store {
                  WHERE peer = ?1 AND thread_id = ?2",
                 params![peer_str, thread_id, snippet, time_ms],
             )?;
-            prune_chat_messages_conn(c, &peer_str, thread_id)?;
+            prune_chat_messages_conn(&tx, &peer_str, thread_id)?;
+            tx.commit()?;
             Ok(true)
         })
     }
@@ -837,7 +1257,7 @@ impl Store {
         let peer_str = peer.to_string();
         let peer_id = *peer;
         self.with(|c| {
-            let mut stmt = c.prepare(&format!(
+            let mut stmt = c.prepare_cached(&format!(
                 "{SELECT_CHAT_THREADS} WHERE peer = ?1 ORDER BY updated_ms DESC, thread_id ASC"
             ))?;
             stmt.query_map([&peer_str], |r| row_to_chat_thread(&peer_id, r))?.collect()
@@ -867,7 +1287,7 @@ impl Store {
         let peer_id = *peer;
         let capped = limit.clamp(1, MAX_CHAT_MESSAGES_PER_THREAD) as i64;
         self.with(|c| {
-            let mut stmt = c.prepare(
+            let mut stmt = c.prepare_cached(
                 "SELECT id, thread_id, sender, text, time_ms, self_sent, avatar
                  FROM chat_messages
                  WHERE peer = ?1 AND thread_id = ?2
@@ -953,10 +1373,744 @@ impl Store {
             Ok(())
         })
     }
+
+    // ---- Persistent Outgoing Send Queue ----
+
+    /// On node startup, resets any items left in `'sending'` state back to `'waiting'`
+    /// (`next_retry_ms = 0`) so they resume cleanly when the peer reconnects.
+    pub fn reset_interrupted_sending(&self) -> Result<usize> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE send_queue
+                 SET status = 'waiting', next_retry_ms = 0, error_msg = NULL
+                 WHERE status = 'sending'",
+                [],
+            )
+        })
+    }
+
+    /// Resets `next_retry_ms = 0` on all `'waiting'` queue items for `peer` when the peer disconnects.
+    pub fn clear_send_queue_retry_delays(&self, peer: &DeviceId) -> Result<usize> {
+        let peer_str = peer.to_string();
+        self.with(|c| {
+            c.execute(
+                "UPDATE send_queue
+                 SET next_retry_ms = 0
+                 WHERE peer_id = ?1 AND status = 'waiting' AND next_retry_ms != 0",
+                [&peer_str],
+            )
+        })
+    }
+
+    /// Reassigns queued outgoing items from `from` to `to` when deduplicating a re-paired device.
+    pub fn reassign_send_queue_peer(&self, from: &DeviceId, to: &DeviceId) -> Result<usize> {
+        let from_str = from.to_string();
+        let to_str = to.to_string();
+        self.with(|c| {
+            c.execute("UPDATE send_queue SET peer_id = ?1 WHERE peer_id = ?2", params![to_str, from_str])
+        })
+    }
+
+    /// Enqueues a new outgoing item for `peer` in `send_queue`.
+    ///
+    /// - Enforces `MAX_QUEUE_ACTIVE_ITEMS` (200), `MAX_QUEUE_ACTIVE_BYTES` (10 GiB), and
+    ///   `MAX_QUEUE_CLIPBOARD_IMAGE_BYTES` (50 MiB) across active (`waiting` + `sending`) items,
+    ///   returning `Error::QueueFull` if exceeded.
+    /// - If `payload` is `Clipboard` or `ClipboardImage` and there is already a `waiting`
+    ///   clipboard item for `peer`, replaces it and assigns a new `seq = MAX(seq) + 1` so it
+    ///   moves to the end of the queue.
+    pub fn enqueue_send_item(
+        &self,
+        id: &str,
+        peer: &DeviceId,
+        payload: &QueuePayload,
+        payload_blob: Option<&[u8]>,
+        now_ms: i64,
+    ) -> Result<QueueItem> {
+        let kind = payload.kind();
+        if kind == QueueKind::ClipboardImage {
+            let blob_len = payload_blob.map_or(0, <[u8]>::len);
+            if blob_len > MAX_QUEUE_CLIPBOARD_IMAGE_BYTES
+                || bytes_from_len(blob_len) > MAX_QUEUE_CLIPBOARD_IMAGE_BYTES as u64
+            {
+                return Err(Error::QueueFull(
+                    "Clipboard image exceeds the 50 MB offline queue limit.".into(),
+                ));
+            }
+        }
+        let ttl_ms = kind.ttl_ms();
+        let expires_at = now_ms.saturating_add(ttl_ms);
+        let (title, detail) = payload.title_and_detail();
+        let (bytes_total, files_total) = payload.totals(payload_blob);
+        let payload_json = serde_json::to_string(payload).map_err(|e| Error::Internal(e.to_string()))?;
+        let peer_str = peer.to_string();
+        let files = payload.files_vec();
+
+        let conn = self.conn.lock().map_err(|_| Error::Internal("store lock poisoned".into()))?;
+        let tx = conn.unchecked_transaction()?;
+        let peer_name = lookup_peer_name_conn(&tx, peer);
+
+        if kind.is_clipboard() {
+            let existing: Option<(String, i64)> = tx
+                .query_row(
+                    "SELECT id, seq FROM send_queue
+                     WHERE peer_id = ?1 AND status = 'waiting'
+                       AND kind IN ('clipboard', 'clipboard_image')
+                     ORDER BY seq ASC LIMIT 1",
+                    [&peer_str],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            if let Some((old_id, _old_seq)) = existing {
+                tx.execute(
+                    "DELETE FROM send_queue
+                     WHERE peer_id = ?1 AND status = 'waiting'
+                       AND kind IN ('clipboard', 'clipboard_image')
+                       AND id != ?2",
+                    params![peer_str, old_id],
+                )?;
+                if kind == QueueKind::ClipboardImage {
+                    let active_file_bytes: i64 = tx.query_row(
+                        "SELECT COALESCE(SUM(bytes_total), 0) FROM send_queue
+                         WHERE status IN ('waiting', 'sending')
+                           AND kind IN ('files', 'folder', 'handoff_document', 'recording', 'clipboard_image')
+                           AND id != ?1",
+                        [&old_id],
+                        |r| r.get(0),
+                    )?;
+                    let current_bytes = u64::try_from(active_file_bytes.max(0)).unwrap_or(u64::MAX);
+                    if current_bytes.saturating_add(bytes_total) > MAX_QUEUE_ACTIVE_BYTES {
+                        return Err(Error::QueueFull("Queue is full (10 GB of files waiting).".into()));
+                    }
+                }
+                let new_seq: i64 =
+                    tx.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM send_queue", [], |r| r.get(0))?;
+                tx.execute(
+                    "UPDATE send_queue
+                     SET id = ?1, seq = ?2, kind = ?3, created_at = ?4, expires_at = ?5,
+                         next_retry_ms = 0, attempts = 0, title = ?6, detail = ?7,
+                         payload_json = ?8, payload_blob = ?9,
+                         bytes_total = ?10, bytes_done = 0, files_total = 0, files_done = 0,
+                         error_msg = NULL
+                     WHERE id = ?11",
+                    params![
+                        id,
+                        new_seq,
+                        kind.as_str(),
+                        now_ms,
+                        expires_at,
+                        title,
+                        detail,
+                        payload_json,
+                        payload_blob,
+                        bytes_total as i64,
+                        old_id
+                    ],
+                )?;
+                tx.commit()?;
+                return Ok(QueueItem {
+                    id: id.to_owned(),
+                    seq: new_seq,
+                    peer: *peer,
+                    peer_name,
+                    kind,
+                    status: QueueStatus::Waiting,
+                    created_at: now_ms,
+                    expires_at,
+                    attempts: 0,
+                    title,
+                    detail,
+                    bytes_total,
+                    bytes_done: 0,
+                    files_total: 0,
+                    files_done: 0,
+                    files: Vec::new(),
+                });
+            }
+        }
+
+        let active_count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM send_queue WHERE status IN ('waiting', 'sending')",
+            [],
+            |r| r.get(0),
+        )?;
+        if usize::try_from(active_count.max(0)).unwrap_or(usize::MAX) >= MAX_QUEUE_ACTIVE_ITEMS {
+            return Err(Error::QueueFull(format!(
+                "Queue is full ({MAX_QUEUE_ACTIVE_ITEMS} items waiting). Send or clear existing queued items first."
+            )));
+        }
+
+        if kind.is_file_based() || kind == QueueKind::ClipboardImage {
+            let active_file_bytes: i64 = tx.query_row(
+                "SELECT COALESCE(SUM(bytes_total), 0) FROM send_queue
+                 WHERE status IN ('waiting', 'sending')
+                   AND kind IN ('files', 'folder', 'handoff_document', 'recording', 'clipboard_image')",
+                [],
+                |r| r.get(0),
+            )?;
+            let current_bytes = u64::try_from(active_file_bytes.max(0)).unwrap_or(u64::MAX);
+            if current_bytes.saturating_add(bytes_total) > MAX_QUEUE_ACTIVE_BYTES {
+                return Err(Error::QueueFull("Queue is full (10 GB of files waiting).".into()));
+            }
+        }
+
+        let seq: i64 = tx.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM send_queue", [], |r| r.get(0))?;
+        tx.execute(
+            "INSERT INTO send_queue (
+                id, seq, peer_id, kind, status, created_at, expires_at, next_retry_ms, attempts,
+                title, detail, payload_json, payload_blob, bytes_total, bytes_done, files_total, files_done, error_msg
+            ) VALUES (?1, ?2, ?3, ?4, 'waiting', ?5, ?6, 0, 0, ?7, ?8, ?9, ?10, ?11, 0, ?12, 0, NULL)",
+            params![
+                id,
+                seq,
+                peer_str,
+                kind.as_str(),
+                now_ms,
+                expires_at,
+                title,
+                detail,
+                payload_json,
+                payload_blob,
+                bytes_total as i64,
+                i64::from(files_total),
+            ],
+        )?;
+        tx.commit()?;
+
+        Ok(QueueItem {
+            id: id.to_owned(),
+            seq,
+            peer: *peer,
+            peer_name,
+            kind,
+            status: QueueStatus::Waiting,
+            created_at: now_ms,
+            expires_at,
+            attempts: 0,
+            title,
+            detail,
+            bytes_total,
+            bytes_done: 0,
+            files_total,
+            files_done: 0,
+            files,
+        })
+    }
+
+    /// Marks any `'waiting'` queue items whose `expires_at <= now_ms` as `'expired'`
+    /// with the appropriate per-type expiry message and deletes any staged files.
+    /// Returns how many items expired.
+    pub fn expire_stale_queue_items(&self, now_ms: i64) -> Result<usize> {
+        let expired: Vec<(String, Option<QueuePayload>)> = self.with(|c| {
+            let mut stmt = c.prepare_cached(
+                "SELECT id, kind, payload_json FROM send_queue WHERE status = 'waiting' AND expires_at <= ?1",
+            )?;
+            let stale: Vec<(String, String, String)> = stmt
+                .query_map([now_ms], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            if stale.is_empty() {
+                return Ok(Vec::new());
+            }
+            let tx = c.unchecked_transaction()?;
+            let mut out = Vec::with_capacity(stale.len());
+            for (id, kind_str, payload_json) in stale {
+                let kind = QueueKind::from_str_opt(&kind_str).unwrap_or(QueueKind::Files);
+                let msg = kind.expiry_error_message();
+                let updated = tx.execute(
+                    "UPDATE send_queue
+                     SET status = 'expired', next_retry_ms = 0, error_msg = ?2
+                     WHERE id = ?1 AND status = 'waiting'",
+                    params![id, msg],
+                )?;
+                if updated > 0 {
+                    let payload = serde_json::from_str::<QueuePayload>(&payload_json).ok();
+                    out.push((id, payload));
+                }
+            }
+            tx.commit()?;
+            Ok(out)
+        })?;
+        for (id, payload) in &expired {
+            cleanup_staged_payload(self.data_dir.as_deref(), id, payload.as_ref());
+        }
+        Ok(expired.len())
+    }
+
+    /// Lists items in `send_queue` (for `peer` when `Some`, or all peers when `None`),
+    /// ordered by `seq ASC`.
+    pub fn list_send_queue(&self, peer: Option<&DeviceId>) -> Result<Vec<QueueItem>> {
+        self.with(|c| {
+            let rows: Vec<RawQueueRow> = if let Some(p) = peer {
+                let peer_str = p.to_string();
+                let mut stmt =
+                    c.prepare_cached(&format!("{SELECT_SEND_QUEUE} WHERE peer_id = ?1 ORDER BY seq ASC"))?;
+                let mapped = stmt.query_map([&peer_str], raw_queue_row)?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()?
+            } else {
+                let mut stmt = c.prepare_cached(&format!("{SELECT_SEND_QUEUE} ORDER BY seq ASC"))?;
+                let mapped = stmt.query_map([], raw_queue_row)?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let mut out = Vec::with_capacity(rows.len());
+            for raw in rows {
+                if let Some((item, _, _, _)) = decode_queue_row(c, raw, false) {
+                    out.push(item);
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// Returns whether `peer` has any `'waiting'` or `'sending'` items in `send_queue`.
+    pub fn has_active_queue_for_peer(&self, peer: &DeviceId) -> Result<bool> {
+        let peer_str = peer.to_string();
+        self.with(|c| {
+            let count: i64 = c.query_row(
+                "SELECT COUNT(*) FROM send_queue WHERE peer_id = ?1 AND status IN ('waiting', 'sending')",
+                [&peer_str],
+                |r| r.get(0),
+            )?;
+            Ok(count > 0)
+        })
+    }
+
+    /// Returns the head-of-line (`seq ASC LIMIT 1`) `'waiting'` item for `peer` along with its
+    /// decoded `QueuePayload`, optional `payload_blob`, and `next_retry_ms`.
+    pub fn head_waiting_item_for_peer(&self, peer: &DeviceId) -> Result<Option<DecodedQueueRow>> {
+        let peer_str = peer.to_string();
+        self.with(|c| {
+            let raw = c
+                .query_row(
+                    &format!(
+                        "{SELECT_SEND_QUEUE_WITH_BLOB}
+                         WHERE peer_id = ?1 AND status = 'waiting'
+                         ORDER BY seq ASC LIMIT 1"
+                    ),
+                    [&peer_str],
+                    raw_queue_row_with_blob,
+                )
+                .optional()?;
+            Ok(raw.and_then(|r| decode_queue_row(c, r, true)))
+        })
+    }
+
+    /// Returns a specific queue item by `id` along with its `QueuePayload`, `payload_blob`, and `next_retry_ms`.
+    pub fn get_queue_item(&self, id: &str) -> Result<Option<DecodedQueueRow>> {
+        self.with(|c| {
+            let raw = c
+                .query_row(
+                    &format!("{SELECT_SEND_QUEUE_WITH_BLOB} WHERE id = ?1"),
+                    [id],
+                    raw_queue_row_with_blob,
+                )
+                .optional()?;
+            Ok(raw.and_then(|r| decode_queue_row(c, r, true)))
+        })
+    }
+
+    /// Distinct peers that currently have at least one `'waiting'` item in `send_queue`.
+    pub fn peers_with_waiting_queue(&self) -> Result<Vec<DeviceId>> {
+        self.with(|c| {
+            let mut stmt = c.prepare_cached(
+                "SELECT DISTINCT peer_id FROM send_queue WHERE status = 'waiting' ORDER BY seq ASC",
+            )?;
+            let peer_strs: Vec<String> =
+                stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(peer_strs.into_iter().filter_map(|s| s.parse::<DeviceId>().ok()).collect())
+        })
+    }
+
+    /// Computes the earliest wakeup timestamp (`expires_at` across all waiting items, or
+    /// `next_retry_ms` across waiting items for `online_peers`), or `None` if no items are waiting.
+    pub fn next_queue_wake_ms(&self, online_peers: &[DeviceId]) -> Result<Option<i64>> {
+        self.with(|c| {
+            let min_expire: Option<i64> = c
+                .query_row(
+                    "SELECT MIN(expires_at) FROM send_queue WHERE status = 'waiting'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            let min_retry: Option<i64> = if online_peers.is_empty() {
+                None
+            } else {
+                let mut stmt = c.prepare_cached(
+                    "SELECT peer_id, next_retry_ms FROM send_queue WHERE status = 'waiting' AND next_retry_ms > 0",
+                )?;
+                let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+                let online_strs: BTreeSet<String> = online_peers.iter().map(ToString::to_string).collect();
+                let mut best: Option<i64> = None;
+                for row in rows {
+                    let (peer_str, retry_ms) = row?;
+                    if online_strs.contains(&peer_str) {
+                        best = Some(best.map_or(retry_ms, |b| b.min(retry_ms)));
+                    }
+                }
+                best
+            };
+            Ok(match (min_expire, min_retry) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            })
+        })
+    }
+
+    /// Transitions a queue item from `'waiting'` to `'sending'`.
+    pub fn mark_queue_sending(&self, id: &str) -> Result<bool> {
+        self.with(|c| {
+            c.execute("UPDATE send_queue SET status = 'sending', error_msg = NULL WHERE id = ?1", [id])
+                .map(|n| n > 0)
+        })
+    }
+
+    /// Updates byte and file progress for an in-flight queue item.
+    pub fn update_queue_progress(&self, id: &str, bytes_done: u64, files_done: u32) -> Result<bool> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE send_queue SET bytes_done = ?2, files_done = ?3 WHERE id = ?1",
+                params![id, bytes_done as i64, i64::from(files_done)],
+            )
+            .map(|n| n > 0)
+        })
+    }
+
+    /// Removes a completed queue item from `send_queue` and returns its decoded `QueuePayload`
+    /// after cleaning up any staged files.
+    pub fn complete_queue_item(&self, id: &str) -> Result<Option<QueuePayload>> {
+        let payload = self.with(|c| {
+            let payload_json: Option<String> = c
+                .query_row("SELECT payload_json FROM send_queue WHERE id = ?1", [id], |r| r.get(0))
+                .optional()?;
+            c.execute("DELETE FROM send_queue WHERE id = ?1", [id])?;
+            Ok(payload_json.and_then(|j| serde_json::from_str::<QueuePayload>(&j).ok()))
+        })?;
+        cleanup_staged_payload(self.data_dir.as_deref(), id, payload.as_ref());
+        Ok(payload)
+    }
+
+    /// Transitions a queue item back to `'waiting'` after a disconnect or transient error,
+    /// recording `attempts` and `next_retry_ms`.
+    pub fn mark_queue_retry_or_wait(
+        &self,
+        id: &str,
+        attempts: u32,
+        next_retry_ms: i64,
+        last_error: Option<&str>,
+    ) -> Result<bool> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE send_queue
+                 SET status = 'waiting', attempts = ?2, next_retry_ms = ?3, error_msg = ?4
+                 WHERE id = ?1",
+                params![id, i64::from(attempts), next_retry_ms, last_error],
+            )
+            .map(|n| n > 0)
+        })
+    }
+
+    /// Marks a queue item as permanently `'failed'` with a human-readable `error` reason.
+    pub fn mark_queue_failed(&self, id: &str, error: &str) -> Result<bool> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE send_queue
+                 SET status = 'failed', next_retry_ms = 0, error_msg = ?2
+                 WHERE id = ?1",
+                params![id, error],
+            )
+            .map(|n| n > 0)
+        })
+    }
+
+    /// Resets a `'failed'` or `'expired'` queue item back to `'waiting'` with `attempts = 0`,
+    /// `next_retry_ms = 0`, and a fresh `expires_at` window starting at `now_ms`.
+    pub fn retry_queue_item(&self, id: &str, now_ms: i64) -> Result<bool> {
+        self.with(|c| {
+            let row: Option<(String, String)> = c
+                .query_row("SELECT kind, status FROM send_queue WHERE id = ?1", [id], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .optional()?;
+            let Some((kind_str, status_str)) = row else {
+                return Ok(false);
+            };
+            if status_str != "failed" && status_str != "expired" {
+                return Ok(false);
+            }
+            let kind = QueueKind::from_str_opt(&kind_str).unwrap_or(QueueKind::Files);
+            let expires_at = now_ms.saturating_add(kind.ttl_ms());
+            c.execute(
+                "UPDATE send_queue
+                 SET status = 'waiting', attempts = 0, next_retry_ms = 0,
+                     expires_at = ?2, error_msg = NULL, bytes_done = 0, files_done = 0
+                 WHERE id = ?1",
+                params![id, expires_at],
+            )
+            .map(|n| n > 0)
+        })
+    }
+
+    /// Resets all `'failed'` and `'expired'` items (for `peer` when `Some`, or all peers when `None`)
+    /// back to `'waiting'` with fresh TTLs. Returns the count of reset items.
+    pub fn retry_all_failed_queue_items(&self, peer: Option<&DeviceId>, now_ms: i64) -> Result<u32> {
+        self.with(|c| {
+            let rows: Vec<(String, String)> = if let Some(p) = peer {
+                let peer_str = p.to_string();
+                let mut stmt = c.prepare_cached(
+                    "SELECT id, kind FROM send_queue
+                     WHERE peer_id = ?1 AND status IN ('failed', 'expired')",
+                )?;
+                let mapped = stmt.query_map([&peer_str], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()?
+            } else {
+                let mut stmt = c.prepare_cached(
+                    "SELECT id, kind FROM send_queue WHERE status IN ('failed', 'expired')",
+                )?;
+                let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            if rows.is_empty() {
+                return Ok(0);
+            }
+            let tx = c.unchecked_transaction()?;
+            let mut count = 0u32;
+            for (id, kind_str) in rows {
+                let kind = QueueKind::from_str_opt(&kind_str).unwrap_or(QueueKind::Files);
+                let expires_at = now_ms.saturating_add(kind.ttl_ms());
+                let updated = tx.execute(
+                    "UPDATE send_queue
+                     SET status = 'waiting', attempts = 0, next_retry_ms = 0,
+                         expires_at = ?2, error_msg = NULL, bytes_done = 0, files_done = 0
+                     WHERE id = ?1",
+                    params![id, expires_at],
+                )?;
+                count = count.saturating_add(u32::try_from(updated).unwrap_or(0));
+            }
+            tx.commit()?;
+            Ok(count)
+        })
+    }
+
+    /// Deletes a queue item by `id`, cleans up any staged files, and returns its `(QueueItem, QueuePayload)`.
+    pub fn remove_queue_item(&self, id: &str) -> Result<Option<(QueueItem, QueuePayload)>> {
+        let removed = self.with(|c| {
+            let raw =
+                c.query_row(&format!("{SELECT_SEND_QUEUE} WHERE id = ?1"), [id], raw_queue_row).optional()?;
+            let Some(raw) = raw else {
+                return Ok(None);
+            };
+            c.execute("DELETE FROM send_queue WHERE id = ?1", [id])?;
+            Ok(decode_queue_row(c, raw, false).map(|(item, payload, _, _)| (item, payload)))
+        })?;
+        if let Some((_, ref payload)) = removed {
+            cleanup_staged_payload(self.data_dir.as_deref(), id, Some(payload));
+        } else {
+            cleanup_staged_payload(self.data_dir.as_deref(), id, None);
+        }
+        Ok(removed)
+    }
+
+    /// Removes all `'failed'` and `'expired'` items (for `peer` when `Some`, or all peers when `None`),
+    /// cleans up their staged files, and returns their `(id, payload)` pairs.
+    pub fn clear_finished_queue_items(&self, peer: Option<&DeviceId>) -> Result<Vec<(String, QueuePayload)>> {
+        let removed: Vec<(String, QueuePayload)> = self.with(|c| {
+            let rows: Vec<(String, String)> = if let Some(p) = peer {
+                let peer_str = p.to_string();
+                let mut stmt = c.prepare_cached(
+                    "SELECT id, payload_json FROM send_queue
+                     WHERE peer_id = ?1 AND status IN ('failed', 'expired')",
+                )?;
+                let mapped = stmt.query_map([&peer_str], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()?
+            } else {
+                let mut stmt = c.prepare_cached(
+                    "SELECT id, payload_json FROM send_queue
+                     WHERE status IN ('failed', 'expired')",
+                )?;
+                let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            if rows.is_empty() {
+                return Ok(Vec::new());
+            }
+            if let Some(p) = peer {
+                c.execute(
+                    "DELETE FROM send_queue WHERE peer_id = ?1 AND status IN ('failed', 'expired')",
+                    [p.to_string()],
+                )?;
+            } else {
+                c.execute("DELETE FROM send_queue WHERE status IN ('failed', 'expired')", [])?;
+            }
+            Ok(rows
+                .into_iter()
+                .filter_map(|(id, json)| serde_json::from_str::<QueuePayload>(&json).ok().map(|p| (id, p)))
+                .collect())
+        })?;
+        for (id, payload) in &removed {
+            cleanup_staged_payload(self.data_dir.as_deref(), id, Some(payload));
+        }
+        Ok(removed)
+    }
+
+    /// Deletes all queue items (`'waiting'`, `'sending'`, `'failed'`, `'expired'`) for `peer`,
+    /// cleans up their staged files, and returns their `(id, payload)` pairs.
+    pub fn drop_all_queue_for_peer(&self, peer: &DeviceId) -> Result<Vec<(String, QueuePayload)>> {
+        let peer_str = peer.to_string();
+        let dropped: Vec<(String, QueuePayload)> = self.with(|c| {
+            let mut stmt = c.prepare_cached("SELECT id, payload_json FROM send_queue WHERE peer_id = ?1")?;
+            let rows: Vec<(String, String)> = stmt
+                .query_map([&peer_str], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            c.execute("DELETE FROM send_queue WHERE peer_id = ?1", [&peer_str])?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|(id, json)| serde_json::from_str::<QueuePayload>(&json).ok().map(|p| (id, p)))
+                .collect())
+        })?;
+        for (id, payload) in &dropped {
+            cleanup_staged_payload(self.data_dir.as_deref(), id, Some(payload));
+        }
+        Ok(dropped)
+    }
+}
+
+const fn bytes_from_len(len: usize) -> u64 {
+    len as u64
+}
+
+fn cleanup_staged_payload(data_dir: Option<&Path>, id: &str, payload: Option<&QueuePayload>) {
+    if let Some(dir) = data_dir {
+        let _ = std::fs::remove_dir_all(dir.join("queue_staging").join(id));
+    }
+    if let Some(p) = payload {
+        for spec in p.files_vec() {
+            if spec.staged {
+                let _ = std::fs::remove_file(&spec.path);
+                if let Some(parent) = spec.path.parent()
+                    && parent.file_name().and_then(|n| n.to_str()) == Some(id)
+                {
+                    let _ = std::fs::remove_dir_all(parent);
+                }
+            }
+        }
+    }
+}
+
+const SELECT_SEND_QUEUE: &str = "SELECT id, seq, peer_id, kind, status, created_at, expires_at, \
+     next_retry_ms, attempts, title, detail, payload_json, bytes_total, bytes_done, \
+     files_total, files_done, error_msg FROM send_queue";
+
+const SELECT_SEND_QUEUE_WITH_BLOB: &str = "SELECT id, seq, peer_id, kind, status, created_at, expires_at, \
+     next_retry_ms, attempts, title, detail, payload_json, bytes_total, bytes_done, \
+     files_total, files_done, error_msg, payload_blob FROM send_queue";
+
+struct RawQueueRow {
+    id: String,
+    seq: i64,
+    peer_str: String,
+    kind_str: String,
+    status_str: String,
+    created_at: i64,
+    expires_at: i64,
+    next_retry_ms: i64,
+    attempts: i64,
+    title: String,
+    detail: String,
+    payload_json: String,
+    bytes_total: i64,
+    bytes_done: i64,
+    files_total: i64,
+    files_done: i64,
+    error_msg: Option<String>,
+    payload_blob: Option<Vec<u8>>,
+}
+
+fn raw_queue_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawQueueRow> {
+    Ok(RawQueueRow {
+        id: row.get(0)?,
+        seq: row.get(1)?,
+        peer_str: row.get(2)?,
+        kind_str: row.get(3)?,
+        status_str: row.get(4)?,
+        created_at: row.get(5)?,
+        expires_at: row.get(6)?,
+        next_retry_ms: row.get(7)?,
+        attempts: row.get(8)?,
+        title: row.get(9)?,
+        detail: row.get(10)?,
+        payload_json: row.get(11)?,
+        bytes_total: row.get(12)?,
+        bytes_done: row.get(13)?,
+        files_total: row.get(14)?,
+        files_done: row.get(15)?,
+        error_msg: row.get(16)?,
+        payload_blob: None,
+    })
+}
+
+fn raw_queue_row_with_blob(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawQueueRow> {
+    let mut r = raw_queue_row(row)?;
+    r.payload_blob = row.get(17)?;
+    Ok(r)
+}
+
+fn lookup_peer_name_conn(c: &Connection, peer: &DeviceId) -> String {
+    c.query_row("SELECT name FROM peers WHERE id = ?1", [peer.as_bytes().as_slice()], |r| {
+        r.get::<_, String>(0)
+    })
+    .ok()
+    .filter(|s| !s.trim().is_empty())
+    .unwrap_or_else(|| peer.short().to_owned())
+}
+
+/// Decoded row from `send_queue`: `(item, payload, payload_blob, next_retry_ms)`.
+pub type DecodedQueueRow = (QueueItem, QueuePayload, Option<Vec<u8>>, i64);
+
+fn decode_queue_row(c: &Connection, raw: RawQueueRow, include_blob: bool) -> Option<DecodedQueueRow> {
+    let peer = raw.peer_str.parse::<DeviceId>().ok()?;
+    let payload = serde_json::from_str::<QueuePayload>(&raw.payload_json).ok()?;
+    let kind = QueueKind::from_str_opt(&raw.kind_str).unwrap_or_else(|| payload.kind());
+    let status = match raw.status_str.as_str() {
+        "sending" => QueueStatus::Sending,
+        "failed" => QueueStatus::Failed { error: raw.error_msg.unwrap_or_else(|| "Failed to send".into()) },
+        "expired" => QueueStatus::Expired {
+            error: raw.error_msg.unwrap_or_else(|| kind.expiry_error_message().into()),
+        },
+        _ => QueueStatus::Waiting,
+    };
+    let peer_name = lookup_peer_name_conn(c, &peer);
+    let files = payload.files_vec();
+    let item = QueueItem {
+        id: raw.id,
+        seq: raw.seq,
+        peer,
+        peer_name,
+        kind,
+        status,
+        created_at: raw.created_at,
+        expires_at: raw.expires_at,
+        attempts: u32::try_from(raw.attempts.max(0)).unwrap_or(0),
+        title: raw.title,
+        detail: raw.detail,
+        bytes_total: u64::try_from(raw.bytes_total.max(0)).unwrap_or(0),
+        bytes_done: u64::try_from(raw.bytes_done.max(0)).unwrap_or(0),
+        files_total: u32::try_from(raw.files_total.max(0)).unwrap_or(0),
+        files_done: u32::try_from(raw.files_done.max(0)).unwrap_or(0),
+        files,
+    };
+    let blob = if include_blob { raw.payload_blob } else { None };
+    Some((item, payload, blob, raw.next_retry_ms))
 }
 
 const SELECT: &str = "SELECT id, name, kind, os, os_ver, model, accent, paired_at, last_seen, last_addrs, \
-     caps, power, wake_info, screen FROM peers";
+     caps, power, wake_info, screen, install_id FROM peers";
+
+/// The device's install ID when it's well formed (others are never stored).
+fn valid_install_id(info: &DeviceInfo) -> Option<&str> {
+    info.install_id.as_deref().filter(|id| nectarlink_protocol::messages::is_valid_install_id(id))
+}
 
 const SELECT_TIMELINE: &str = "SELECT id, kind, device_id, device_name, incoming, timestamp, \
      title, detail, target, size_bytes, duration_secs, ref_id FROM timeline";
@@ -1174,6 +2328,7 @@ fn row_to_peer(row: &rusqlite::Row<'_>) -> rusqlite::Result<PeerRecord> {
             model: row.get(5)?,
             accent: accent.and_then(|a| u32::try_from(a).ok()),
             screen: decode_screen(&screen),
+            install_id: row.get(14)?,
         },
         paired_at: row.get(7)?,
         last_seen: row.get(8)?,
@@ -1239,6 +2394,88 @@ fn migrate(conn: &Connection) -> Result<()> {
         tx.commit()?;
         tracing::debug!(version, "applied storage migration");
     }
+    cleanup_peers(conn, None)?;
+    Ok(())
+}
+
+/// Merges entries for the same physical device paired again after a reinstall (which
+/// creates a new identity), keeping timeline history under the current entry.
+///
+/// Devices count as the same only when they report the same install ID. Name and model
+/// never do: two family phones of the same model often share a default name, and
+/// merging them would silently unpair one.
+fn cleanup_peers(conn: &Connection, keep_id: Option<&DeviceId>) -> rusqlite::Result<()> {
+    struct PeerRow {
+        id: DeviceId,
+        kind: String,
+        install_id: String,
+        paired_at: i64,
+        last_seen: Option<i64>,
+    }
+
+    let rows: Vec<PeerRow> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, install_id, paired_at, last_seen FROM peers
+             WHERE install_id IS NOT NULL AND install_id != ''",
+        )?;
+        let mapped = stmt.query_map([], |r| {
+            let bytes: Vec<u8> = r.get(0)?;
+            let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+                rusqlite::Error::InvalidColumnType(0, "id".into(), rusqlite::types::Type::Blob)
+            })?;
+            Ok(PeerRow {
+                id: DeviceId(arr),
+                kind: r.get(1)?,
+                install_id: r.get(2)?,
+                paired_at: r.get(3)?,
+                last_seen: r.get(4)?,
+            })
+        })?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    let mut groups: Vec<Vec<PeerRow>> = Vec::new();
+    for row in rows {
+        if let Some(group) =
+            groups.iter_mut().find(|g| g[0].install_id == row.install_id && g[0].kind == row.kind)
+        {
+            group.push(row);
+        } else {
+            groups.push(vec![row]);
+        }
+    }
+
+    for group in groups {
+        if group.len() <= 1 {
+            continue;
+        }
+        let winner_id = if let Some(keep) = keep_id
+            && group.iter().any(|r| &r.id == keep)
+        {
+            *keep
+        } else {
+            group.iter().max_by_key(|r| (r.last_seen.unwrap_or(0), r.paired_at)).expect("non-empty group").id
+        };
+        let winner_str = winner_id.to_string();
+        for row in &group {
+            if row.id == winner_id {
+                continue;
+            }
+            let stale_str = row.id.to_string();
+            let _ = conn.execute(
+                "UPDATE timeline SET device_id = ?1 WHERE device_id = ?2",
+                params![winner_id.as_bytes().as_slice(), row.id.as_bytes().as_slice()],
+            );
+            let _ = conn.execute(
+                "UPDATE send_queue SET peer_id = ?1 WHERE peer_id = ?2",
+                params![&winner_str, &stale_str],
+            );
+            let _ = conn.execute("DELETE FROM chat_messages WHERE peer = ?1", [&stale_str]);
+            let _ = conn.execute("DELETE FROM chat_threads WHERE peer = ?1", [&stale_str]);
+            conn.execute("DELETE FROM peers WHERE id = ?1", [row.id.as_bytes().as_slice()])?;
+        }
+    }
+
     Ok(())
 }
 
@@ -1262,6 +2499,7 @@ mod tests {
                 cutouts: vec![ScreenRect { x: 0.46, y: 0.018, w: 0.08, h: 0.036 }],
                 cutout_path: Some("M 0.5 0.018 L 0.54 0.036 L 0.5 0.054 L 0.46 0.036 Z".into()),
             }),
+            install_id: None,
         }
     }
 
@@ -1372,7 +2610,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let id = DeviceId([7; 32]);
         let wake =
-            PcWakeInfo { macs: vec!["38:a7:46:37:2e:64".into()], broadcasts: vec!["192.168.1.255".into()] };
+            PcWakeInfo { macs: vec!["00:00:5e:00:53:01".into()], broadcasts: vec!["192.168.1.255".into()] };
         {
             let store = Store::open(dir.path()).unwrap();
             store.upsert_peer(&id, &info("Studio"), 42).unwrap();
@@ -1732,5 +2970,699 @@ mod tests {
         assert_eq!(store.list_peers().unwrap().len(), 1);
         assert_eq!(store.toggles(&peer).unwrap().get("clipboard"), Some(&false));
         assert_eq!(store.timeline_retention().unwrap().max_days, 30);
+    }
+
+    #[test]
+    fn migrates_from_every_historical_schema_version_v1_through_v6_to_v7() {
+        use nectarlink_protocol::messages::{
+            Notification, NotificationChatMessage, NotificationConversation, ScreenCorners, ScreenRect,
+            ScreenShape,
+        };
+
+        for start_version in 1..=6usize {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+            for sql in &MIGRATIONS[..start_version] {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.pragma_update(None, "user_version", start_version as i64).unwrap();
+
+            let peer = DeviceId([start_version as u8; 32]);
+            let paired_at = 1_700_000_000i64 + start_version as i64;
+            let last_seen = paired_at + 50;
+            let addrs_str = "192.168.1.10:42718";
+
+            // Seed v1 peers row.
+            conn.execute(
+                "INSERT INTO peers (id, name, kind, os, os_ver, model, accent, paired_at, last_seen, last_addrs)
+                 VALUES (?1, ?2, 'phone', 'android', '15', 'Pixel 9', ?3, ?4, ?5, ?6)",
+                params![
+                    peer.as_bytes().as_slice(),
+                    format!("Peer-v{start_version}"),
+                    0xFF3B82F6u32 as i64,
+                    paired_at,
+                    last_seen,
+                    addrs_str,
+                ],
+            )
+            .unwrap();
+
+            // Seed v2 columns & peer_toggles.
+            if start_version >= 2 {
+                conn.execute(
+                    "UPDATE peers SET caps = ?2, power = 'assist' WHERE id = ?1",
+                    params![peer.as_bytes().as_slice(), "clipboard,files"],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO peer_toggles (peer, toggle, enabled) VALUES (?1, 'clipboard', 0)",
+                    params![peer.as_bytes().as_slice()],
+                )
+                .unwrap();
+            }
+
+            // Seed v3 wake_info column.
+            if start_version >= 3 {
+                let wake = PcWakeInfo {
+                    macs: vec!["aa:bb:cc:dd:ee:ff".into()],
+                    broadcasts: vec!["192.168.1.255".into()],
+                };
+                conn.execute(
+                    "UPDATE peers SET wake_info = ?2 WHERE id = ?1",
+                    params![peer.as_bytes().as_slice(), wake.to_storage_string()],
+                )
+                .unwrap();
+            }
+
+            // Seed v4 screen column.
+            let expected_screen = ScreenShape {
+                v: 1,
+                aspect: 0.45,
+                corners: Some(ScreenCorners { tl: 0.08, tr: 0.08, br: 0.08, bl: 0.08 }),
+                cutouts: vec![ScreenRect { x: 0.45, y: 0.01, w: 0.1, h: 0.03 }],
+                cutout_path: None,
+            };
+            if start_version >= 4 {
+                conn.execute(
+                    "UPDATE peers SET screen = ?2 WHERE id = ?1",
+                    params![peer.as_bytes().as_slice(), serde_json::to_string(&expected_screen).unwrap()],
+                )
+                .unwrap();
+            }
+
+            // Seed v5 timeline and meta tables.
+            if start_version >= 5 {
+                conn.execute(
+                    "INSERT INTO timeline (kind, device_id, device_name, incoming, timestamp, title, detail, target, size_bytes, duration_secs, ref_id)
+                     VALUES ('file', ?1, 'Pixel 9', 1, ?2, 'photo.jpg', 'Saved', '/tmp/photo.jpg', 4096, 0, 'xfer-1')",
+                    params![peer.as_bytes().as_slice(), paired_at],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO meta (key, value) VALUES ('timeline_max_days', '60'), ('timeline_max_entries', '2500')",
+                    [],
+                )
+                .unwrap();
+            }
+
+            // Run Store::init to migrate from `start_version` -> latest (v7).
+            let store = Store::init(conn).unwrap();
+            let final_ver: i64 =
+                store.with(|c| c.pragma_query_value(None, "user_version", |r| r.get(0))).unwrap();
+            assert_eq!(final_ver as usize, MIGRATIONS.len(), "migrated from v{start_version} to v7");
+
+            // Verify v1..v4 peer record survived intact.
+            let rec = store.get_peer(&peer).unwrap().expect("peer preserved across migration");
+            assert_eq!(rec.info.name, format!("Peer-v{start_version}"));
+            assert_eq!(rec.info.kind, DeviceKind::Phone);
+            assert_eq!(rec.info.model.as_deref(), Some("Pixel 9"));
+            assert_eq!(rec.info.accent, Some(0xFF3B82F6));
+            assert_eq!(rec.paired_at, paired_at);
+            assert_eq!(rec.last_seen, Some(last_seen));
+            assert_eq!(rec.last_addrs.len(), 1);
+
+            if start_version >= 2 {
+                assert!(rec.caps.contains("clipboard"));
+                assert_eq!(rec.power, PowerLevel::Assist);
+                assert_eq!(store.toggles(&peer).unwrap().get("clipboard"), Some(&false));
+            } else {
+                assert!(rec.caps.is_empty());
+                assert_eq!(rec.power, PowerLevel::Basic);
+            }
+
+            if start_version >= 3 {
+                assert_eq!(rec.wake_info.as_ref().unwrap().macs, vec!["aa:bb:cc:dd:ee:ff"]);
+                assert_eq!(rec.wake_info.as_ref().unwrap().broadcasts, vec!["192.168.1.255"]);
+            } else {
+                assert!(rec.wake_info.is_none());
+            }
+
+            if start_version >= 4 {
+                assert_eq!(rec.info.screen, Some(expected_screen));
+            } else {
+                assert!(rec.info.screen.is_none());
+            }
+
+            if start_version >= 5 {
+                assert_eq!(store.timeline_total_count().unwrap(), 1);
+                assert_eq!(
+                    store.timeline_retention().unwrap(),
+                    TimelineRetention { max_days: 60, max_entries: 2500 }
+                );
+            } else {
+                assert_eq!(store.timeline_total_count().unwrap(), 0);
+            }
+
+            // Verify v5 timeline, v6 chat, and v7 send_queue tables are writable and queryable after migration.
+            store
+                .insert_timeline(
+                    &NewTimelineEntry {
+                        kind: TimelineKind::Link,
+                        device_id: peer,
+                        device_name: rec.info.name.clone(),
+                        incoming: false,
+                        timestamp: paired_at + 100,
+                        title: "https://nectarlink.app".into(),
+                        detail: "Sent".into(),
+                        target: "https://nectarlink.app".into(),
+                        size_bytes: 0,
+                        duration_secs: 0,
+                        ref_id: None,
+                    },
+                    paired_at + 100,
+                )
+                .unwrap();
+
+            let note = Notification {
+                key: "msg|1".into(),
+                app: "com.google.android.apps.messaging".into(),
+                app_name: "Messages".into(),
+                title: Some("Sam".into()),
+                text: Some("Migrated!".into()),
+                sub: None,
+                when: paired_at * 1000,
+                actions: vec![],
+                silent: false,
+                icon: None,
+                image: None,
+                live: None,
+                conversation: Some(NotificationConversation {
+                    v: 1,
+                    title: "Sam".into(),
+                    group: false,
+                    avatar: None,
+                    messages: vec![NotificationChatMessage {
+                        sender: Some("Sam".into()),
+                        text: "Migrated!".into(),
+                        time: paired_at * 1000,
+                        self_sent: false,
+                        avatar: None,
+                    }],
+                }),
+            };
+            let tid = store.upsert_chat_notification(&peer, &note, None, false).unwrap().unwrap();
+            assert_eq!(store.chat_messages(&peer, &tid, 10).unwrap().len(), 1);
+
+            store
+                .enqueue_send_item(
+                    "q-mig-1",
+                    &peer,
+                    &QueuePayload::Link { url: "https://nectarlink.dev".into(), title: None },
+                    None,
+                    paired_at * 1000,
+                )
+                .unwrap();
+            assert_eq!(store.list_send_queue(Some(&peer)).unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn cleanup_peers_merges_only_the_same_install_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let pixel = DeviceId([0xD0; 32]);
+        let old_phone = DeviceId([0xA1; 32]);
+        let new_phone = DeviceId([0xA2; 32]);
+        let sibling_a = DeviceId([0xB1; 32]);
+        let sibling_b = DeviceId([0xB2; 32]);
+        let legacy_a = DeviceId([0xC1; 32]);
+        let legacy_b = DeviceId([0xC2; 32]);
+        let reinstalled = "0123456789abcdef0123456789abcdef";
+        let now = 1_760_000_000i64;
+
+        {
+            let conn = Connection::open(dir.path().join(FILE_NAME)).unwrap();
+            migrate(&conn).unwrap();
+            let insert = |id: DeviceId,
+                          name: &str,
+                          model: Option<&str>,
+                          install: Option<&str>,
+                          paired: i64| {
+                conn.execute(
+                    "INSERT INTO peers (id, name, kind, os, os_ver, model, accent, paired_at, last_seen, install_id)
+                     VALUES (?1, ?2, 'phone', 'android', '16', ?3, NULL, ?4, ?4, ?5)",
+                    params![id.as_bytes().as_slice(), name, model, paired, install],
+                )
+                .unwrap();
+            };
+            // A phone whose model isn't known yet is never removed.
+            insert(pixel, "Pixel 9", None, None, now - 500);
+            // The same phone paired again after a reinstall: same install ID, new identity.
+            insert(old_phone, "Test Phone", Some("Example X1"), Some(reinstalled), now - 300);
+            insert(new_phone, "Test Phone", Some("Example X1"), Some(reinstalled), now - 100);
+            // Two family phones with the same model and default name: different devices.
+            insert(
+                sibling_a,
+                "Family Phone",
+                Some("Example X1"),
+                Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                now - 90,
+            );
+            insert(
+                sibling_b,
+                "Family Phone",
+                Some("Example X1"),
+                Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                now - 80,
+            );
+            // Entries from app versions without install IDs are never merged on name alone.
+            insert(legacy_a, "Old Phone", Some("Example X1"), None, now - 70);
+            insert(legacy_b, "Old Phone", Some("Example X1"), None, now - 60);
+
+            conn.execute(
+                "INSERT INTO timeline (kind, device_id, device_name, incoming, timestamp, title, detail, target, size_bytes, duration_secs)
+                 VALUES ('file', ?1, 'Test Phone', 1, ?2, 'notes.pdf', '1 file', '/tmp/notes.pdf', 1024, 0)",
+                params![old_phone.as_bytes().as_slice(), now - 250],
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(dir.path()).unwrap();
+        let mut ids: Vec<DeviceId> = store.list_peers().unwrap().into_iter().map(|p| p.id).collect();
+        ids.sort_by_key(|id| id.0);
+        assert_eq!(
+            ids,
+            vec![new_phone, sibling_a, sibling_b, legacy_a, legacy_b, pixel],
+            "only the reinstalled phone's old entry is merged away"
+        );
+
+        let page = store.query_timeline(&TimelineQuery { limit: 10, ..Default::default() }, &[]).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.entries[0].device_id, new_phone, "history moves to the current entry");
+    }
+
+    #[test]
+    fn re_pairing_with_an_install_id_replaces_the_old_entry() {
+        let store = Store::in_memory().unwrap();
+        let (old, new) = (DeviceId([0x01; 32]), DeviceId([0x02; 32]));
+        let mut phone = info("Test Phone");
+        phone.install_id = Some("0123456789abcdef0123456789abcdef".into());
+        store.upsert_peer(&old, &phone, 100).unwrap();
+        store.upsert_peer(&new, &phone, 200).unwrap();
+        let ids: Vec<DeviceId> = store.list_peers().unwrap().into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, vec![new], "the new pairing wins");
+
+        // Malformed IDs are never stored, so they can't merge anything.
+        let mut bad = info("Other Phone");
+        bad.install_id = Some("not-hex".into());
+        store.upsert_peer(&DeviceId([0x03; 32]), &bad, 300).unwrap();
+        store.upsert_peer(&DeviceId([0x04; 32]), &bad, 400).unwrap();
+        assert_eq!(store.list_peers().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn send_queue_fifo_clipboard_replacement_capacity_ttl_recovery_and_reassign() {
+        let store = Store::in_memory().unwrap();
+        let peer_a = DeviceId([0x11; 32]);
+        let peer_b = DeviceId([0x22; 32]);
+        let peer_a_repaired = DeviceId([0x33; 32]);
+        store.upsert_peer(&peer_a, &info("Pixel 9"), 100).unwrap();
+        store.upsert_peer(&peer_b, &info("Galaxy Tab"), 100).unwrap();
+        store.upsert_peer(&peer_a_repaired, &info("Pixel 9"), 200).unwrap();
+        let now_ms = 1_760_000_000_000i64;
+
+        // 1. Clipboard replacement moves the replaced item to the end of the queue per peer
+        // (and does not touch another peer's clip).
+        let c1 = store
+            .enqueue_send_item(
+                "clip-a1",
+                &peer_a,
+                &QueuePayload::Clipboard { text: "First clip".into(), html: None, rtf: None },
+                None,
+                now_ms,
+            )
+            .unwrap();
+        assert_eq!(c1.seq, 1);
+
+        let _cb = store
+            .enqueue_send_item(
+                "clip-b1",
+                &peer_b,
+                &QueuePayload::Clipboard { text: "Peer B clip".into(), html: None, rtf: None },
+                None,
+                now_ms + 10,
+            )
+            .unwrap();
+
+        let _link_a = store
+            .enqueue_send_item(
+                "link-a1",
+                &peer_a,
+                &QueuePayload::Link { url: "https://nectarlink.dev/docs".into(), title: None },
+                None,
+                now_ms + 20,
+            )
+            .unwrap();
+
+        let c2 = store
+            .enqueue_send_item(
+                "clip-a2",
+                &peer_a,
+                &QueuePayload::Clipboard { text: "Latest clip".into(), html: None, rtf: None },
+                None,
+                now_ms + 30,
+            )
+            .unwrap();
+        assert_eq!(c2.seq, 4, "clipboard replacement moves item to the end of the queue");
+        assert_eq!(c2.title, "Latest clip");
+
+        // Replacing text clipboard with ClipboardImage also moves to the end for the same peer.
+        let c3 = store
+            .enqueue_send_item(
+                "clip-a3",
+                &peer_a,
+                &QueuePayload::ClipboardImage { mime: "image/png".into(), width: 100, height: 80 },
+                Some(&[1, 2, 3, 4]),
+                now_ms + 40,
+            )
+            .unwrap();
+        assert_eq!(c3.seq, 5);
+        assert_eq!(c3.kind, QueueKind::ClipboardImage);
+        assert_eq!(c3.bytes_total, 4);
+
+        // Replacing ClipboardImage with text Clipboard clears payload_blob and bytes_total.
+        let c4 = store
+            .enqueue_send_item(
+                "clip-a4",
+                &peer_a,
+                &QueuePayload::Clipboard { text: "Final text clip".into(), html: None, rtf: None },
+                None,
+                now_ms + 50,
+            )
+            .unwrap();
+        assert_eq!(c4.seq, 6);
+        assert_eq!(c4.kind, QueueKind::Clipboard);
+        assert_eq!(c4.bytes_total, 0);
+        let (_, _, blob_after, _) = store.get_queue_item("clip-a4").unwrap().unwrap();
+        assert!(blob_after.is_none(), "replacing ClipboardImage with text Clipboard frees payload_blob");
+
+        let list_a = store.list_send_queue(Some(&peer_a)).unwrap();
+        assert_eq!(list_a.len(), 2);
+        assert_eq!(list_a[0].id, "link-a1");
+        assert_eq!(list_a[1].id, "clip-a4");
+
+        let list_b = store.list_send_queue(Some(&peer_b)).unwrap();
+        assert_eq!(list_b.len(), 1);
+        assert_eq!(list_b[0].id, "clip-b1");
+        assert_eq!(list_b[0].title, "Peer B clip");
+
+        // 2. Startup recovery: reset_interrupted_sending resets 'sending' back to 'waiting'.
+        assert!(store.mark_queue_sending("link-a1").unwrap());
+        assert_eq!(store.list_send_queue(Some(&peer_a)).unwrap()[0].status, QueueStatus::Sending);
+        assert_eq!(store.reset_interrupted_sending().unwrap(), 1);
+        assert_eq!(store.list_send_queue(Some(&peer_a)).unwrap()[0].status, QueueStatus::Waiting);
+
+        // 3. Per-type TTL expiry (CameraRequest = 2 min, Link/Clip = 24h, Files = 7d).
+        store
+            .enqueue_send_item(
+                "cam-a1",
+                &peer_a,
+                &QueuePayload::CameraRequest { request_id: "req-1".into(), mode: CameraCaptureMode::Photo },
+                None,
+                now_ms,
+            )
+            .unwrap();
+        store
+            .enqueue_send_item(
+                "file-a1",
+                &peer_a,
+                &QueuePayload::Files {
+                    files: vec![QueuedFileSpec {
+                        path: PathBuf::from("/tmp/doc.pdf"),
+                        name: "doc.pdf".into(),
+                        folder: None,
+                        size: 1024,
+                        mtime_ms: now_ms,
+                        staged: false,
+                    }],
+                },
+                None,
+                now_ms,
+            )
+            .unwrap();
+
+        // Advance 3 minutes: only CameraRequest expires.
+        let expired_2m = store.expire_stale_queue_items(now_ms + 3 * 60 * 1000).unwrap();
+        assert_eq!(expired_2m, 1);
+        let cam_item =
+            store.list_send_queue(Some(&peer_a)).unwrap().into_iter().find(|i| i.id == "cam-a1").unwrap();
+        assert_eq!(
+            cam_item.status,
+            QueueStatus::Expired { error: "Expired (camera requests expire after 2 minutes)".into() }
+        );
+
+        // Advance 25 hours: Link and Clipboard items expire, while Files (7d) stays Waiting.
+        let expired_24h = store.expire_stale_queue_items(now_ms + 25 * 3600 * 1000).unwrap();
+        assert_eq!(expired_24h, 3); // clip-a4, link-a1, clip-b1
+        let file_item =
+            store.list_send_queue(Some(&peer_a)).unwrap().into_iter().find(|i| i.id == "file-a1").unwrap();
+        assert_eq!(file_item.status, QueueStatus::Waiting);
+
+        // Advance 8 days: Files item expires with 7-day message.
+        let expired_7d = store.expire_stale_queue_items(now_ms + 8 * 86_400 * 1000).unwrap();
+        assert_eq!(expired_7d, 1);
+        let file_item =
+            store.list_send_queue(Some(&peer_a)).unwrap().into_iter().find(|i| i.id == "file-a1").unwrap();
+        assert_eq!(
+            file_item.status,
+            QueueStatus::Expired { error: "Expired (waited more than 7 days)".into() }
+        );
+
+        // 4. Re-pairing peer ID reassignment moves queued items to the new peer ID.
+        let moved = store.reassign_send_queue_peer(&peer_a, &peer_a_repaired).unwrap();
+        assert_eq!(moved, 4);
+        assert!(store.list_send_queue(Some(&peer_a)).unwrap().is_empty());
+        assert_eq!(store.list_send_queue(Some(&peer_a_repaired)).unwrap().len(), 4);
+
+        // Clear all finished (failed + expired) items.
+        store.clear_finished_queue_items(None).unwrap();
+        assert!(store.list_send_queue(None).unwrap().is_empty());
+
+        // 5. Capacity limits: > 10 GiB file bytes and > 200 active items return Error::QueueFull.
+        let huge_res = store.enqueue_send_item(
+            "huge-file",
+            &peer_b,
+            &QueuePayload::Files {
+                files: vec![QueuedFileSpec {
+                    path: PathBuf::from("/tmp/huge.bin"),
+                    name: "huge.bin".into(),
+                    folder: None,
+                    size: MAX_QUEUE_ACTIVE_BYTES + 1,
+                    mtime_ms: now_ms,
+                    staged: false,
+                }],
+            },
+            None,
+            now_ms,
+        );
+        assert!(matches!(huge_res, Err(Error::QueueFull(_))), "expected QueueFull for >10 GiB: {huge_res:?}");
+
+        for i in 0..MAX_QUEUE_ACTIVE_ITEMS {
+            store
+                .enqueue_send_item(
+                    &format!("item-{i}"),
+                    &peer_b,
+                    &QueuePayload::Link { url: format!("https://nectarlink.dev/{i}"), title: None },
+                    None,
+                    now_ms + i as i64,
+                )
+                .unwrap();
+        }
+        let over_cap = store.enqueue_send_item(
+            "item-200",
+            &peer_b,
+            &QueuePayload::Link { url: "https://nectarlink.dev/overflow".into(), title: None },
+            None,
+            now_ms + 999,
+        );
+        assert!(
+            matches!(over_cap, Err(Error::QueueFull(_))),
+            "expected QueueFull at 201st item: {over_cap:?}"
+        );
+    }
+
+    #[test]
+    fn send_queue_preserved_on_clear_history_and_staged_files_deleted_on_all_terminal_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let peer = DeviceId([0x44; 32]);
+        store.upsert_peer(&peer, &info("Pixel 9"), 100).unwrap();
+        let now_ms = 1_760_000_000_000i64;
+
+        let stage_file = |id: &str, name: &str| -> QueuedFileSpec {
+            let stage_dir = dir.path().join("queue_staging").join(id);
+            std::fs::create_dir_all(&stage_dir).unwrap();
+            let path = stage_dir.join(format!("0_{name}"));
+            std::fs::write(&path, b"staged-bytes").unwrap();
+            let meta = std::fs::metadata(&path).unwrap();
+            QueuedFileSpec {
+                path,
+                name: name.into(),
+                folder: None,
+                size: meta.len(),
+                mtime_ms: file_mtime_ms(&meta),
+                staged: true,
+            }
+        };
+
+        // Enqueue 5 staged items for the 5 terminal paths.
+        for id in ["q-complete", "q-cancel", "q-expire", "q-fail-clear", "q-unpair"] {
+            let spec = stage_file(id, "doc.txt");
+            store
+                .enqueue_send_item(id, &peer, &QueuePayload::Files { files: vec![spec] }, None, now_ms)
+                .unwrap();
+            assert!(dir.path().join("queue_staging").join(id).exists());
+        }
+
+        // Seed timeline and chat cache, then call clear_all_history_and_cache:
+        // timeline and chat cache are cleared, while send_queue and staged files are preserved.
+        store
+            .insert_timeline(
+                &NewTimelineEntry {
+                    kind: TimelineKind::Link,
+                    device_id: peer,
+                    device_name: "Pixel 9".into(),
+                    incoming: false,
+                    timestamp: 100,
+                    title: "Example".into(),
+                    detail: "https://example.com".into(),
+                    target: "https://example.com".into(),
+                    size_bytes: 0,
+                    duration_secs: 0,
+                    ref_id: None,
+                },
+                100,
+            )
+            .unwrap();
+        store.clear_all_history_and_cache().unwrap();
+        assert_eq!(store.timeline_total_count().unwrap(), 0);
+        assert_eq!(
+            store.list_send_queue(Some(&peer)).unwrap().len(),
+            5,
+            "clear_all_history_and_cache must preserve send_queue items"
+        );
+        for id in ["q-complete", "q-cancel", "q-expire", "q-fail-clear", "q-unpair"] {
+            assert!(
+                dir.path().join("queue_staging").join(id).exists(),
+                "staged directory for {id} must still exist after clear_all_history_and_cache"
+            );
+        }
+
+        // Terminal path 1: Complete
+        store.complete_queue_item("q-complete").unwrap();
+        assert!(!dir.path().join("queue_staging").join("q-complete").exists());
+
+        // Terminal path 2: Cancel (remove_queue_item)
+        store.remove_queue_item("q-cancel").unwrap();
+        assert!(!dir.path().join("queue_staging").join("q-cancel").exists());
+
+        // Terminal path 3: Fail followed by clear_finished_queue_items
+        store.mark_queue_failed("q-fail-clear", "Denied").unwrap();
+        assert!(
+            dir.path().join("queue_staging").join("q-fail-clear").exists(),
+            "staged file remains while failed so user can retry before clearing"
+        );
+        store.clear_finished_queue_items(Some(&peer)).unwrap();
+        assert!(!dir.path().join("queue_staging").join("q-fail-clear").exists());
+
+        // Terminal path 4: Expire (isolate q-expire by setting its expires_at earlier than q-unpair)
+        store
+            .with(|c| {
+                c.execute("UPDATE send_queue SET expires_at = ?1 WHERE id = 'q-expire'", [now_ms + 100])
+            })
+            .unwrap();
+        assert_eq!(store.expire_stale_queue_items(now_ms + 200).unwrap(), 1);
+        assert!(!dir.path().join("queue_staging").join("q-expire").exists());
+
+        // Terminal path 5: Unpair (drop_all_queue_for_peer)
+        store.drop_all_queue_for_peer(&peer).unwrap();
+        assert!(!dir.path().join("queue_staging").join("q-unpair").exists());
+        assert!(store.list_send_queue(Some(&peer)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn send_queue_clipboard_image_size_cap_and_active_bytes_accounting() {
+        let store = Store::in_memory().unwrap();
+        let peer = DeviceId([0x55; 32]);
+        store.upsert_peer(&peer, &info("Pixel 9"), 100).unwrap();
+        let now_ms = 1_760_000_000_000i64;
+
+        // 1. ClipboardImage > MAX_QUEUE_CLIPBOARD_IMAGE_BYTES (50 MiB) is rejected with QueueFull.
+        let oversized = vec![0u8; MAX_QUEUE_CLIPBOARD_IMAGE_BYTES + 1];
+        let res = store.enqueue_send_item(
+            "img-too-big",
+            &peer,
+            &QueuePayload::ClipboardImage { mime: "image/png".into(), width: 100, height: 100 },
+            Some(&oversized),
+            now_ms,
+        );
+        assert!(matches!(res, Err(Error::QueueFull(_))), "expected QueueFull for >50 MiB image: {res:?}");
+
+        // 2. ClipboardImage bytes count toward MAX_QUEUE_ACTIVE_BYTES (10 GiB).
+        store
+            .enqueue_send_item(
+                "almost-full-file",
+                &peer,
+                &QueuePayload::Files {
+                    files: vec![QueuedFileSpec {
+                        path: PathBuf::from("/tmp/big.bin"),
+                        name: "big.bin".into(),
+                        folder: None,
+                        size: MAX_QUEUE_ACTIVE_BYTES - 10,
+                        mtime_ms: now_ms,
+                        staged: false,
+                    }],
+                },
+                None,
+                now_ms,
+            )
+            .unwrap();
+        let img_exceeding_total = store.enqueue_send_item(
+            "img-overflow-total",
+            &peer,
+            &QueuePayload::ClipboardImage { mime: "image/png".into(), width: 10, height: 10 },
+            Some(&[0u8; 20]),
+            now_ms + 1,
+        );
+        assert!(
+            matches!(img_exceeding_total, Err(Error::QueueFull(_))),
+            "expected QueueFull when ClipboardImage pushes active bytes over 10 GiB: {img_exceeding_total:?}"
+        );
+    }
+
+    #[test]
+    fn send_queue_wake_ms_ignores_offline_peer_retries_and_clears_retry_delays() {
+        let store = Store::in_memory().unwrap();
+        let offline_peer = DeviceId([0x66; 32]);
+        let online_peer = DeviceId([0x77; 32]);
+        store.upsert_peer(&offline_peer, &info("Offline Phone"), 100).unwrap();
+        store.upsert_peer(&online_peer, &info("Online Phone"), 100).unwrap();
+        let now_ms = 1_760_000_000_000i64;
+
+        let item_off = store
+            .enqueue_send_item(
+                "off-1",
+                &offline_peer,
+                &QueuePayload::Link { url: "https://nectarlink.dev/off".into(), title: None },
+                None,
+                now_ms,
+            )
+            .unwrap();
+        store.mark_queue_retry_or_wait("off-1", 1, now_ms + 1_000, Some("disconnected")).unwrap();
+
+        // When offline_peer is not in online_peers, next_queue_wake_ms ignores its next_retry_ms
+        // and returns only min(expires_at).
+        let wake_no_online = store.next_queue_wake_ms(&[]).unwrap();
+        assert_eq!(wake_no_online, Some(item_off.expires_at));
+
+        // When offline_peer IS in online_peers, its next_retry_ms is returned.
+        let wake_with_online = store.next_queue_wake_ms(&[offline_peer]).unwrap();
+        assert_eq!(wake_with_online, Some(now_ms + 1_000));
+
+        // clear_send_queue_retry_delays resets next_retry_ms to 0 for the disconnected peer.
+        assert_eq!(store.clear_send_queue_retry_delays(&offline_peer).unwrap(), 1);
+        assert_eq!(
+            store.next_queue_wake_ms(&[offline_peer, online_peer]).unwrap(),
+            Some(item_off.expires_at)
+        );
     }
 }

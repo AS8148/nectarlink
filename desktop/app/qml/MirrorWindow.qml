@@ -61,6 +61,7 @@ Window {
     onXChanged: if (info.app && sized && readyForResize) moveTimer.restart()
     onYChanged: if (info.app && sized && readyForResize) moveTimer.restart()
     onPhaseChanged: if (phase === "showing" && info.app && sized) resizeTimer.restart()
+    onActiveChanged: if (win.active) Mirror.syncClipboardOnFocus(win.mirrorKey)
 
     onFrameChanged: {
         if (frame.width <= 0)
@@ -119,16 +120,57 @@ Window {
                      inside: x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height }
         }
 
+        DropArea {
+            id: mirrorDropArea
+            anchors.fill: parent
+            enabled: win.phase === "showing"
+            onEntered: (drag) => {
+                Mirror.syncClipboardOnFocus(win.mirrorKey)
+            }
+            onDropped: (drop) => {
+                const urls = []
+                if (drop.urls) {
+                    for (let i = 0; i < drop.urls.length; i++) {
+                        urls.push(drop.urls[i].toString())
+                    }
+                }
+                if (urls.length > 0) {
+                    Mirror.syncClipboardOnFocus(win.mirrorKey)
+                    Mirror.dropFiles(urls)
+                }
+                drop.acceptProposedAction()
+            }
+        }
+
+        HoverHandler {
+            id: videoHover
+            onHoveredChanged: {
+                if (hovered) {
+                    toolbarWakeTimer.restart()
+                    if (win.phase === "showing")
+                        Mirror.enterWindow(win.mirrorKey)
+                } else {
+                    Mirror.leaveWindow()
+                }
+            }
+        }
+
         // The mouse: left is a finger, right is Back, middle is Home.
         MouseArea {
             anchors.fill: parent
-            enabled: win.canControl && win.phase === "showing"
+            enabled: win.phase === "showing"
             acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            cursorShape: win.canControl ? Qt.PointingHandCursor : Qt.ArrowCursor
             property bool down: false
             property double lastMove: 0
             onPressed: (mouse) => {
                 video.forceActiveFocus()
+                if (!win.canControl) {
+                    hintClose.closed = false
+                    hintPulse.restart()
+                    Mirror.requestControl(win.mirrorKey)
+                    return
+                }
                 const p = video.at(mouse.x, mouse.y)
                 if (mouse.button === Qt.RightButton) { Mirror.press(win.mirrorKey, "back"); return }
                 if (mouse.button === Qt.MiddleButton) { Mirror.press(win.mirrorKey, "home"); return }
@@ -137,7 +179,7 @@ Window {
                 Mirror.touch(win.mirrorKey, "down", p.x, p.y)
             }
             onPositionChanged: (mouse) => {
-                if (!down) return
+                if (!down || !win.canControl) return
                 // About 60 a second is plenty for a finger.
                 const now = Date.now()
                 if (now - lastMove < 16) return
@@ -148,10 +190,16 @@ Window {
             onReleased: (mouse) => {
                 if (!down) return
                 down = false
+                if (!win.canControl) return
                 const p = video.at(mouse.x, mouse.y)
                 Mirror.touch(win.mirrorKey, "up", p.x, p.y)
             }
             onWheel: (wheel) => {
+                if (!win.canControl) {
+                    hintClose.closed = false
+                    Mirror.requestControl(win.mirrorKey)
+                    return
+                }
                 const p = video.at(wheel.x, wheel.y)
                 if (p.inside)
                     Mirror.scroll(win.mirrorKey, p.x, p.y, -wheel.angleDelta.x / 120, -wheel.angleDelta.y / 120)
@@ -231,7 +279,18 @@ Window {
     }
 
     // Floating mirror toolbar: screenshots, MP4 recording, stay awake, screen off, and audio mute.
-    HoverHandler { id: hovering }
+    Timer {
+        id: toolbarWakeTimer
+        interval: 1800
+        repeat: false
+    }
+    Item {
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: 56
+        HoverHandler { id: topZoneHover }
+    }
     Rectangle {
         id: toolbar
         anchors.top: parent.top
@@ -244,9 +303,8 @@ Window {
         visible: win.phase === "showing" && video.frameSize.width > 0
         readonly property bool toolbarHasFocus: copyShotBtn.activeFocus || saveShotBtn.activeFocus
             || recordBtn.activeFocus || stayAwakeBtn.activeFocus || screenOffBtn.activeFocus || soundBtn.activeFocus
-        opacity: hovering.hovered || toolbarHover.hovered || Mirror.muted
-            || win.info.recording === true || win.info.screenOff === true
-            || win.info.stayAwake === true || toolbarHasFocus ? 1 : 0
+        opacity: topZoneHover.hovered || toolbarHover.hovered || toolbarWakeTimer.running || Mirror.muted
+            || win.info.recording === true || win.info.screenOff === true || toolbarHasFocus ? 1 : 0
         Behavior on opacity { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast } }
 
         HoverHandler { id: toolbarHover }
@@ -318,9 +376,12 @@ Window {
         }
     }
 
-    // Brief confirmation pill for screenshots, recordings, and power toggles.
+    // Brief confirmation pill for screenshots, recordings, file drops, and power toggles.
     Rectangle {
         id: noticePill
+        readonly property string pillText: mirrorDropArea.containsDrag
+            ? qsTr("Release to send files to %1").arg(win.deviceName.length > 0 ? win.deviceName : qsTr("phone"))
+            : (win.info.notice || "")
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: hintBanner.visible ? hintBanner.top : parent.bottom
         anchors.bottomMargin: hintBanner.visible ? 8 : 16
@@ -329,20 +390,20 @@ Window {
         radius: height / 2
         color: Qt.rgba(0, 0, 0, 0.78)
         visible: opacity > 0
-        opacity: (win.info.notice || "").length > 0 ? 1 : 0
+        opacity: pillText.length > 0 ? 1 : 0
         Behavior on opacity { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast } }
         Txt {
             id: noticeTxt
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors. leftMargin: 12
+            anchors.leftMargin: 12
             anchors.rightMargin: 12
             anchors.verticalCenter: parent.verticalCenter
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
             role: "caption"
             color: "white"
-            text: win.info.notice || ""
+            text: noticePill.pillText
         }
     }
 
@@ -353,25 +414,57 @@ Window {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: 12
-        height: hint.implicitHeight + 20
+        height: Math.max(hint.implicitHeight + 20, 48)
         radius: Theme.radiusMd
         visible: win.phase === "showing" && video.frameSize.width > 0 && !win.canControl && !win.info.app && !hintClose.closed
         color: Qt.rgba(0, 0, 0, 0.72)
+
+        SequentialAnimation {
+            id: hintPulse
+            NumberAnimation {
+                target: hintBanner
+                property: "scale"
+                from: 1.0
+                to: Theme.reduceMotion ? 1.0 : 1.03
+                duration: 110
+                easing.type: Easing.OutQuad
+            }
+            NumberAnimation {
+                target: hintBanner
+                property: "scale"
+                from: Theme.reduceMotion ? 1.0 : 1.03
+                to: 1.0
+                duration: 140
+                easing.type: Easing.InOutQuad
+            }
+        }
+
         Txt {
             id: hint
             anchors.left: parent.left
-            anchors.right: hintClose.left
+            anchors.right: notifyPhoneBtn.left
             anchors.margins: 10
             anchors.verticalCenter: parent.verticalCenter
             wrapMode: Text.WordWrap
             role: "bodySmall"
             color: "white"
-            text: qsTr("To use your mouse and keyboard on the phone, open Nectarlink on the phone and turn on Control from your PC in Settings.")
+            text: qsTr("To control the phone, turn on Control from your PC in Nectarlink's settings on the phone.")
+        }
+        Button {
+            id: notifyPhoneBtn
+            anchors.right: hintClose.left
+            anchors.rightMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            variant: "tonal"
+            size: "sm"
+            text: qsTr("Notify phone")
+            onClicked: Mirror.requestControl(win.mirrorKey)
         }
         IconButton {
             id: hintClose
             property bool closed: false
             anchors.right: parent.right
+            anchors.rightMargin: 4
             anchors.verticalCenter: parent.verticalCenter
             iconPath: Icons.close
             iconColor: "white"

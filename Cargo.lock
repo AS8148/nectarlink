@@ -2317,8 +2317,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nectarlink-adb"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "nectarlink-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2337,13 +2347,16 @@ dependencies = [
 
 [[package]]
 name = "nectarlink-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
+ "blake3",
  "bytes",
  "data-encoding",
  "iroh",
  "iroh-mdns-address-lookup",
+ "material-colors",
  "n0-future",
+ "nectarlink-adb",
  "nectarlink-protocol",
  "rand",
  "ring",
@@ -2367,9 +2380,10 @@ dependencies = [
 
 [[package]]
 name = "nectarlink-desktop"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "cxx",
  "cxx-qt",
  "cxx-qt-build",
@@ -2395,7 +2409,7 @@ dependencies = [
 
 [[package]]
 name = "nectarlink-ffi"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "nectarlink-core",
  "paranoid-android",
@@ -2408,7 +2422,7 @@ dependencies = [
 
 [[package]]
 name = "nectarlink-protocol"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "ciborium",
  "data-encoding",
@@ -2423,9 +2437,10 @@ dependencies = [
 
 [[package]]
 name = "nectarlink-vcam"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "embed-resource",
  "windows",
  "windows-core",
 ]
@@ -3319,9 +3334,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "log",
  "once_cell",
@@ -3879,7 +3894,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5049,7 +5064,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde_json",

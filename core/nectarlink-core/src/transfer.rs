@@ -16,8 +16,8 @@ pub use nectarlink_protocol::messages::{RecordingMarker, files::RECORDER};
 use nectarlink_protocol::{
     DeviceId, Envelope, ErrorCode,
     messages::{
-        ErrorBody, FileEntry, FilesAccept, FilesOffer, StreamHeader, clip, files, is_valid_file_name,
-        is_valid_folder, mirror, types,
+        ErrorBody, FileEntry, FilesAccept, FilesControl, FilesOffer, StreamHeader, clip, files,
+        is_valid_file_name, is_valid_folder, mirror, types,
     },
     read_frame, write_frame,
 };
@@ -37,6 +37,8 @@ const RETRY_FOR: Duration = Duration::from_secs(10 * 60);
 const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 /// Progress events, at most this often per transfer.
 const PROGRESS_EVERY: Duration = Duration::from_millis(200);
+/// Queue progress updates and `QueueChanged` events, at most this often per transfer.
+const QUEUE_PROGRESS_EVERY: Duration = Duration::from_millis(1000);
 /// Partly received files are kept this long for resuming.
 const KEEP_PARTIAL: Duration = Duration::from_secs(60 * 60);
 const CHUNK: usize = 256 * 1024;
@@ -66,6 +68,8 @@ pub enum TransferFailure {
     /// Stopped by this device shutting down; partly received files are kept,
     /// so it can still resume.
     Interrupted,
+    /// Received bytes did not match the sender's BLAKE3 digest.
+    Integrity,
     /// Anything else; for logs, never holds file names.
     Other(String),
 }
@@ -79,6 +83,9 @@ pub enum TransferState {
     /// after the connection dropped (receiving; the sender resumes it).
     Waiting,
     Running,
+    /// Manually paused by either side; partial files are kept on the receiver
+    /// until resumed or cancelled.
+    Paused,
     /// Received files are where `saved` says: one path per item, each
     /// file and each sent folder (as [`Transfer::names`] lists them).
     Done {
@@ -265,12 +272,20 @@ pub(crate) fn unique_path(dir: &Path, name: &str) -> PathBuf {
         Some(dot) if dot > 0 => (&name[..dot], &name[dot..]),
         _ => (name, ""),
     };
-    (2..).map(|n| dir.join(format!("{stem} ({n}){ext}"))).find(|p| !p.exists()).expect("some name is free")
+    (2..)
+        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .find(|p| !p.exists())
+        .unwrap_or_else(|| dir.join(format!("{stem} ({}){ext}", new_id())))
 }
 
-fn new_id() -> String {
+pub(crate) fn new_id() -> String {
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     (0..24).map(|_| ALPHABET[rand::random_range(0..ALPHABET.len())] as char).collect()
+}
+
+pub(crate) fn cleanup_staging_id(shared: &Shared, id: &str) {
+    let dir = shared.queue_staging_dir().join(id);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Publishes a transfer's progress, at most every [`PROGRESS_EVERY`].
@@ -278,11 +293,38 @@ struct Reporter {
     shared: Arc<Shared>,
     transfer: Transfer,
     last: Instant,
+    last_queue: Instant,
+    cumulative_sizes: Vec<u64>,
+    update_queue: bool,
 }
 
 impl Reporter {
     fn new(shared: Arc<Shared>, transfer: Transfer) -> Reporter {
-        Reporter { shared, transfer, last: Instant::now() - PROGRESS_EVERY }
+        let now = Instant::now();
+        Reporter {
+            shared,
+            transfer,
+            last: now,
+            last_queue: now,
+            cumulative_sizes: Vec::new(),
+            update_queue: false,
+        }
+    }
+
+    fn with_queue(shared: Arc<Shared>, transfer: Transfer, file_sizes: &[u64]) -> Reporter {
+        let cumulative_sizes = file_sizes
+            .iter()
+            .scan(0u64, |acc, &s| {
+                *acc = acc.saturating_add(s);
+                Some(*acc)
+            })
+            .collect();
+        let now = Instant::now();
+        Reporter { shared, transfer, last: now, last_queue: now, cumulative_sizes, update_queue: true }
+    }
+
+    fn files_completed(&self, done: u64) -> u32 {
+        u32::try_from(self.cumulative_sizes.iter().filter(|&&end| done >= end).count()).unwrap_or(u32::MAX)
     }
 
     fn set(&mut self, state: TransferState) {
@@ -292,9 +334,17 @@ impl Reporter {
     }
 
     fn progress(&mut self, done: u64) {
+        let advanced = done > self.transfer.done;
         self.transfer.done = done;
-        if self.last.elapsed() >= PROGRESS_EVERY {
-            self.set(self.transfer.state.clone());
+        if advanced && self.last.elapsed() >= PROGRESS_EVERY {
+            if self.update_queue && self.last_queue.elapsed() >= QUEUE_PROGRESS_EVERY {
+                let files_done = self.files_completed(done);
+                let _ = self.shared.store.update_queue_progress(&self.transfer.id, done, files_done);
+                self.shared.emit(NodeEvent::QueueChanged);
+                self.last_queue = Instant::now();
+            }
+            self.shared.emit(NodeEvent::Transfer(self.transfer.clone()));
+            self.last = Instant::now();
         }
     }
 }
@@ -358,7 +408,7 @@ fn transfer_timeline_detail(entries: &[FileEntry], recording: bool, markers: &[R
 /// Starts sending files; progress and the outcome arrive as
 /// [`NodeEvent::Transfer`]. Returns the transfer's ID.
 pub(crate) async fn send(shared: &Arc<Shared>, peer: DeviceId, files: Vec<OutgoingFile>) -> Result<String> {
-    send_inner(shared, peer, files, false, false, Vec::new(), false).await
+    enqueue_outgoing(shared, peer, files, false, Vec::new(), false).await
 }
 
 /// Starts sending a handed-off document that should open with the default app
@@ -371,7 +421,7 @@ pub(crate) async fn send_handoff(
     let open_on_arrival = files.len() == 1
         && files[0].folder.is_none()
         && crate::handoff::is_safe_handoff_document(&files[0].name);
-    send_inner(shared, peer, files, false, false, Vec::new(), open_on_arrival).await
+    enqueue_outgoing(shared, peer, files, false, Vec::new(), open_on_arrival).await
 }
 
 /// Starts sending photos requested via `photos.get`.
@@ -393,7 +443,7 @@ pub(crate) async fn send_recording(
 ) -> Result<String> {
     file.folder = None;
     let clean_markers = sanitize_markers(markers);
-    send_inner(shared, peer, vec![file], true, false, clean_markers, false).await
+    enqueue_outgoing(shared, peer, vec![file], true, clean_markers, false).await
 }
 
 fn sanitize_markers(markers: Vec<RecordingMarker>) -> Vec<RecordingMarker> {
@@ -434,6 +484,507 @@ pub(crate) fn outgoing_target_path(path: &Path, folder: Option<&str>) -> String 
     }
 }
 
+async fn enqueue_outgoing(
+    shared: &Arc<Shared>,
+    peer: DeviceId,
+    files: Vec<OutgoingFile>,
+    recording: bool,
+    markers: Vec<RecordingMarker>,
+    open_on_arrival: bool,
+) -> Result<String> {
+    if files.is_empty() || files.len() > files::MAX_FILES || (recording && files.len() != 1) {
+        return Err(Error::Protocol("send between 1 and 5000 files".into()));
+    }
+    if !shared.store.is_paired(&peer)? {
+        if !recording && shared.localsend.has_peer(&peer) {
+            return crate::localsend::send_files(shared, peer, files).await;
+        }
+        return Err(Error::NotPaired);
+    }
+    let toggle = if recording { RECORDINGS_TOGGLE } else { TOGGLE };
+    if !shared.toggle_on(&peer, toggle) {
+        return Err(Error::Denied);
+    }
+
+    let id = new_id();
+    let mut specs = Vec::with_capacity(files.len());
+    let mut entries = Vec::with_capacity(files.len());
+
+    for (idx, file) in files.into_iter().enumerate() {
+        if file.folder.as_deref().is_some_and(|f| !is_valid_folder(f)) {
+            cleanup_staging_id(shared, &id);
+            return Err(Error::Protocol("invalid folder name".into()));
+        }
+        let clean_name = safe_file_name(&file.name);
+        match file.source {
+            FileSource::Path(path) => {
+                let opened_file = match std::fs::File::open(&path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        cleanup_staging_id(shared, &id);
+                        return Err(e.into());
+                    }
+                };
+                let meta = match opened_file.metadata() {
+                    Ok(m) => m,
+                    Err(e) => {
+                        cleanup_staging_id(shared, &id);
+                        return Err(e.into());
+                    }
+                };
+                let size = meta.len();
+                let mtime_ms = crate::file_mtime_ms(&meta);
+                specs.push(crate::QueuedFileSpec {
+                    path,
+                    name: clean_name.clone(),
+                    folder: file.folder.clone(),
+                    size,
+                    mtime_ms,
+                    staged: false,
+                });
+                entries.push(FileEntry {
+                    name: clean_name,
+                    size,
+                    folder: file.folder,
+                    blake3: Some("0".repeat(64)),
+                });
+            }
+            FileSource::File(handle) => {
+                let stage_dir = shared.queue_staging_dir().join(&id);
+                let stage_path = stage_dir.join(format!("{idx}_{}", storable_name(&clean_name)));
+                let stage_path_clone = stage_path.clone();
+                let staged_res = tokio::task::spawn_blocking(move || -> std::io::Result<(u64, i64)> {
+                    use std::io::{Seek, SeekFrom, Write};
+                    std::fs::create_dir_all(&stage_dir)?;
+                    let mut src = handle;
+                    let _ = src.seek(SeekFrom::Start(0));
+                    let mut dst = std::fs::File::create(&stage_path_clone)?;
+                    std::io::copy(&mut src, &mut dst)?;
+                    dst.flush()?;
+                    let meta = dst.metadata()?;
+                    Ok((meta.len(), crate::file_mtime_ms(&meta)))
+                })
+                .await
+                .map_err(|e| Error::Internal(e.to_string()));
+                let (size, mtime_ms) = match staged_res {
+                    Ok(Ok(v)) => v,
+                    Ok(Err(e)) => {
+                        cleanup_staging_id(shared, &id);
+                        return Err(e.into());
+                    }
+                    Err(e) => {
+                        cleanup_staging_id(shared, &id);
+                        return Err(e);
+                    }
+                };
+                specs.push(crate::QueuedFileSpec {
+                    path: stage_path,
+                    name: clean_name.clone(),
+                    folder: file.folder.clone(),
+                    size,
+                    mtime_ms,
+                    staged: true,
+                });
+                entries.push(FileEntry {
+                    name: clean_name,
+                    size,
+                    folder: file.folder,
+                    blake3: Some("0".repeat(64)),
+                });
+            }
+        }
+    }
+
+    let open_on_arrival = open_on_arrival
+        && !recording
+        && entries.len() == 1
+        && entries[0].folder.is_none()
+        && crate::handoff::is_safe_handoff_document(&entries[0].name);
+
+    let offer = Envelope::new(
+        files::OFFER,
+        &FilesOffer {
+            id: id.clone(),
+            files: entries.clone(),
+            recording,
+            markers: markers.clone(),
+            open_on_arrival,
+        },
+    )
+    .map_err(|e| {
+        cleanup_staging_id(shared, &id);
+        Error::Protocol(e.to_string())
+    })?;
+    if offer.to_cbor().len() > nectarlink_protocol::MAX_FRAME_LEN {
+        cleanup_staging_id(shared, &id);
+        return Err(Error::TooLarge);
+    }
+
+    let payload = if recording {
+        let spec =
+            specs.into_iter().next().ok_or_else(|| Error::Protocol("missing recording file".into()))?;
+        crate::QueuePayload::Recording { file: spec, markers: markers.clone() }
+    } else if open_on_arrival {
+        let spec = specs.into_iter().next().ok_or_else(|| Error::Protocol("missing handoff file".into()))?;
+        crate::QueuePayload::HandoffDocument { file: spec, position_json: None }
+    } else if specs.iter().any(|s| s.folder.is_some()) {
+        let root_name = specs
+            .iter()
+            .find_map(|s| s.folder.as_deref().map(|f| f.split('/').next().unwrap_or(f).to_owned()))
+            .unwrap_or_else(|| "Folder".into());
+        crate::QueuePayload::Folder { root_name, files: specs }
+    } else {
+        crate::QueuePayload::Files { files: specs }
+    };
+
+    if let Err(e) = shared.store.enqueue_send_item(&id, &peer, &payload, None, crate::now_unix_ms()) {
+        cleanup_staging_id(shared, &id);
+        return Err(e);
+    }
+
+    let cancel = CancellationToken::new();
+    let _ = shared.register_transfer_control(&id, peer, Direction::Outgoing, cancel);
+
+    let transfer = Transfer {
+        id: id.clone(),
+        device: peer,
+        direction: Direction::Outgoing,
+        names: items(&entries),
+        files: entries.len(),
+        total: entries.iter().map(|e| e.size).fold(0, u64::saturating_add),
+        done: 0,
+        state: TransferState::Waiting,
+        recording,
+        markers,
+        open_on_arrival,
+    };
+    shared.emit(NodeEvent::QueueChanged);
+    shared.emit(NodeEvent::Transfer(transfer));
+    shared.queue_notify.notify_waiters();
+    Ok(id)
+}
+
+fn failure_reason_string(failure: &TransferFailure) -> String {
+    match failure {
+        TransferFailure::Denied => "Refused by receiving device".into(),
+        TransferFailure::Unreachable => "Device unreachable".into(),
+        TransferFailure::NoSpace => "Not enough storage space on receiving device".into(),
+        TransferFailure::Interrupted => "Interrupted by shutdown".into(),
+        TransferFailure::Integrity => "BLAKE3 integrity check failed".into(),
+        TransferFailure::Other(msg) => msg.clone(),
+    }
+}
+
+pub(crate) async fn deliver_queued_files(
+    shared: &Arc<Shared>,
+    item: &crate::QueueItem,
+    payload: &crate::QueuePayload,
+) {
+    let (specs, recording, markers, open_on_arrival) = match payload {
+        crate::QueuePayload::Files { files } => (files.clone(), false, Vec::new(), false),
+        crate::QueuePayload::Folder { files, .. } => (files.clone(), false, Vec::new(), false),
+        crate::QueuePayload::HandoffDocument { file, .. } => (vec![file.clone()], false, Vec::new(), true),
+        crate::QueuePayload::Recording { file, markers } => {
+            (vec![file.clone()], true, markers.clone(), false)
+        }
+        _ => return,
+    };
+
+    let peer = item.peer;
+    let prelim_entries: Vec<FileEntry> = specs
+        .iter()
+        .map(|s| FileEntry {
+            name: safe_file_name(&s.name),
+            size: s.size,
+            folder: s.folder.clone(),
+            blake3: None,
+        })
+        .collect();
+    let file_sizes: Vec<u64> = specs.iter().map(|s| s.size).collect();
+    let transfer = Transfer {
+        id: item.id.clone(),
+        device: peer,
+        direction: Direction::Outgoing,
+        names: items(&prelim_entries),
+        files: prelim_entries.len(),
+        total: file_sizes.iter().copied().fold(0, u64::saturating_add),
+        done: item.bytes_done,
+        state: TransferState::Waiting,
+        recording,
+        markers: markers.clone(),
+        open_on_arrival,
+    };
+
+    let (cancel, mut pause_rx) = shared.ensure_transfer_control(&item.id, peer, Direction::Outgoing);
+    if cancel.is_cancelled() {
+        let _ = shared.store.remove_queue_item(&item.id);
+        cleanup_staging_id(shared, &item.id);
+        shared.emit(NodeEvent::QueueChanged);
+        let mut t = transfer;
+        t.state = TransferState::Cancelled;
+        shared.emit(NodeEvent::Transfer(t));
+        shared.unregister_transfer(&item.id);
+        return;
+    }
+
+    for spec in &specs {
+        if let Err(reason) = spec.verify_integrity() {
+            let _ = shared.store.mark_queue_failed(&item.id, &reason);
+            shared.emit(NodeEvent::QueueChanged);
+            let mut t = transfer;
+            t.state = TransferState::Failed(TransferFailure::Other(reason));
+            shared.emit(NodeEvent::Transfer(t));
+            shared.unregister_transfer(&item.id);
+            return;
+        }
+    }
+
+    let toggle = if recording { RECORDINGS_TOGGLE } else { TOGGLE };
+    if !shared.toggle_on(&peer, toggle) {
+        let reason = "File sharing is disabled for this device".to_owned();
+        let _ = shared.store.mark_queue_failed(&item.id, &reason);
+        shared.emit(NodeEvent::QueueChanged);
+        let mut t = transfer;
+        t.state = TransferState::Failed(TransferFailure::Denied);
+        shared.emit(NodeEvent::Transfer(t));
+        shared.unregister_transfer(&item.id);
+        return;
+    }
+
+    let _ = shared.store.mark_queue_sending(&item.id);
+    shared.emit(NodeEvent::QueueChanged);
+
+    let mut opened = Vec::with_capacity(specs.len());
+    let mut source_targets: Vec<String> = Vec::new();
+    for spec in &specs {
+        let path = &spec.path;
+        if !spec.staged {
+            let target = outgoing_target_path(path, spec.folder.as_deref());
+            if !source_targets.contains(&target) {
+                source_targets.push(target);
+            }
+        }
+        let handle = match std::fs::File::open(path) {
+            Ok(h) => h,
+            Err(_) => {
+                let reason = format!("File was deleted before sending: {}", spec.name);
+                let _ = shared.store.mark_queue_failed(&item.id, &reason);
+                shared.emit(NodeEvent::QueueChanged);
+                let mut t = transfer;
+                t.state = TransferState::Failed(TransferFailure::Other(reason));
+                shared.emit(NodeEvent::Transfer(t));
+                shared.unregister_transfer(&item.id);
+                return;
+            }
+        };
+        let name_for_err = spec.name.clone();
+        let res = tokio::task::spawn_blocking(move || -> std::io::Result<(std::fs::File, u64, String)> {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut f = handle;
+            let size = f.metadata()?.len();
+            f.seek(SeekFrom::Start(0))?;
+            let mut hasher = blake3::Hasher::new();
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                let n = f.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]);
+            }
+            f.seek(SeekFrom::Start(0))?;
+            Ok((f, size, hasher.finalize().to_hex().to_string()))
+        })
+        .await;
+        let (handle, size, digest) = match res {
+            Ok(Ok(v)) => v,
+            _ => {
+                let reason = format!("Cannot read source file: {name_for_err}");
+                let _ = shared.store.mark_queue_failed(&item.id, &reason);
+                shared.emit(NodeEvent::QueueChanged);
+                let mut t = transfer;
+                t.state = TransferState::Failed(TransferFailure::Other(reason));
+                shared.emit(NodeEvent::Transfer(t));
+                shared.unregister_transfer(&item.id);
+                return;
+            }
+        };
+        let entry = FileEntry {
+            name: safe_file_name(&spec.name),
+            size,
+            folder: spec.folder.clone(),
+            blake3: Some(digest),
+        };
+        opened.push((entry, tokio::fs::File::from_std(handle)));
+    }
+
+    let entries: Vec<FileEntry> = opened.iter().map(|(e, _)| e.clone()).collect();
+    let tl_detail = if open_on_arrival {
+        "Handoff document".into()
+    } else {
+        transfer_timeline_detail(&entries, recording, &markers)
+    };
+    let tl_target = source_targets.join("\n");
+    let tl_kind = if recording { crate::TimelineKind::Recording } else { crate::TimelineKind::File };
+
+    let mut reporter = Reporter::with_queue(shared.clone(), transfer, &file_sizes);
+    let shutdown = shared.cancel.clone();
+    let mut attempts = item.attempts;
+    const RETRY_BACKOFF_MS: [i64; 5] = [1_000, 2_000, 4_000, 8_000, 15_000];
+
+    let state = loop {
+        if cancel.is_cancelled() {
+            break TransferState::Cancelled;
+        }
+        if shutdown.is_cancelled() {
+            break TransferState::Failed(TransferFailure::Interrupted);
+        }
+        let Ok(Some((current, _, _, _))) = shared.store.get_queue_item(&item.id) else {
+            break TransferState::Cancelled;
+        };
+        if let crate::QueueStatus::Failed { error } | crate::QueueStatus::Expired { error } = current.status {
+            break TransferState::Failed(TransferFailure::Other(error));
+        }
+
+        while *pause_rx.borrow_and_update() {
+            if reporter.transfer.state != TransferState::Paused {
+                reporter.set(TransferState::Paused);
+            }
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = shutdown.cancelled() => break,
+                res = pause_rx.changed() => {
+                    if res.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+        if cancel.is_cancelled() {
+            break TransferState::Cancelled;
+        }
+        if shutdown.is_cancelled() {
+            break TransferState::Failed(TransferFailure::Interrupted);
+        }
+
+        let Some(session) = shared.session(&peer) else {
+            let _ = shared.store.mark_queue_retry_or_wait(&item.id, 0, 0, None);
+            let _ = shared.store.clear_send_queue_retry_delays(&peer);
+            shared.emit(NodeEvent::QueueChanged);
+            if reporter.transfer.state != TransferState::Waiting {
+                reporter.set(TransferState::Waiting);
+            }
+            shared.mark_transfer_idle(&item.id);
+            return;
+        };
+
+        if current.status != crate::QueueStatus::Sending {
+            let _ = shared.store.mark_queue_sending(&item.id);
+            shared.emit(NodeEvent::QueueChanged);
+        }
+
+        match attempt(&mut reporter, &session, &mut opened, &cancel, &mut pause_rx).await {
+            Attempt::Done => break TransferState::Done { saved: Vec::new() },
+            Attempt::Cancelled => break TransferState::Cancelled,
+            Attempt::Paused => {
+                shared.set_transfer_paused(&item.id, true);
+                if reporter.transfer.state != TransferState::Paused {
+                    reporter.set(TransferState::Paused);
+                }
+            }
+            Attempt::Fatal(failure) => break TransferState::Failed(failure),
+            Attempt::Retry => {
+                if session.is_alive() {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                let peer_disconnected = !session.is_alive() || shared.session(&peer).is_none();
+                if peer_disconnected {
+                    let _ = shared.store.mark_queue_retry_or_wait(&item.id, 0, 0, None);
+                    let _ = shared.store.clear_send_queue_retry_delays(&peer);
+                    shared.emit(NodeEvent::QueueChanged);
+                    if reporter.transfer.state != TransferState::Waiting {
+                        reporter.set(TransferState::Waiting);
+                    }
+                    shared.mark_transfer_idle(&item.id);
+                    return;
+                } else {
+                    attempts += 1;
+                    if attempts >= 5 {
+                        break TransferState::Failed(TransferFailure::Other(
+                            "Transfer failed after 5 attempts".into(),
+                        ));
+                    }
+                    let delay_ms = RETRY_BACKOFF_MS[(attempts as usize - 1).min(RETRY_BACKOFF_MS.len() - 1)];
+                    let next_retry = crate::now_unix_ms() + delay_ms;
+                    let _ = shared.store.mark_queue_retry_or_wait(
+                        &item.id,
+                        attempts,
+                        next_retry,
+                        Some("Connection interrupted; retrying"),
+                    );
+                    shared.emit(NodeEvent::QueueChanged);
+                    reporter.set(TransferState::Waiting);
+                    let session_cancel = session.cancel.clone();
+                    tokio::select! {
+                        _ = cancel.cancelled() => break TransferState::Cancelled,
+                        _ = shutdown.cancelled() => break TransferState::Failed(TransferFailure::Interrupted),
+                        _ = session_cancel.cancelled() => {}
+                        Ok(()) = pause_rx.changed() => {}
+                        _ = tokio::time::sleep(Duration::from_millis(delay_ms as u64)) => {}
+                    }
+                }
+            }
+        }
+    };
+
+    match &state {
+        TransferState::Done { .. } => {
+            let _ = shared.record_timeline(crate::timeline::NewTimelineEntry {
+                kind: tl_kind,
+                device_id: peer,
+                device_name: shared.peer_name(&peer),
+                incoming: false,
+                timestamp: crate::now_unix(),
+                title: transfer_timeline_title(&reporter.transfer.names),
+                detail: tl_detail,
+                target: tl_target,
+                size_bytes: reporter.transfer.total,
+                duration_secs: 0,
+                ref_id: Some(item.id.clone()),
+            });
+            let _ = shared.store.complete_queue_item(&item.id);
+            cleanup_staging_id(shared, &item.id);
+            shared.emit(NodeEvent::QueueChanged);
+            reporter.set(state);
+        }
+        TransferState::Cancelled => {
+            let _ = shared.store.remove_queue_item(&item.id);
+            cleanup_staging_id(shared, &item.id);
+            if let Some(session) = shared.session(&peer)
+                && let Ok(env) = Envelope::new(types::FILES_CANCEL, &FilesControl { id: item.id.clone() })
+            {
+                let _ = session.send(env).await;
+            }
+            shared.emit(NodeEvent::QueueChanged);
+            reporter.set(state);
+        }
+        TransferState::Failed(TransferFailure::Interrupted) => {
+            // Keep in SQLite so next Node::start recovers it.
+            reporter.set(state);
+        }
+        TransferState::Failed(failure) => {
+            let reason = failure_reason_string(failure);
+            let _ = shared.store.mark_queue_failed(&item.id, &reason);
+            shared.emit(NodeEvent::QueueChanged);
+            reporter.set(state);
+        }
+        _ => {
+            reporter.set(state);
+        }
+    }
+    shared.unregister_transfer(&item.id);
+}
+
 async fn send_inner(
     shared: &Arc<Shared>,
     peer: DeviceId,
@@ -472,11 +1023,28 @@ async fn send_inner(
             }
             FileSource::File(handle) => handle,
         };
-        let entry = FileEntry {
-            name: safe_file_name(&file.name),
-            size: handle.metadata()?.len(),
-            folder: file.folder,
-        };
+        let (handle, size, digest) =
+            tokio::task::spawn_blocking(move || -> std::io::Result<(std::fs::File, u64, String)> {
+                use std::io::{Read, Seek, SeekFrom};
+                let mut f = handle;
+                let size = f.metadata()?.len();
+                f.seek(SeekFrom::Start(0))?;
+                let mut hasher = blake3::Hasher::new();
+                let mut buf = vec![0u8; 64 * 1024];
+                loop {
+                    let n = f.read(&mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&buf[..n]);
+                }
+                f.seek(SeekFrom::Start(0))?;
+                Ok((f, size, hasher.finalize().to_hex().to_string()))
+            })
+            .await
+            .map_err(|e| Error::Internal(e.to_string()))??;
+        let entry =
+            FileEntry { name: safe_file_name(&file.name), size, folder: file.folder, blake3: Some(digest) };
         opened.push((entry, tokio::fs::File::from_std(handle)));
     }
     let entries: Vec<FileEntry> = opened.iter().map(|(entry, _)| entry.clone()).collect();
@@ -531,11 +1099,11 @@ async fn send_inner(
     // The user's cancel only: shutting down interrupts a transfer (so it
     // can resume later), it doesn't cancel it.
     let cancel = CancellationToken::new();
-    shared.register_transfer(&id, cancel.clone());
+    let mut pause_rx = shared.register_transfer_control(&id, peer, Direction::Outgoing, cancel.clone());
     let mut reporter = Reporter::new(shared.clone(), transfer);
     reporter.set(TransferState::Waiting);
     tokio::spawn(async move {
-        let state = send_until_done(&mut reporter, opened, &cancel).await;
+        let state = send_until_done(&mut reporter, opened, &cancel, &mut pause_rx).await;
         if matches!(state, TransferState::Done { .. }) {
             let _ = reporter.shared.record_timeline(crate::timeline::NewTimelineEntry {
                 kind: tl_kind,
@@ -560,6 +1128,7 @@ async fn send_inner(
 enum Attempt {
     Done,
     Cancelled,
+    Paused,
     Fatal(TransferFailure),
     /// The connection failed; try again once it's back.
     Retry,
@@ -569,6 +1138,7 @@ async fn send_until_done(
     reporter: &mut Reporter,
     mut files: Vec<(FileEntry, tokio::fs::File)>,
     cancel: &CancellationToken,
+    pause_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> TransferState {
     let peer = reporter.transfer.device;
     let shutdown = reporter.shared.cancel.clone();
@@ -580,6 +1150,21 @@ async fn send_until_done(
         if shutdown.is_cancelled() {
             return TransferState::Failed(TransferFailure::Interrupted);
         }
+        while *pause_rx.borrow_and_update() {
+            if reporter.transfer.state != TransferState::Paused {
+                reporter.set(TransferState::Paused);
+            }
+            tokio::select! {
+                _ = cancel.cancelled() => return TransferState::Cancelled,
+                _ = shutdown.cancelled() => return TransferState::Failed(TransferFailure::Interrupted),
+                res = pause_rx.changed() => {
+                    if res.is_err() {
+                        return TransferState::Cancelled;
+                    }
+                }
+            }
+            give_up_at = Instant::now() + RETRY_FOR;
+        }
         let Some(session) = reporter.shared.session(&peer) else {
             if Instant::now() >= give_up_at {
                 return TransferState::Failed(TransferFailure::Unreachable);
@@ -590,12 +1175,20 @@ async fn send_until_done(
             tokio::select! {
                 _ = cancel.cancelled() => return TransferState::Cancelled,
                 _ = shutdown.cancelled() => return TransferState::Failed(TransferFailure::Interrupted),
+                Ok(()) = pause_rx.changed() => continue,
                 _ = tokio::time::sleep(Duration::from_secs(1)) => continue,
             }
         };
-        match attempt(reporter, &session, &mut files, cancel).await {
+        match attempt(reporter, &session, &mut files, cancel, pause_rx).await {
             Attempt::Done => return TransferState::Done { saved: Vec::new() },
             Attempt::Cancelled => return TransferState::Cancelled,
+            Attempt::Paused => {
+                give_up_at = Instant::now() + RETRY_FOR;
+                reporter.shared.set_transfer_paused(&reporter.transfer.id, true);
+                if reporter.transfer.state != TransferState::Paused {
+                    reporter.set(TransferState::Paused);
+                }
+            }
             Attempt::Fatal(failure) => return TransferState::Failed(failure),
             Attempt::Retry => {
                 // Made it this far: give the device a fresh window to come back.
@@ -604,9 +1197,19 @@ async fn send_until_done(
                 reporter.set(TransferState::Waiting);
                 tokio::select! {
                     _ = cancel.cancelled() => return TransferState::Cancelled,
+                    _ = shutdown.cancelled() => return TransferState::Failed(TransferFailure::Interrupted),
+                    Ok(()) = pause_rx.changed() => {}
                     _ = tokio::time::sleep(Duration::from_secs(1)) => {}
                 }
             }
+        }
+    }
+}
+
+async fn wait_paused(rx: &mut tokio::sync::watch::Receiver<bool>) {
+    while !*rx.borrow_and_update() {
+        if rx.changed().await.is_err() {
+            std::future::pending::<()>().await;
         }
     }
 }
@@ -616,6 +1219,7 @@ async fn attempt(
     session: &Session,
     files: &mut [(FileEntry, tokio::fs::File)],
     cancel: &CancellationToken,
+    pause_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Attempt {
     let Ok((mut send, mut recv)) = session.conn.open_bi().await else { return Attempt::Retry };
     let header = StreamHeader { svc: files::SERVICE.into(), op: files::OP_SEND.into(), v: files::VERSION };
@@ -636,7 +1240,7 @@ async fn attempt(
     {
         return Attempt::Retry;
     }
-    let have = match read_reply(&mut recv, cancel).await {
+    let have = match read_reply(&mut recv, cancel, pause_rx).await {
         Reply::Envelope(env) if env.t == files::ACCEPT => match env.body::<FilesAccept>() {
             Ok(accept) if accept.have.len() == files.len() => accept.have,
             _ => return Attempt::Fatal(TransferFailure::Other("bad answer to the offer".into())),
@@ -646,12 +1250,22 @@ async fn attempt(
             let _ = send.reset(VarInt::from_u32(files::CANCELLED));
             return Attempt::Cancelled;
         }
+        Reply::Paused => {
+            let _ = send.reset(VarInt::from_u32(files::PAUSED));
+            let _ = recv.stop(VarInt::from_u32(files::PAUSED));
+            return Attempt::Paused;
+        }
         Reply::Failed => return Attempt::Retry,
     };
 
-    reporter.set(TransferState::Running);
     let mut done: u64 = files.iter().zip(&have).map(|((entry, _), have)| (*have).min(entry.size)).sum();
-    reporter.progress(done);
+    reporter.transfer.done = done;
+    if reporter.update_queue && done > 0 {
+        let files_done = reporter.files_completed(done);
+        let _ = reporter.shared.store.update_queue_progress(&reporter.transfer.id, done, files_done);
+        reporter.shared.emit(NodeEvent::QueueChanged);
+    }
+    reporter.set(TransferState::Running);
     // What's left of each file, read on a thread of its own that keeps a
     // few blocks ready; it stops when this attempt ends and drops them.
     let mut plan = Vec::with_capacity(files.len());
@@ -665,10 +1279,20 @@ async fn attempt(
     let (blocks, mut ready) = tokio::sync::mpsc::channel(READ_AHEAD);
     tokio::task::spawn_blocking(move || read_ahead(plan, &blocks));
     loop {
+        if *pause_rx.borrow_and_update() {
+            let _ = send.reset(VarInt::from_u32(files::PAUSED));
+            let _ = recv.stop(VarInt::from_u32(files::PAUSED));
+            return Attempt::Paused;
+        }
         let block = tokio::select! {
             _ = cancel.cancelled() => {
                 let _ = send.reset(VarInt::from_u32(files::CANCELLED));
                 return Attempt::Cancelled;
+            }
+            _ = wait_paused(pause_rx) => {
+                let _ = send.reset(VarInt::from_u32(files::PAUSED));
+                let _ = recv.stop(VarInt::from_u32(files::PAUSED));
+                return Attempt::Paused;
             }
             block = ready.recv() => block,
         };
@@ -683,6 +1307,11 @@ async fn attempt(
                 let _ = send.reset(VarInt::from_u32(files::CANCELLED));
                 return Attempt::Cancelled;
             }
+            _ = wait_paused(pause_rx) => {
+                let _ = send.reset(VarInt::from_u32(files::PAUSED));
+                let _ = recv.stop(VarInt::from_u32(files::PAUSED));
+                return Attempt::Paused;
+            }
             written = send.write_chunk(block) => written,
         };
         if let Err(e) = written {
@@ -694,13 +1323,23 @@ async fn attempt(
         done += n;
         reporter.progress(done);
     }
+    if *pause_rx.borrow_and_update() {
+        let _ = send.reset(VarInt::from_u32(files::PAUSED));
+        let _ = recv.stop(VarInt::from_u32(files::PAUSED));
+        return Attempt::Paused;
+    }
     if send.finish().is_err() {
         return Attempt::Retry;
     }
-    match read_reply(&mut recv, cancel).await {
+    match read_reply(&mut recv, cancel, pause_rx).await {
         Reply::Envelope(env) if env.t == files::DONE => Attempt::Done,
         Reply::Envelope(env) => Attempt::Fatal(refusal(&env)),
         Reply::Cancelled => Attempt::Cancelled,
+        Reply::Paused => {
+            let _ = send.reset(VarInt::from_u32(files::PAUSED));
+            let _ = recv.stop(VarInt::from_u32(files::PAUSED));
+            Attempt::Paused
+        }
         Reply::Failed => Attempt::Retry,
     }
 }
@@ -709,6 +1348,7 @@ async fn attempt(
 fn stopped(code: VarInt) -> Attempt {
     match u32::try_from(code.into_inner()).unwrap_or(u32::MAX) {
         files::CANCELLED => Attempt::Cancelled,
+        files::PAUSED => Attempt::Paused,
         c if c == ErrorCode::Busy.close_code() => Attempt::Fatal(TransferFailure::NoSpace),
         c if c == ErrorCode::Denied.close_code() => Attempt::Fatal(TransferFailure::Denied),
         _ => Attempt::Retry,
@@ -716,10 +1356,15 @@ fn stopped(code: VarInt) -> Attempt {
 }
 
 fn refusal(env: &Envelope) -> TransferFailure {
-    match env.body::<ErrorBody>().map(|e| e.code) {
-        Ok(ErrorCode::Denied) => TransferFailure::Denied,
-        Ok(ErrorCode::Busy) => TransferFailure::NoSpace,
-        Ok(code) => TransferFailure::Other(format!("refused: {code}")),
+    match env.body::<ErrorBody>() {
+        Ok(ErrorBody { code: ErrorCode::Denied, .. }) => TransferFailure::Denied,
+        Ok(ErrorBody { code: ErrorCode::Busy, .. }) => TransferFailure::NoSpace,
+        Ok(ErrorBody { code: ErrorCode::BadMessage, msg: Some(m) })
+            if m.to_ascii_lowercase().contains("integrity") =>
+        {
+            TransferFailure::Integrity
+        }
+        Ok(ErrorBody { code, .. }) => TransferFailure::Other(format!("refused: {code}")),
         Err(_) => TransferFailure::Other(format!("unexpected {}", env.t)),
     }
 }
@@ -727,17 +1372,27 @@ fn refusal(env: &Envelope) -> TransferFailure {
 enum Reply {
     Envelope(Envelope),
     Cancelled,
+    Paused,
     Failed,
 }
 
-async fn read_reply(recv: &mut RecvStream, cancel: &CancellationToken) -> Reply {
+async fn read_reply(
+    recv: &mut RecvStream,
+    cancel: &CancellationToken,
+    pause_rx: &mut tokio::sync::watch::Receiver<bool>,
+) -> Reply {
+    if *pause_rx.borrow_and_update() {
+        return Reply::Paused;
+    }
     let frame = tokio::select! {
         _ = cancel.cancelled() => return Reply::Cancelled,
+        _ = wait_paused(pause_rx) => return Reply::Paused,
         frame = tokio::time::timeout(REPLY_TIMEOUT, read_frame(recv)) => frame,
     };
     match frame {
         Ok(Ok(Some(bytes))) => Envelope::from_cbor(&bytes).map_or(Reply::Failed, Reply::Envelope),
         Ok(Err(nectarlink_protocol::ProtocolError::Io(e))) if is_cancel(&e) => Reply::Cancelled,
+        Ok(Err(nectarlink_protocol::ProtocolError::Io(e))) if is_pause(&e) => Reply::Paused,
         _ => Reply::Failed,
     }
 }
@@ -747,6 +1402,36 @@ fn is_cancel(e: &std::io::Error) -> bool {
     e.get_ref().and_then(|inner| inner.downcast_ref::<ReadError>()).is_some_and(
         |r| matches!(r, ReadError::Reset(code) if code.into_inner() == u64::from(files::CANCELLED)),
     )
+}
+
+/// Whether an I/O error from a stream is the other side pausing.
+fn is_pause(e: &std::io::Error) -> bool {
+    e.get_ref()
+        .and_then(|inner| inner.downcast_ref::<ReadError>())
+        .is_some_and(|r| matches!(r, ReadError::Reset(code) if code.into_inner() == u64::from(files::PAUSED)))
+}
+
+/// Handles `files.resume` and `files.cancel` control messages.
+pub(crate) async fn handle_control(shared: &Arc<Shared>, peer: DeviceId, env: &Envelope) -> Result<bool> {
+    match env.t.as_str() {
+        types::FILES_RESUME => {
+            let ctrl: FilesControl = env.body()?;
+            if !ctrl.is_valid() {
+                return Err(Error::Protocol("invalid files.resume".into()));
+            }
+            shared.resume_transfer_from_peer(&ctrl.id, peer);
+            Ok(true)
+        }
+        types::FILES_CANCEL => {
+            let ctrl: FilesControl = env.body()?;
+            if !ctrl.is_valid() {
+                return Err(Error::Protocol("invalid files.cancel".into()));
+            }
+            shared.cancel_transfer_from_peer(&ctrl.id, peer).await;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }
 
 // ---- Receiving ----
@@ -825,6 +1510,29 @@ async fn refuse(send: &mut SendStream, code: ErrorCode, msg: &str) {
     let _ = send.finish();
 }
 
+fn hash_file_prefix(path: &Path, mut left: u64) -> std::io::Result<blake3::Hasher> {
+    use std::io::Read;
+    let mut hasher = blake3::Hasher::new();
+    if left == 0 {
+        return Ok(hasher);
+    }
+    let mut f = std::fs::File::open(path)?;
+    let mut buf = vec![0u8; 64 * 1024];
+    while left > 0 {
+        let to_read = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+        let n = f.read(&mut buf[..to_read])?;
+        if n == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "part file shorter than expected",
+            ));
+        }
+        hasher.update(&buf[..n]);
+        left -= n as u64;
+    }
+    Ok(hasher)
+}
+
 async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendStream, mut recv: RecvStream) {
     let offer = match tokio::time::timeout(REPLY_TIMEOUT, read_frame(&mut recv)).await {
         Ok(Ok(Some(bytes))) => {
@@ -853,8 +1561,25 @@ async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendStream, mut 
     let part = |i: usize| dir.join(format!("{i}.part"));
     let mut have = Vec::with_capacity(offer.files.len());
     for (i, file) in offer.files.iter().enumerate() {
-        let len = tokio::fs::metadata(part(i)).await.map(|m| m.len()).unwrap_or(0);
-        have.push(len.min(file.size));
+        let p = part(i);
+        let len = tokio::fs::metadata(&p).await.map(|m| m.len()).unwrap_or(0);
+        let valid_len = if len == file.size && file.size > 0 {
+            if let Some(expected) = file.blake3.clone() {
+                let matches = tokio::task::spawn_blocking(move || {
+                    hash_file_prefix(&p, len).map(|h| h.finalize().to_hex().to_string())
+                })
+                .await
+                .ok()
+                .and_then(std::result::Result::ok)
+                .is_some_and(|actual| actual.eq_ignore_ascii_case(&expected));
+                if matches { file.size } else { 0 }
+            } else {
+                file.size
+            }
+        } else {
+            len.min(file.size)
+        };
+        have.push(valid_len);
     }
     let Ok(accept) = Envelope::new(files::ACCEPT, &FilesAccept { have: have.clone() }) else { return };
     if write_frame(&mut send, &accept.to_cbor()).await.is_err() {
@@ -862,7 +1587,7 @@ async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendStream, mut 
     }
 
     let cancel = CancellationToken::new();
-    shared.register_transfer(&offer.id, cancel.clone());
+    let mut pause_rx = shared.register_transfer_control(&offer.id, peer, Direction::Incoming, cancel.clone());
     let open_on_arrival = offer.open_on_arrival
         && !offer.recording
         && offer.files.len() == 1
@@ -883,8 +1608,19 @@ async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendStream, mut 
     };
     let mut reporter = Reporter::new(shared.clone(), transfer);
     reporter.set(TransferState::Running);
-    let state = match receive_bytes(&mut reporter, &offer, &have, &part, &mut send, &mut recv, &cancel).await
+    let state = match receive_bytes(
+        &mut reporter,
+        &offer,
+        &have,
+        &part,
+        &mut send,
+        &mut recv,
+        &cancel,
+        &mut pause_rx,
+    )
+    .await
     {
+        Ok(()) if *pause_rx.borrow() => TransferState::Paused,
         Ok(()) => match store(&shared, &offer, &part, &dir).await {
             Ok(saved) => {
                 let _ = write_frame(&mut send, &Envelope::empty(files::DONE).to_cbor()).await;
@@ -941,6 +1677,12 @@ async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendStream, mut 
             state
         }
     };
+    if state == TransferState::Paused {
+        reporter.transfer.state = TransferState::Paused;
+        shared.mark_transfer_paused(&offer.id, reporter.transfer.clone());
+        reporter.set(TransferState::Paused);
+        return;
+    }
     reporter.set(state);
     shared.unregister_transfer(&offer.id);
 }
@@ -978,6 +1720,7 @@ fn read_ahead(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn receive_bytes(
     reporter: &mut Reporter,
     offer: &FilesOffer,
@@ -986,22 +1729,45 @@ async fn receive_bytes(
     send: &mut SendStream,
     recv: &mut RecvStream,
     cancel: &CancellationToken,
+    pause_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> std::result::Result<(), TransferState> {
     let mut done: u64 = have.iter().sum();
     for (i, (file, have)) in offer.files.iter().zip(have).enumerate() {
+        let part_path = part(i);
         let mut out =
-            tokio::fs::OpenOptions::new().create(true).append(true).open(part(i)).await.map_err(|e| {
+            tokio::fs::OpenOptions::new().create(true).append(true).open(&part_path).await.map_err(|e| {
                 TransferState::Failed(TransferFailure::Other(format!("can't write: {}", e.kind())))
             })?;
-        // A part file longer than the file (it changed) starts over.
+        // A part file longer than `have` (it changed or failed a prior check) starts from `have`.
         if *have < out.metadata().await.map(|m| m.len()).unwrap_or(0) {
             out.set_len(*have).await.ok();
         }
+        let mut hasher = if file.blake3.is_some() {
+            let have_bytes = *have;
+            let p = part_path.clone();
+            let seeded = tokio::task::spawn_blocking(move || hash_file_prefix(&p, have_bytes))
+                .await
+                .map_err(|e| TransferState::Failed(TransferFailure::Other(e.to_string())))?
+                .map_err(|e| {
+                    TransferState::Failed(TransferFailure::Other(format!("can't read part: {}", e.kind())))
+                })?;
+            Some(seeded)
+        } else {
+            None
+        };
         // Gathered in memory and written in large pieces. Progress counts
         // what's on disk, which is also where a resumed transfer continues.
         let mut pending: Vec<u8> = Vec::with_capacity(WRITE_BUFFER);
         let mut left = file.size - have;
         while left > 0 {
+            if *pause_rx.borrow_and_update() {
+                if write_out(&mut out, &mut pending, recv).await.is_ok() {
+                    reporter.progress(done);
+                }
+                let _ = recv.stop(VarInt::from_u32(files::PAUSED));
+                let _ = send.reset(VarInt::from_u32(files::PAUSED));
+                return Err(TransferState::Paused);
+            }
             let max = CHUNK.min(usize::try_from(left).unwrap_or(usize::MAX));
             let chunk = tokio::select! {
                 _ = cancel.cancelled() => {
@@ -1009,12 +1775,26 @@ async fn receive_bytes(
                     let _ = send.reset(VarInt::from_u32(files::CANCELLED));
                     return Err(TransferState::Cancelled);
                 }
+                _ = wait_paused(pause_rx) => {
+                    if write_out(&mut out, &mut pending, recv).await.is_ok() {
+                        reporter.progress(done);
+                    }
+                    let _ = recv.stop(VarInt::from_u32(files::PAUSED));
+                    let _ = send.reset(VarInt::from_u32(files::PAUSED));
+                    return Err(TransferState::Paused);
+                }
                 chunk = recv.read_chunk(max) => chunk,
             };
             let bytes = match chunk {
                 Ok(Some(bytes)) => bytes,
                 Err(ReadError::Reset(code)) if code.into_inner() == u64::from(files::CANCELLED) => {
                     return Err(TransferState::Cancelled);
+                }
+                Err(ReadError::Reset(code)) if code.into_inner() == u64::from(files::PAUSED) => {
+                    if write_out(&mut out, &mut pending, recv).await.is_ok() {
+                        reporter.progress(done);
+                    }
+                    return Err(TransferState::Paused);
                 }
                 // The stream or connection ended early: keep what arrived;
                 // the sender resumes from there when it's back.
@@ -1025,12 +1805,22 @@ async fn receive_bytes(
                     return Err(TransferState::Waiting);
                 }
             };
+            if let Some(ref mut h) = hasher {
+                h.update(&bytes);
+            }
             left -= bytes.len() as u64;
             done += bytes.len() as u64;
             pending.extend_from_slice(&bytes);
             if pending.len() >= WRITE_BUFFER || left == 0 {
                 write_out(&mut out, &mut pending, recv).await?;
                 reporter.progress(done);
+            }
+        }
+        if let (Some(expected), Some(h)) = (file.blake3.as_deref(), hasher.take()) {
+            let actual = h.finalize().to_hex();
+            if !actual.as_str().eq_ignore_ascii_case(expected) {
+                refuse(send, ErrorCode::BadMessage, "blake3 integrity check failed").await;
+                return Err(TransferState::Failed(TransferFailure::Integrity));
             }
         }
     }
@@ -1193,6 +1983,7 @@ mod tests {
             name: name.into(),
             size: 1,
             folder: folder.map(Into::into),
+            blake3: None,
         };
         let entries = [
             entry("a.txt", None),

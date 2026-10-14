@@ -28,6 +28,7 @@ struct ActiveRequest {
     mode: CameraCaptureMode,
     target_hwnd: Option<isize>,
     target_title: String,
+    queued_offline: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -116,15 +117,16 @@ fn notify_continuity() {
 /// Returns a snapshot of the current Continuity Camera UI state.
 pub fn view() -> ContinuityView {
     let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    let (busy, mode, status) = if let Some(active) = &guard.active {
-        let mode_str = active.mode.as_str().to_owned();
-        let status_str = match active.mode {
-            CameraCaptureMode::Photo => format!("Take a photo on {}…", active.device_name),
-            CameraCaptureMode::Scan => format!("Scan a document on {}…", active.device_name),
-        };
-        (true, mode_str, status_str)
-    } else {
-        (false, String::new(), String::new())
+    let (busy, mode, status) = match &guard.active {
+        Some(active) if !active.queued_offline => {
+            let mode_str = active.mode.as_str().to_owned();
+            let status_str = match active.mode {
+                CameraCaptureMode::Photo => format!("Take a photo on {}…", active.device_name),
+                CameraCaptureMode::Scan => format!("Scan a document on {}…", active.device_name),
+            };
+            (true, mode_str, status_str)
+        }
+        _ => (false, String::new(), String::new()),
     };
     let (paste_prompt_visible, paste_prompt_title, paste_prompt_body, paste_target_name) =
         if let Some(prompt) = &guard.prompt {
@@ -150,7 +152,8 @@ pub fn start(mode_raw: &str) {
 }
 
 /// Starts a Continuity Camera capture preferring the paired device at
-/// `preferred_index` if it is online, or the first online phone otherwise.
+/// `preferred_index` if it is online, or the first online phone, or the
+/// preferred offline paired phone (queueing a 2-minute expiring request).
 pub fn start_for_index(preferred_index: usize, mode_raw: &str) {
     let mode = CameraCaptureMode::parse(mode_raw).unwrap_or(CameraCaptureMode::Photo);
     let target = crate::win::tray::snapshot_target_window();
@@ -160,10 +163,12 @@ pub fn start_for_index(preferred_index: usize, mode_raw: &str) {
             .get(preferred_index)
             .filter(|d| matches!(d.link, LinkState::Online { .. }))
             .or_else(|| s.devices.iter().find(|d| matches!(d.link, LinkState::Online { .. })))
-            .map(|d| (d.id, d.info.name.clone()))
+            .or_else(|| s.devices.get(preferred_index))
+            .or_else(|| s.devices.first())
+            .map(|d| (d.id, d.info.name.clone(), matches!(d.link, LinkState::Online { .. })))
     });
-    let Some((device_id, device_name)) = chosen else {
-        crate::bridge::app::show_message("Connect your phone to take a photo or scan a document.");
+    let Some((device_id, device_name, online)) = chosen else {
+        crate::bridge::app::show_message("Pair your phone first to take a photo or scan a document.");
         return;
     };
 
@@ -183,40 +188,50 @@ pub fn start_for_index(preferred_index: usize, mode_raw: &str) {
             mode,
             target_hwnd,
             target_title,
+            queued_offline: !online,
         })
     };
     notify_continuity();
 
-    let open_msg = match mode {
-        CameraCaptureMode::Photo => format!("Opening camera on {device_name}…"),
-        CameraCaptureMode::Scan => format!("Opening document scanner on {device_name}…"),
-    };
-    crate::bridge::app::show_message(open_msg);
+    if online {
+        let open_msg = match mode {
+            CameraCaptureMode::Photo => format!("Opening camera on {device_name}…"),
+            CameraCaptureMode::Scan => format!("Opening document scanner on {device_name}…"),
+        };
+        crate::bridge::app::show_message(open_msg);
+    }
 
     let Some(node) = core_host::node() else { return };
     core_host::spawn(async move {
         if let Some(prev) = previous {
             let _ = node.cancel_camera_capture(prev.device, prev.request_id, Some("replaced".into())).await;
         }
-        if let Err(err) = node.request_camera_capture(device_id, request_id.clone(), mode).await {
-            let should_report = {
-                let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
-                if guard.active.as_ref().is_some_and(|a| a.request_id == request_id) {
-                    guard.active = None;
-                    true
-                } else {
-                    false
+        match node.request_camera_capture(device_id, request_id.clone(), mode).await {
+            Ok(()) => {
+                if !online {
+                    let _ = crate::bridge::app::show_offline_queued_toast(device_id, None);
                 }
-            };
-            if should_report {
-                notify_continuity();
-                let msg = match err {
-                    Error::Denied => format!("Allow Photos access for {device_name} in Settings first."),
-                    Error::Unsupported => format!("{device_name} doesn’t support Continuity Camera yet."),
-                    Error::Offline => format!("{device_name} is not connected."),
-                    other => format!("Couldn’t open camera on {device_name}: {other}"),
+            }
+            Err(err) => {
+                let should_report = {
+                    let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+                    if guard.active.as_ref().is_some_and(|a| a.request_id == request_id) {
+                        guard.active = None;
+                        true
+                    } else {
+                        false
+                    }
                 };
-                crate::bridge::app::show_message(msg);
+                if should_report {
+                    notify_continuity();
+                    let msg = match err {
+                        Error::Denied => format!("Allow Photos access for {device_name} in Settings first."),
+                        Error::Unsupported => format!("{device_name} doesn’t support Continuity Camera yet."),
+                        Error::Offline => format!("{device_name} is not connected."),
+                        other => format!("Couldn’t open camera on {device_name}: {other}"),
+                    };
+                    crate::bridge::app::show_message(msg);
+                }
             }
         }
     });
@@ -251,7 +266,7 @@ pub fn confirm_paste() {
         let label = if title.is_empty() { "active window".to_owned() } else { title };
         crate::bridge::app::show_message(format!("Pasted into {label}"));
     } else {
-        crate::bridge::app::show_message("Image is on your clipboard — press Ctrl+V in your target app.");
+        crate::bridge::app::show_message("Image is on your clipboard. Press Ctrl+V in your target app.");
     }
 }
 
@@ -359,7 +374,7 @@ pub fn on_event(event: &NodeEvent) {
         NodeEvent::LinkChanged { device, link } if !matches!(link, LinkState::Online { .. }) => {
             let cleared = {
                 let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
-                if guard.active.as_ref().is_some_and(|a| a.device == *device) {
+                if guard.active.as_ref().is_some_and(|a| a.device == *device && !a.queued_offline) {
                     guard.active = None;
                     true
                 } else {

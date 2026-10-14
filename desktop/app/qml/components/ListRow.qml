@@ -9,15 +9,20 @@ Item {
     property string iconPath
     property string title
     property string description
+    property bool stackBelow: false
     default property alias trailing: trailingSlot.data
 
-    implicitHeight: Math.max(56, texts.implicitHeight + 20, trailingSlot.childrenRect.height + 16)
+    readonly property bool stackTrailing: stackBelow || (trailingSlot.childrenRect.width > row.width * 0.52 && row.width > 0)
+
+    implicitHeight: stackTrailing
+        ? texts.implicitHeight + trailingSlot.childrenRect.height + 34
+        : Math.max(56, texts.implicitHeight + 20, trailingSlot.childrenRect.height + 16)
 
     Icon {
         id: icon
         visible: row.iconPath.length > 0
         anchors.left: parent.left
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenter: row.stackTrailing ? texts.verticalCenter : parent.verticalCenter
         path: row.iconPath
         color: Theme.surfaceContentVariant
     }
@@ -25,11 +30,18 @@ Item {
         id: texts
         anchors.left: icon.visible ? icon.right : parent.left
         anchors.leftMargin: icon.visible ? 14 : 0
-        anchors.right: trailingSlot.left
-        anchors.rightMargin: 16
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.right: row.stackTrailing ? parent.right : trailingSlot.left
+        anchors.rightMargin: row.stackTrailing ? 0 : 16
+        y: row.stackTrailing ? 12 : Math.round((row.height - height) / 2)
         spacing: 2
-        Txt { width: parent.width; text: row.title; role: "title"; size: 14 }
+        Txt {
+            width: parent.width
+            text: row.title
+            role: "title"
+            size: 14
+            wrapMode: Text.WordWrap
+            elide: Text.ElideNone
+        }
         Txt {
             visible: row.description.length > 0
             width: parent.width
@@ -42,8 +54,9 @@ Item {
     }
     Item {
         id: trailingSlot
-        anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.left: row.stackTrailing ? texts.left : undefined
+        anchors.right: row.stackTrailing ? undefined : parent.right
+        y: row.stackTrailing ? (texts.y + texts.implicitHeight + 10) : Math.round((row.height - height) / 2)
         width: childrenRect.width
         height: childrenRect.height
     }

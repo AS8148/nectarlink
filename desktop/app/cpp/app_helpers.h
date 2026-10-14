@@ -7,6 +7,7 @@
 
 // Qt setup that must happen before QGuiApplication is created.
 void prepare_qt();
+void prepare_qt_without_log();
 
 // Adds one size of the app icon (straight-alpha RGBA, size x size).
 void add_app_icon_image(int32_t size, rust::Slice<const uint8_t> rgba);

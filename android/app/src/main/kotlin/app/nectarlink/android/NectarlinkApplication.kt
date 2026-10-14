@@ -8,6 +8,7 @@ import app.nectarlink.android.update.AppUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /** Starts the core with the process and keeps it for the app's lifetime. */
 class NectarlinkApplication : Application() {
@@ -23,6 +24,13 @@ class NectarlinkApplication : Application() {
         Elevated.init(this)
         // What the phone offers PCs follows Elevated starting and stopping.
         Elevated.onChange = { core.refreshNotificationAccess() }
-        core.start()
+        Elevated.onClipboardChanged = { text, html -> core.onElevatedClipboardChanged(text, html) }
+        android.view.Choreographer.getInstance().postFrameCallback {
+            scope.launch { core.start() }
+        }
+        scope.launch {
+            kotlinx.coroutines.delay(120)
+            core.start()
+        }
     }
 }

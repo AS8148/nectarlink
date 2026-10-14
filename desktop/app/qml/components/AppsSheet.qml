@@ -66,13 +66,6 @@ Sheet {
                 onClicked: Mirror.loadApps(sheet.deviceId)
             }
         }
-        Txt {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            role: "bodySmall"
-            muted: true
-            text: qsTr("It opens in a window of its own and runs on the phone, beside what's on the phone's screen.")
-        }
 
         Rectangle {
             width: parent.width

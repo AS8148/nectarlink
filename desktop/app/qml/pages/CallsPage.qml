@@ -136,16 +136,10 @@ Item {
         load()
     }
 
-    opacity: active ? 1 : 0
-    visible: opacity > 0
-    Behavior on opacity { NumberAnimation { duration: Theme.fadeNormal } }
-    transform: Translate {
-        y: page.active || Theme.reduceMotion ? 0 : 12
-        Behavior on y { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springGentle; damping: Theme.dampingGentle } }
-    }
+    visible: active
 
     Shortcut {
-        sequence: StandardKey.Find
+        sequences: [StandardKey.Find]
         enabled: page.active && page.deviceId.length > 0
         onActivated: search.forceActiveFocus()
     }
@@ -190,8 +184,8 @@ Item {
             wrapMode: Text.WordWrap
             role: "body"
             muted: true
-            text: page.deviceId.length === 0 ? qsTr("Pair your phone to see recent calls, browse contacts, and place calls here.")
-                : qsTr("Your call log and contacts show up here when it's back.")
+            text: page.deviceId.length === 0 ? qsTr("Pair your phone to view calls and contacts.")
+                : qsTr("Connect %1 to view calls and contacts.").arg(page.deviceName)
         }
     }
 
@@ -238,9 +232,9 @@ Item {
             anchors.rightMargin: 16
             height: 38
             radius: Theme.graphite ? Theme.radiusSm : height / 2
-            color: Theme.graphite ? "transparent" : Theme.surfaceContainerHighest
-            border.width: search.activeFocus ? 2 : (Theme.graphite ? 1 : 0)
-            border.color: search.activeFocus ? Theme.primary : Theme.outlineVariant
+            color: Theme.graphite ? "transparent" : (Theme.glass ? Theme.tileColor : Theme.surfaceContainerHighest)
+            border.width: search.activeFocus ? 2 : (Theme.graphite || Theme.glass ? 1 : 0)
+            border.color: search.activeFocus ? Theme.primary : (Theme.glass ? Theme.cardBorder : Theme.outlineVariant)
             Icon {
                 id: searchIcon
                 anchors.left: parent.left
@@ -331,10 +325,10 @@ Item {
                     wrapMode: Text.WordWrap
                     role: "bodySmall"
                     muted: true
-                    text: PhoneCall.logStatus === "off" ? qsTr("Turn on Calls for this phone, here in Settings and in the Nectarlink app on the phone.")
-                        : PhoneCall.logStatus === "unsupported" ? qsTr("In the Nectarlink app on your phone, tap Allow on “Call log” or “Call and answer”.")
-                        : PhoneCall.logStatus === "offline" ? qsTr("Your recent calls show up here when it's back.")
-                        : qsTr("Something went wrong reading the call log from the phone.")
+                    text: PhoneCall.logStatus === "off" ? qsTr("Enable Calls in Settings.")
+                        : PhoneCall.logStatus === "unsupported" ? qsTr("Grant call log permission on %1.").arg(page.deviceName)
+                        : PhoneCall.logStatus === "offline" ? qsTr("Connect %1 to view recent calls.").arg(page.deviceName)
+                        : qsTr("Unable to load call log.")
                 }
                 Button {
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -417,10 +411,10 @@ Item {
                     wrapMode: Text.WordWrap
                     role: "bodySmall"
                     muted: true
-                    text: PhoneCall.contactsStatus === "off" ? qsTr("Turn on Contacts for this phone, here in Settings and in the Nectarlink app on the phone.")
-                        : PhoneCall.contactsStatus === "unsupported" ? qsTr("In the Nectarlink app on your phone, tap Allow on “Contacts”.")
-                        : PhoneCall.contactsStatus === "offline" ? qsTr("Your contacts show up here when it's back.")
-                        : qsTr("Something went wrong reading contacts from the phone.")
+                    text: PhoneCall.contactsStatus === "off" ? qsTr("Enable Contacts in Settings.")
+                        : PhoneCall.contactsStatus === "unsupported" ? qsTr("Grant contacts permission on %1.").arg(page.deviceName)
+                        : PhoneCall.contactsStatus === "offline" ? qsTr("Connect %1 to view contacts.").arg(page.deviceName)
+                        : qsTr("Unable to load contacts.")
                 }
                 Button {
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -623,9 +617,9 @@ Item {
                         width: parent.width
                         height: dialMatch.visible ? 64 : 52
                         radius: Theme.graphite ? Theme.radiusSm : Theme.radiusLg
-                        color: Theme.graphite ? "transparent" : Theme.surfaceContainerHighest
-                        border.width: dialInput.activeFocus ? 2 : (Theme.graphite ? 1 : 0)
-                        border.color: dialInput.activeFocus ? Theme.primary : Theme.outlineVariant
+                        color: Theme.graphite ? "transparent" : (Theme.glass ? Theme.tileColor : Theme.surfaceContainerHighest)
+                        border.width: dialInput.activeFocus ? 2 : (Theme.graphite || Theme.glass ? 1 : 0)
+                        border.color: dialInput.activeFocus ? Theme.primary : (Theme.glass ? Theme.cardBorder : Theme.outlineVariant)
 
                         Column {
                             anchors.left: parent.left
@@ -717,10 +711,10 @@ Item {
                                 color: padTap.pressed
                                     ? Theme.secondaryContainer
                                     : padHover.hovered
-                                      ? Qt.rgba(Theme.surfaceContent.r, Theme.surfaceContent.g, Theme.surfaceContent.b, 0.08)
-                                      : (Theme.graphite ? "transparent" : Theme.surfaceContainerHigh)
-                                border.width: Theme.focusVisible(padKey) ? 2 : (Theme.graphite ? 1 : 0)
-                                border.color: Theme.focusVisible(padKey) ? Theme.primary : Theme.outlineVariant
+                                      ? Qt.rgba(Theme.surfaceContent.r, Theme.surfaceContent.g, Theme.surfaceContent.b, Theme.glass ? 0.14 : 0.08)
+                                      : (Theme.graphite ? "transparent" : (Theme.glass ? Theme.tileColor : Theme.surfaceContainerHigh))
+                                border.width: Theme.focusVisible(padKey) ? 2 : (Theme.graphite || Theme.glass ? 1 : 0)
+                                border.color: Theme.focusVisible(padKey) ? Theme.primary : (Theme.glass ? Theme.cardBorder : Theme.outlineVariant)
                                 scale: padTap.pressed ? Theme.pressScale : 1
                                 Behavior on scale { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springSnappy; damping: Theme.dampingSnappy } }
 
@@ -814,6 +808,53 @@ Item {
                     }
                 }
             }
+
+            // ---- Bluetooth HFP / PC call audio status banner ----
+            Card {
+                id: hfpBannerCard
+                width: parent.width
+                visible: !PhoneCall.active && PhoneCall.hfpDetail.length > 0
+                Column {
+                    width: parent.width
+                    spacing: 8
+                    Row {
+                        width: parent.width
+                        spacing: 8
+                        Icon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 16; height: 16
+                            path: Icons.speaker
+                            color: PhoneCall.hfpConnected ? Theme.primary : Theme.surfaceContentVariant
+                        }
+                        Txt {
+                            anchors.verticalCenter: parent.verticalCenter
+                            role: "label"
+                            text: PhoneCall.hfpConnected ? qsTr("PC call audio connected")
+                                : PhoneCall.hfpAvailable ? qsTr("PC call audio ready")
+                                : qsTr("PC call audio (Bluetooth)")
+                        }
+                    }
+                    Txt {
+                        width: parent.width
+                        role: "caption"
+                        muted: true
+                        wrapMode: Text.WordWrap
+                        text: PhoneCall.hfpDetail
+                    }
+                    Button {
+                        visible: !PhoneCall.hfpConnected
+                        variant: "tonal"
+                        size: "sm"
+                        text: PhoneCall.hfpAvailable ? qsTr("Connect PC audio") : qsTr("Open Bluetooth settings")
+                        onClicked: {
+                            if (PhoneCall.hfpAvailable)
+                                PhoneCall.connectPcAudio()
+                            else
+                                PhoneCall.openBluetoothSettings()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -877,7 +918,6 @@ Item {
                     : "transparent"
                 border.width: Theme.focusVisible(row) ? 2 : 0
                 border.color: Theme.primary
-                Behavior on color { ColorAnimation { duration: Theme.fadeFast } }
             }
 
             Item {
@@ -1046,7 +1086,6 @@ Item {
                     : "transparent"
                 border.width: Theme.focusVisible(crow) ? 2 : 0
                 border.color: Theme.primary
-                Behavior on color { ColorAnimation { duration: Theme.fadeFast } }
             }
 
             Item {
@@ -1147,5 +1186,17 @@ Item {
             HoverHandler { id: contactHover; cursorShape: Qt.PointingHandCursor }
             TapHandler { onTapped: crow.pickContact() }
         }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: 10
+        radius: Theme.radiusLg
+        color: "transparent"
+        border.width: 2
+        border.color: Theme.primary
+        visible: opacity > 0
+        opacity: AppController.highlightTarget === "calls:main" ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
     }
 }

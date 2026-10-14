@@ -11,8 +11,7 @@ $dir = Join-Path $env:ProgramFiles 'Nectarlink'
 $exe = Join-Path $dir 'nectarlink-desktop.exe'
 $uninstallKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Nectarlink'
 $shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Nectarlink.lnk'
-$data = Join-Path $env:RUNNER_TEMP 'nectarlink-smoke'
-if (-not $env:RUNNER_TEMP) { $data = Join-Path $env:TEMP 'nectarlink-smoke' }
+$data = if ($env:RUNNER_TEMP) { Join-Path $env:RUNNER_TEMP 'nectarlink-smoke' } else { Join-Path $env:TEMP 'nectarlink-smoke' }
 
 function Check($what, [bool]$ok) {
     if (-not $ok) { throw "FAILED: $what" }

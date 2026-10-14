@@ -45,11 +45,12 @@ impl Default for Rules {
 struct AppEntry {
     name: String,
     rule: AppRule,
+    expanded: bool,
 }
 
 impl Default for AppEntry {
     fn default() -> Self {
-        AppEntry { name: String::new(), rule: AppRule::Show }
+        AppEntry { name: String::new(), rule: AppRule::Show, expanded: false }
     }
 }
 
@@ -85,6 +86,9 @@ pub fn load(dir: &Path, state: &mut AppState) {
         if !entry.name.is_empty() {
             state.app_names.insert(app.clone(), entry.name);
         }
+        if entry.expanded {
+            state.expanded_apps.insert(app.clone());
+        }
         if entry.rule != AppRule::Show {
             state.app_rules.insert(app, entry.rule);
         }
@@ -104,17 +108,21 @@ pub fn clear_disk() {
 }
 
 fn snapshot(state: &AppState) -> (Rules, Vec<HistoryEntry>) {
-    let apps = state
-        .app_names
-        .iter()
-        .map(|(app, name)| (app.clone(), AppEntry { name: name.clone(), rule: state.app_rule(app) }))
-        .chain(
-            state
-                .app_rules
-                .iter()
-                .filter(|(app, _)| !state.app_names.contains_key(*app))
-                .map(|(app, rule)| (app.clone(), AppEntry { name: String::new(), rule: *rule })),
-        )
+    let mut keys: std::collections::BTreeSet<&String> = state.app_names.keys().collect();
+    keys.extend(state.app_rules.keys());
+    keys.extend(state.expanded_apps.iter());
+    let apps = keys
+        .into_iter()
+        .map(|app| {
+            (
+                app.clone(),
+                AppEntry {
+                    name: state.app_names.get(app).cloned().unwrap_or_default(),
+                    rule: state.app_rule(app),
+                    expanded: state.is_app_expanded(app),
+                },
+            )
+        })
         .collect();
     (Rules { history: state.history_enabled, apps }, state.history.clone())
 }
@@ -198,6 +206,7 @@ mod tests {
         state.app_names.insert("com.chat".into(), "Chat".into());
         state.set_app_rule("com.chat", AppRule::Quiet);
         state.set_app_rule("com.game", AppRule::Hidden);
+        state.set_app_expanded("com.chat", true);
         let now = unix_ms(SystemTime::now());
         state.history.push(HistoryEntry {
             device: DeviceId([1; 32]),
@@ -219,6 +228,8 @@ mod tests {
         assert_eq!(loaded.app_rule("com.chat"), AppRule::Quiet);
         assert_eq!(loaded.app_rule("com.game"), AppRule::Hidden);
         assert_eq!(loaded.app_rule("com.other"), AppRule::Show);
+        assert!(loaded.is_app_expanded("com.chat"));
+        assert!(!loaded.is_app_expanded("com.other"));
         assert_eq!(loaded.app_names.get("com.chat").map(String::as_str), Some("Chat"));
         assert_eq!(loaded.history.len(), 1, "a day old is gone");
         assert_eq!(loaded.history[0].notification.key, "a");

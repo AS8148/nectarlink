@@ -130,6 +130,17 @@ impl Players {
             .collect();
         MediaState { players }
     }
+
+    /// Returns the title of the currently playing media item on this device, if any.
+    pub(crate) fn active_title(&self) -> Option<String> {
+        let state = self.lock();
+        state
+            .players
+            .iter()
+            .find(|p| p.playing && p.title.as_ref().is_some_and(|t| !t.trim().is_empty()))
+            .or_else(|| state.players.iter().find(|p| p.title.as_ref().is_some_and(|t| !t.trim().is_empty())))
+            .and_then(|p| p.title.clone())
+    }
 }
 
 impl Shared {

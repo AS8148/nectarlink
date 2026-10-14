@@ -140,6 +140,9 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "dateAt"]
         fn date_at(self: &Photos, row: i32) -> f64;
+        #[qinvokable]
+        #[cxx_name = "startDrag"]
+        fn start_drag(self: &Photos, id: &QString) -> bool;
     }
 
     impl cxx_qt::Threading for Photos {}
@@ -417,6 +420,14 @@ impl qobject::Photos {
 
     pub fn date_at(&self, row: i32) -> f64 {
         usize::try_from(row).ok().and_then(|i| self.rows.get(i)).map_or(0.0, |r| r.date as f64)
+    }
+
+    pub fn start_drag(&self, id: &QString) -> bool {
+        let Some(path) = photos::stage_for_drag(&String::from(id)) else {
+            return false;
+        };
+        let path_str = path.to_string_lossy();
+        crate::bridge::native::ffi::start_external_drag(&path_str, "")
     }
 }
 

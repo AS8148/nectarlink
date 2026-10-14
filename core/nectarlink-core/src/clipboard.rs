@@ -36,9 +36,14 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
             Ok(clip) if clip.is_valid() => {
                 let platform = shared.platform.clone();
                 let text = clip.text;
+                let html = clip.html;
+                let rtf = clip.rtf;
                 let written = {
                     let text = text.clone();
-                    tokio::task::spawn_blocking(move || platform.set_clipboard(&text)).await
+                    tokio::task::spawn_blocking(move || {
+                        platform.set_clipboard_rich(&text, html.as_deref(), rtf.as_deref())
+                    })
+                    .await
                 };
                 match written {
                     Ok(Ok(())) => {

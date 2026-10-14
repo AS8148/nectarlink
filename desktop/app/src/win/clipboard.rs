@@ -10,12 +10,15 @@
 //! written as a bitmap with alpha, plus PNG when that's what arrived.
 
 use std::{
+    ffi::OsString,
     hash::{DefaultHasher, Hash, Hasher},
+    os::windows::ffi::{OsStrExt, OsStringExt},
+    path::PathBuf,
     sync::{
         Mutex, OnceLock,
         atomic::{AtomicIsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use windows::{
@@ -30,9 +33,12 @@ use windows::{
             LibraryLoader::GetModuleHandleW,
             Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
         },
-        UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG,
-            RegisterClassExW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLIPBOARDUPDATE, WNDCLASSEXW,
+        UI::{
+            Shell::{DROPFILES, DragQueryFileW, HDROP},
+            WindowsAndMessaging::{
+                CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG,
+                RegisterClassExW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLIPBOARDUPDATE, WNDCLASSEXW,
+            },
         },
     },
     core::{HSTRING, w},
@@ -41,6 +47,7 @@ use windows::{
 /// Standard clipboard formats.
 const CF_DIB: u32 = 8;
 const CF_UNICODETEXT: u32 = 13;
+const CF_HDROP: u32 = 15;
 const CF_DIBV5: u32 = 17;
 /// Copied bitmaps larger than this aren't read (an 8K screenshot is
 /// about 130 MB raw).
@@ -81,7 +88,11 @@ impl Image {
 /// What's on the clipboard, for sending.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Clip {
-    Text(String),
+    Text {
+        text: String,
+        html: Option<String>,
+        rtf: Option<String>,
+    },
     Image(Image),
     /// Marked private (a password manager): never sent.
     Private,
@@ -91,17 +102,23 @@ pub enum Clip {
 
 type OnCopy = Box<dyn Fn(Clip) + Send + Sync>;
 
+type WrittenRich = (Instant, String, Option<String>, Option<String>);
+
 /// The listener window, once started (as an isize: HWND isn't Send).
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 static ON_COPY: OnceLock<OnCopy> = OnceLock::new();
 /// A fingerprint of the last content reported, so one copy reported several
 /// times (apps often write the clipboard in steps) is sent once.
 static LAST_REPORTED: Mutex<Option<u64>> = Mutex::new(None);
+/// The last rich-text clip written by Nectarlink, so if a host-clipboard bridge
+/// (such as the Android emulator's QEMU clipboard pipe) immediately echoes the
+/// same plain text without rich formats, we preserve the rich formats.
+static LAST_WRITTEN_RICH: Mutex<Option<WrittenRich>> = Mutex::new(None);
 
 fn fingerprint(clip: &Clip) -> Option<u64> {
     let mut hasher = DefaultHasher::new();
     match clip {
-        Clip::Text(text) => text.hash(&mut hasher),
+        Clip::Text { text, .. } => text.replace("\r\n", "\n").hash(&mut hasher),
         Clip::Image(Image::Png(bytes) | Image::Bitmap(bytes)) => bytes.hash(&mut hasher),
         Clip::Private | Clip::Empty => return None,
     }
@@ -182,6 +199,20 @@ fn on_clipboard_changed(hwnd: HWND) {
         return;
     }
     let clip = read_with(Some(hwnd));
+    if let Clip::Text { ref text, html: None, rtf: None } = clip {
+        let restore = LAST_WRITTEN_RICH
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .filter(|(at, prev_text, h, r)| {
+                at.elapsed() < Duration::from_secs(2) && prev_text == text && (h.is_some() || r.is_some())
+            })
+            .map(|(_, _, h, r)| (h.clone(), r.clone()));
+        if let Some((saved_html, saved_rtf)) = restore {
+            let _ = write_text(text, saved_html.as_deref(), saved_rtf.as_deref(), false);
+            return;
+        }
+    }
     let Some(print) = fingerprint(&clip) else { return };
     {
         let mut last = LAST_REPORTED.lock().unwrap_or_else(|e| e.into_inner());
@@ -235,18 +266,36 @@ pub fn read_image_png() -> Option<Vec<u8>> {
 /// Puts text on the clipboard (owned by the watcher window, so it isn't
 /// reported as a new copy).
 pub fn write(text: &str) -> Result<(), String> {
-    write_text(text, false)
+    write_text(text, None, None, false)
+}
+
+/// Puts text (and optional HTML and RTF rich text) on the clipboard.
+pub fn write_rich(text: &str, html: Option<&str>, rtf: Option<&str>) -> Result<(), String> {
+    write_text(text, html, rtf, false)
 }
 
 /// Puts a secret (a one-time code) on the clipboard, marked the way password
 /// managers mark theirs, so Windows' clipboard history, cloud clipboard and
 /// other clipboard tools leave it alone.
 pub fn write_private(text: &str) -> Result<(), String> {
-    write_text(text, true)
+    write_text(text, None, None, true)
 }
 
-fn write_text(text: &str, private: bool) -> Result<(), String> {
+fn write_text(text: &str, html: Option<&str>, rtf: Option<&str>, private: bool) -> Result<(), String> {
     let owner = window().ok_or("the clipboard watcher isn't running")?;
+    let mut html_owned = html.filter(|s| !s.trim().is_empty()).map(str::to_owned);
+    let mut rtf_owned = rtf.filter(|s| !s.trim().is_empty()).map(str::to_owned);
+    if !private
+        && html_owned.is_none()
+        && rtf_owned.is_none()
+        && let Some((at, prev_text, prev_h, prev_r)) =
+            LAST_WRITTEN_RICH.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
+        && at.elapsed() < Duration::from_secs(2)
+        && prev_text == text
+    {
+        html_owned = prev_h.clone();
+        rtf_owned = prev_r.clone();
+    }
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     let _open = Opened::open(Some(owner)).ok_or("the clipboard is busy")?;
     // SAFETY: the clipboard is open; the global block is sized for `wide`,
@@ -271,8 +320,24 @@ fn write_text(text: &str, private: bool) -> Result<(), String> {
         set_block(format("ExcludeClipboardContentFromMonitorProcessing"), &[0])?;
         set_block(format("CanIncludeInClipboardHistory"), &0u32.to_le_bytes())?;
         set_block(format("CanUploadToCloudClipboard"), &0u32.to_le_bytes())?;
+        *LAST_WRITTEN_RICH.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    } else {
+        if let Some(ref h) = html_owned {
+            let _ = set_block(format("HTML Format"), &encode_cf_html(h));
+        }
+        if let Some(ref r) = rtf_owned {
+            let _ = set_block(format("Rich Text Format"), &encode_cf_rtf(r));
+        }
+        *LAST_WRITTEN_RICH.lock().unwrap_or_else(|e| e.into_inner()) =
+            if html_owned.is_some() || rtf_owned.is_some() {
+                Some((Instant::now(), text.to_owned(), html_owned, rtf_owned))
+            } else {
+                None
+            };
     }
-    *LAST_REPORTED.lock().unwrap_or_else(|e| e.into_inner()) = fingerprint(&Clip::Text(text.to_owned()));
+    *LAST_REPORTED.lock().unwrap_or_else(|e| e.into_inner()) =
+        fingerprint(&Clip::Text { text: text.to_owned(), html: None, rtf: None });
+    crate::mirror::note_remote_clipboard(text);
     Ok(())
 }
 
@@ -282,7 +347,13 @@ fn write_text(text: &str, private: bool) -> Result<(), String> {
 pub fn write_image(mime: &str, bytes: &[u8]) -> Result<(), String> {
     let owner = window().ok_or("the clipboard watcher isn't running")?;
     let bitmap = super::image::decode(bytes).map_err(|e| e.to_string())?;
-    let mut blocks = vec![(CF_DIBV5, super::image::dibv5(&bitmap))];
+    let dib = super::image::dibv5(&bitmap);
+    let reported_clip = if mime == "image/png" {
+        Clip::Image(Image::Png(bytes.to_vec()))
+    } else {
+        Clip::Image(Image::Bitmap(dib.clone()))
+    };
+    let mut blocks = vec![(CF_DIBV5, dib)];
     if mime == "image/png" {
         blocks.push((format("PNG"), bytes.to_vec()));
     }
@@ -292,6 +363,7 @@ pub fn write_image(mime: &str, bytes: &[u8]) -> Result<(), String> {
     for (format, data) in blocks {
         set_block(format, &data)?;
     }
+    *LAST_REPORTED.lock().unwrap_or_else(|e| e.into_inner()) = fingerprint(&reported_clip);
     Ok(())
 }
 
@@ -391,7 +463,104 @@ fn read_with(owner: Option<HWND>) -> Clip {
         let _ = GlobalUnlock(block);
         text
     };
-    if text.trim().is_empty() { Clip::Empty } else { Clip::Text(text) }
+    if text.trim().is_empty() {
+        return Clip::Empty;
+    }
+    let html_fmt = format("HTML Format");
+    let html = if has(html_fmt) { read_block(html_fmt).and_then(|b| decode_cf_html(&b)) } else { None };
+    let rtf_fmt = format("Rich Text Format");
+    let rtf = if has(rtf_fmt) { read_block(rtf_fmt).and_then(|b| decode_cf_rtf(&b)) } else { None };
+    Clip::Text { text, html, rtf }
+}
+
+/// Wraps an HTML fragment in Windows' `"HTML Format"` (`CF_HTML`) header with
+/// 10-digit zero-padded byte offsets and a trailing NUL byte.
+pub(crate) fn encode_cf_html(fragment: &str) -> Vec<u8> {
+    const HEADER_TEMPLATE: &str = "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\n";
+    const PREFIX: &str = "<html>\r\n<body>\r\n<!--StartFragment-->";
+    const SUFFIX: &str = "<!--EndFragment-->\r\n</body>\r\n</html>";
+    let start_html = HEADER_TEMPLATE.len();
+    let start_fragment = start_html + PREFIX.len();
+    let end_fragment = start_fragment + fragment.len();
+    let end_html = end_fragment + SUFFIX.len();
+    let header = format!(
+        "Version:0.9\r\nStartHTML:{start_html:010}\r\nEndHTML:{end_html:010}\r\nStartFragment:{start_fragment:010}\r\nEndFragment:{end_fragment:010}\r\n"
+    );
+    debug_assert_eq!(header.len(), HEADER_TEMPLATE.len());
+    let mut out = Vec::with_capacity(end_html + 1);
+    out.extend_from_slice(header.as_bytes());
+    out.extend_from_slice(PREFIX.as_bytes());
+    out.extend_from_slice(fragment.as_bytes());
+    out.extend_from_slice(SUFFIX.as_bytes());
+    out.push(0);
+    out
+}
+
+/// Extracts the HTML fragment from a Windows `"HTML Format"` (`CF_HTML`) block.
+pub(crate) fn decode_cf_html(bytes: &[u8]) -> Option<String> {
+    let end = bytes.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+    let raw = &bytes[..end];
+    if raw.is_empty() || raw.len() > nectarlink_core::CLIP_MAX_BYTES {
+        return None;
+    }
+    let text = std::str::from_utf8(raw).ok()?;
+    let parse_offset = |key: &str| -> Option<usize> {
+        text.lines()
+            .take(12)
+            .find_map(|line| line.strip_prefix(key))
+            .and_then(|val| val.trim().parse::<usize>().ok())
+    };
+    if let (Some(sf), Some(ef)) = (parse_offset("StartFragment:"), parse_offset("EndFragment:"))
+        && sf > 0
+        && sf < ef
+        && ef <= raw.len()
+        && let Ok(frag) = std::str::from_utf8(&raw[sf..ef])
+    {
+        let trimmed = frag.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+    const START_MARKER: &str = "<!--StartFragment-->";
+    const END_MARKER: &str = "<!--EndFragment-->";
+    if let Some(s_idx) = text.find(START_MARKER) {
+        let content_start = s_idx + START_MARKER.len();
+        if let Some(rel_end) = text[content_start..].find(END_MARKER) {
+            let trimmed = text[content_start..content_start + rel_end].trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_owned());
+            }
+        }
+    }
+    if let (Some(sh), Some(eh)) = (parse_offset("StartHTML:"), parse_offset("EndHTML:"))
+        && sh > 0
+        && sh < eh
+        && eh <= raw.len()
+        && let Ok(html) = std::str::from_utf8(&raw[sh..eh])
+    {
+        let trimmed = html.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+    None
+}
+
+pub(crate) fn encode_cf_rtf(rtf: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(rtf.len() + 1);
+    out.extend_from_slice(rtf.as_bytes());
+    out.push(0);
+    out
+}
+
+pub(crate) fn decode_cf_rtf(bytes: &[u8]) -> Option<String> {
+    let end = bytes.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+    let raw = &bytes[..end];
+    if raw.is_empty() || raw.len() > nectarlink_core::CLIP_MAX_BYTES {
+        return None;
+    }
+    let s = std::str::from_utf8(raw).ok()?.trim();
+    s.starts_with("{\\rtf").then(|| s.to_owned())
 }
 
 /// A format's raw bytes, if present and not too large. The clipboard must
@@ -436,5 +605,149 @@ fn read_dword(format: u32) -> Option<u32> {
         let value = data.read_unaligned();
         let _ = GlobalUnlock(block);
         Some(value)
+    }
+}
+
+/// Builds a `CF_HDROP` (`DROPFILES`) binary payload for `paths` (UTF-16LE,
+/// double-null-terminated).
+pub fn build_dropfiles_payload(paths: &[PathBuf]) -> Vec<u8> {
+    let header_size = std::mem::size_of::<DROPFILES>();
+    debug_assert_eq!(header_size, 20);
+    let mut wide_units: Vec<u16> = Vec::new();
+    for path in paths {
+        wide_units.extend(path.as_os_str().encode_wide());
+        wide_units.push(0);
+    }
+    wide_units.push(0);
+
+    let mut out = Vec::with_capacity(header_size + wide_units.len() * 2);
+    out.extend_from_slice(&(header_size as u32).to_le_bytes());
+    out.extend_from_slice(&0i32.to_le_bytes());
+    out.extend_from_slice(&0i32.to_le_bytes());
+    out.extend_from_slice(&0i32.to_le_bytes());
+    out.extend_from_slice(&1i32.to_le_bytes());
+    for unit in wide_units {
+        out.extend_from_slice(&unit.to_le_bytes());
+    }
+    out
+}
+
+/// Parses a `CF_HDROP` (`DROPFILES`) binary payload into file paths.
+#[cfg(test)]
+pub fn parse_dropfiles_payload(bytes: &[u8]) -> Option<Vec<PathBuf>> {
+    let header_size = std::mem::size_of::<DROPFILES>();
+    if bytes.len() < header_size {
+        return None;
+    }
+    let p_files = u32::from_le_bytes(bytes[0..4].try_into().ok()?) as usize;
+    let f_wide = i32::from_le_bytes(bytes[16..20].try_into().ok()?) != 0;
+    if !f_wide || p_files < header_size || p_files > bytes.len() {
+        return None;
+    }
+    let tail = &bytes[p_files..];
+    if tail.len() < 2 {
+        return None;
+    }
+    let units: Vec<u16> = tail.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect();
+    let mut paths = Vec::new();
+    let mut start = 0usize;
+    for (idx, &u) in units.iter().enumerate() {
+        if u == 0 {
+            if idx == start {
+                break;
+            }
+            paths.push(PathBuf::from(OsString::from_wide(&units[start..idx])));
+            start = idx + 1;
+        }
+    }
+    Some(paths)
+}
+
+/// Reads copied file paths (`CF_HDROP`) from the Windows clipboard, returning
+/// only paths that exist on disk.
+pub fn read_files() -> Option<Vec<PathBuf>> {
+    // SAFETY: format availability check needs no open clipboard.
+    if unsafe { IsClipboardFormatAvailable(CF_HDROP) }.is_err() {
+        return None;
+    }
+    let _open = Opened::open(None)?;
+    // SAFETY: the clipboard is open; `GetClipboardData(CF_HDROP)` returns an HDROP
+    // backed by global memory that stays valid until `CloseClipboard`.
+    unsafe {
+        let handle = GetClipboardData(CF_HDROP).ok()?;
+        let block = HGLOBAL(handle.0);
+        let ptr = GlobalLock(block);
+        if ptr.is_null() {
+            return None;
+        }
+        let hdrop = HDROP(ptr);
+        let count = DragQueryFileW(hdrop, 0xFFFF_FFFF, None);
+        let mut paths = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let len = DragQueryFileW(hdrop, i, None);
+            if len == 0 {
+                continue;
+            }
+            let mut buf = vec![0u16; (len as usize) + 1];
+            let copied = DragQueryFileW(hdrop, i, Some(&mut buf));
+            if copied > 0 {
+                let p = PathBuf::from(OsString::from_wide(&buf[..copied as usize]));
+                if p.exists() {
+                    paths.push(p);
+                }
+            }
+        }
+        let _ = GlobalUnlock(block);
+        (!paths.is_empty()).then_some(paths)
+    }
+}
+
+/// Places `paths` onto the Windows clipboard as `CF_HDROP` so the user can
+/// immediately press `Ctrl+V` in File Explorer or any desktop app.
+pub fn write_files(paths: &[PathBuf]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+    let payload = build_dropfiles_payload(paths);
+    let Some(_open) = Opened::open(window()) else {
+        return false;
+    };
+    // SAFETY: the clipboard is open.
+    if unsafe { EmptyClipboard() }.is_err() {
+        return false;
+    }
+    set_block(CF_HDROP, &payload).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cf_html_and_rtf_round_trip() {
+        let frag = "<p><b>Hello</b> <i>Nectarlink</i> 🐝</p>";
+        let encoded = encode_cf_html(frag);
+        assert_eq!(decode_cf_html(&encoded).as_deref(), Some(frag));
+
+        let marker_only = b"Version:0.9\r\n<html><body><!--StartFragment--><span>Fallback</span><!--EndFragment--></body></html>\0";
+        assert_eq!(decode_cf_html(marker_only).as_deref(), Some("<span>Fallback</span>"));
+
+        let rtf = r"{\rtf1\ansi\deff0 {\b Hello} world}";
+        let rtf_bytes = encode_cf_rtf(rtf);
+        assert_eq!(decode_cf_rtf(&rtf_bytes).as_deref(), Some(rtf));
+        assert_eq!(decode_cf_rtf(b"not rtf\0"), None);
+    }
+
+    #[test]
+    fn dropfiles_payload_round_trips_multiple_paths() {
+        let paths = vec![
+            PathBuf::from(r"C:\Users\Alice\Documents\report.pdf"),
+            PathBuf::from(r"D:\Photos\Summer 2026\beach_🐝.jpg"),
+        ];
+        let payload = build_dropfiles_payload(&paths);
+        assert!(payload.len() > 20);
+        let parsed = parse_dropfiles_payload(&payload).expect("valid DROPFILES payload");
+        assert_eq!(parsed, paths);
+        assert!(parse_dropfiles_payload(&[0u8; 8]).is_none());
     }
 }

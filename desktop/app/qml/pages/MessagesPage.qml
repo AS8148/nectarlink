@@ -54,8 +54,12 @@ Item {
 
     FileDialog {
         id: imageFileDialog
-        title: qsTr("Attach image")
-        nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.webp *.gif *.bmp)")]
+        title: qsTr("Attach image or voice note")
+        nameFilters: [
+            qsTr("Media (*.png *.jpg *.jpeg *.webp *.gif *.bmp *.m4a *.mp3 *.aac *.ogg *.wav *.amr *.3gp)"),
+            qsTr("Images (*.png *.jpg *.jpeg *.webp *.gif *.bmp)"),
+            qsTr("Audio (*.m4a *.mp3 *.aac *.ogg *.wav *.amr *.3gp)")
+        ]
         onAccepted: {
             if (selectedFile.toString().length > 0) {
                 Messages.attachFile(selectedFile.toString())
@@ -104,13 +108,7 @@ Item {
         return text.length <= one ? 1 : Math.ceil(text.length / each)
     }
 
-    opacity: active ? 1 : 0
-    visible: opacity > 0
-    Behavior on opacity { NumberAnimation { duration: Theme.fadeNormal } }
-    transform: Translate {
-        y: page.active || Theme.reduceMotion ? 0 : 12
-        Behavior on y { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springGentle; damping: Theme.dampingGentle } }
-    }
+    visible: active
 
     function applyComposeTarget() {
         if (Messages.composeTo.length > 0) {
@@ -151,17 +149,17 @@ Item {
         onActivated: page.closeChat()
     }
     Shortcut {
-        sequence: StandardKey.Find
+        sequences: [StandardKey.Find]
         enabled: page.active && page.ready
         onActivated: search.forceActiveFocus()
     }
     Shortcut {
-        sequence: StandardKey.New
+        sequences: [StandardKey.New]
         enabled: page.active && page.ready
         onActivated: page.startNew()
     }
     Shortcut {
-        sequence: StandardKey.Paste
+        sequences: [StandardKey.Paste]
         enabled: page.active && (!!page.openThread || page.composing) && !composer.isChat && !composer.groupSms && !input.activeFocus
         onActivated: {
             if (Messages.pasteClipboardImage()) {
@@ -220,11 +218,11 @@ Item {
             wrapMode: Text.WordWrap
             role: "body"
             muted: true
-            text: page.deviceId.length === 0 ? qsTr("Pair your phone to read and send texts here.")
-                : Messages.status === "offline" ? qsTr("Your conversations show up here when it's back.")
-                : Messages.status === "off" ? qsTr("Turn on Messages for this phone, here in Settings and in the Nectarlink app on the phone.")
-                : Messages.status === "unsupported" ? qsTr("In the Nectarlink app on your phone, tap Allow on “Text from your PC”.")
-                : qsTr("Something went wrong reading them from the phone.")
+            text: page.deviceId.length === 0 ? qsTr("Pair your phone to read and send texts.")
+                : Messages.status === "offline" ? qsTr("Connect %1 to view messages.").arg(page.deviceName)
+                : Messages.status === "off" ? qsTr("Enable Messages in Settings.")
+                : Messages.status === "unsupported" ? qsTr("Grant SMS permission on %1.").arg(page.deviceName)
+                : qsTr("Unable to load messages.")
         }
         Button {
             anchors.horizontalCenter: parent.horizontalCenter
@@ -289,9 +287,9 @@ Item {
             anchors.rightMargin: 16
             height: 38
             radius: Theme.graphite ? Theme.radiusSm : height / 2
-            color: Theme.graphite ? "transparent" : Theme.surfaceContainerHighest
-            border.width: search.activeFocus ? 2 : (Theme.graphite ? 1 : 0)
-            border.color: search.activeFocus ? Theme.primary : Theme.outlineVariant
+            color: Theme.graphite ? "transparent" : (Theme.glass ? Theme.tileColor : Theme.surfaceContainerHighest)
+            border.width: search.activeFocus ? 2 : (Theme.graphite || Theme.glass ? 1 : 0)
+            border.color: search.activeFocus ? Theme.primary : (Theme.glass ? Theme.cardBorder : Theme.outlineVariant)
             Icon {
                 id: searchIcon
                 anchors.left: parent.left
@@ -455,7 +453,7 @@ Item {
             visible: !page.openThread && !page.composing && list.visible
             role: "body"
             muted: true
-            text: qsTr("Choose a conversation, or start a new one.")
+            text: qsTr("Select a conversation")
         }
 
         Item {
@@ -511,10 +509,8 @@ Item {
                 }
                 Txt {
                     width: parent.width
-                    visible: page.openThread && (page.openThread.isChat || page.openThread.title !== page.openThread.addresses)
-                    text: !page.openThread ? ""
-                        : page.openThread.isChat ? qsTr("Only messages that arrived while connected")
-                        : page.openThread.addresses
+                    visible: page.openThread && !page.openThread.isChat && page.openThread.title !== page.openThread.addresses
+                    text: !page.openThread ? "" : page.openThread.addresses
                     role: "bodySmall"
                     muted: true
                     elide: Text.ElideRight
@@ -745,8 +741,8 @@ Item {
                 role: "body"
                 muted: true
                 text: Messages.currentIsChat
-                    ? qsTr("Only messages that arrived while connected.")
-                    : qsTr("No messages to show. Android keeps texts with one-time codes from other apps for a few hours.")
+                    ? qsTr("No mirrored messages yet")
+                    : qsTr("No messages")
             }
         }
 
@@ -970,6 +966,9 @@ Item {
         property var thread
         readonly property bool selected: thread.id === Messages.thread
         readonly property bool isChat: !!thread.isChat
+        // Only the phone's own SMS app can mark texts read, so the one being
+        // read here would otherwise keep its unread look.
+        readonly property int unread: selected ? 0 : thread.unread
         height: 72
         activeFocusOnTab: true
         Accessible.role: Accessible.ListItem
@@ -996,7 +995,6 @@ Item {
                  : "transparent"
             border.width: Theme.focusVisible(row) ? 2 : 0
             border.color: Theme.primary
-            Behavior on color { ColorAnimation { duration: Theme.fadeFast } }
         }
         Item {
             id: face
@@ -1019,7 +1017,7 @@ Item {
                 name: row.thread.group || !named ? "" : row.thread.title
                 iconPath: row.thread.group ? Icons.messages : named ? "" : Icons.person
                 hue: named && !row.thread.group ? page.hueOf(row.thread.title) : -1
-                emphasized: row.thread.unread > 0
+                emphasized: row.unread > 0
             }
             Rectangle {
                 anchors.right: parent.right
@@ -1057,7 +1055,7 @@ Item {
                     width: Math.min(implicitWidth, parent.width - when.width - (appTag.visible ? appTag.width + 12 : 8))
                     text: row.thread.title
                     role: "body"
-                    weight: row.thread.unread > 0 ? 650 : 500
+                    weight: row.unread > 0 ? 650 : 500
                     elide: Text.ElideRight
                 }
                 Rectangle {
@@ -1085,7 +1083,7 @@ Item {
                     anchors.baseline: name.baseline
                     text: page.shortTime(row.thread.date)
                     role: "bodySmall"
-                    color: row.thread.unread > 0 ? Theme.primary : Theme.surfaceContentVariant
+                    color: row.unread > 0 ? Theme.primary : Theme.surfaceContentVariant
                 }
             }
             Item {
@@ -1104,7 +1102,7 @@ Item {
                         return s
                     }
                     role: "bodySmall"
-                    muted: row.thread.unread === 0
+                    muted: row.unread === 0
                     maximumLineCount: 1
                     elide: Text.ElideRight
                 }
@@ -1112,7 +1110,7 @@ Item {
                     id: badge
                     anchors.right: parent.right
                     anchors.verticalCenter: snippet.verticalCenter
-                    visible: row.thread.unread > 0
+                    visible: row.unread > 0
                     width: Math.max(20, count.implicitWidth + 10)
                     height: 20
                     radius: 10
@@ -1120,7 +1118,7 @@ Item {
                     Txt {
                         id: count
                         anchors.centerIn: parent
-                        text: row.thread.unread
+                        text: row.unread
                         role: "label"
                         size: 11
                         color: Theme.primaryContent
@@ -1185,8 +1183,9 @@ Item {
             anchors.left: bubble.mine ? undefined : parent.left
             anchors.leftMargin: 24
             anchors.rightMargin: 24
-            width: Math.max(pictures.width, Math.min(text.implicitWidth, bubble.maxWidth - 28) + 28)
-            height: pictures.height + (text.visible ? text.height + 18 : 0)
+            readonly property var audioList: bubble.message.audios || []
+            width: Math.max(pictures.width, audiosCol.width, Math.min(text.implicitWidth, bubble.maxWidth - 28) + 28)
+            height: pictures.height + audiosCol.height + (text.visible ? text.height + 18 : 0)
             radius: 18
             color: bubble.mine ? Theme.primaryContainer : Theme.surfaceContainerHigh
             border.width: Theme.graphite ? 1 : 0
@@ -1206,10 +1205,10 @@ Item {
                         activeFocusOnTab: modelData.length > 0
                         Accessible.role: Accessible.Button
                         Accessible.name: qsTr("Open image attachment")
-                        Accessible.onPressAction: if (picItem.modelData.length > 0) Qt.openUrlExternally(picItem.modelData)
+                        Accessible.onPressAction: if (picItem.modelData.length > 0) msgImagePreviewSheet.openFor(picItem.modelData)
                         Keys.onPressed: (event) => {
                             if (picItem.modelData.length > 0 && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space)) {
-                                Qt.openUrlExternally(picItem.modelData)
+                                msgImagePreviewSheet.openFor(picItem.modelData)
                                 event.accepted = true
                             }
                         }
@@ -1230,14 +1229,70 @@ Item {
                             visible: Theme.focusVisible(picItem)
                         }
                         Spinner { anchors.centerIn: parent; visible: parent.modelData.length === 0 }
-                        TapHandler { onTapped: if (parent.modelData.length > 0) Qt.openUrlExternally(parent.modelData) }
+                        TapHandler { onTapped: if (parent.modelData.length > 0) msgImagePreviewSheet.openFor(parent.modelData) }
                         HoverHandler { cursorShape: parent.modelData.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                    }
+                }
+            }
+            Column {
+                id: audiosCol
+                anchors.top: pictures.bottom
+                width: content.audioList.length > 0 ? Math.min(240, bubble.maxWidth) : 0
+                spacing: 4
+                Repeater {
+                    model: content.audioList
+                    delegate: Rectangle {
+                        id: audioPill
+                        required property var modelData
+                        width: audiosCol.width
+                        height: 44
+                        radius: 14
+                        color: "transparent"
+                        Row {
+                            x: 12
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 10
+                            Rectangle {
+                                width: 28; height: 28; radius: 14
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: bubble.mine ? Theme.primary : Theme.secondaryContainer
+                                Icon {
+                                    anchors.centerIn: parent
+                                    width: 14; height: 14
+                                    path: Icons.speaker
+                                    color: bubble.mine ? Theme.primaryContent : Theme.secondaryContainerContent
+                                }
+                            }
+                            Column {
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 1
+                                Txt {
+                                    role: "bodySmall"
+                                    weight: 600
+                                    color: bubble.mine ? Theme.primaryContainerContent : Theme.surfaceContent
+                                    text: qsTr("Voice note")
+                                }
+                                Txt {
+                                    role: "caption"
+                                    color: bubble.mine ? Theme.primaryContainerContent : Theme.surfaceContentVariant
+                                    opacity: 0.8
+                                    text: (audioPill.modelData.size || "") + (audioPill.modelData.url && audioPill.modelData.url.length > 0 ? qsTr(" · Click to play") : qsTr(" · Loading…"))
+                                }
+                            }
+                        }
+                        HoverHandler { cursorShape: audioPill.modelData.url && audioPill.modelData.url.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                        TapHandler {
+                            onTapped: {
+                                if (audioPill.modelData.url && audioPill.modelData.url.length > 0)
+                                    Qt.openUrlExternally(audioPill.modelData.url)
+                            }
+                        }
                     }
                 }
             }
             TextEdit {
                 id: text
-                anchors.top: pictures.bottom
+                anchors.top: audiosCol.bottom
                 anchors.topMargin: 9
                 x: 14
                 width: Math.min(implicitWidth, bubble.maxWidth - 28)
@@ -1313,5 +1368,84 @@ Item {
                 Timer { id: copiedTimer; interval: 2000; onTriggered: codeButton.copied = false }
             }
         }
+    }
+
+    // Inline lightbox preview for MMS image attachments.
+    Sheet {
+        id: msgImagePreviewSheet
+        property string imageUrl: ""
+        cardWidth: 680
+        function openFor(url) {
+            imageUrl = url || ""
+            if (imageUrl.length > 0)
+                open()
+        }
+        Column {
+            width: parent.width
+            spacing: 14
+            Item {
+                width: parent.width
+                height: Math.max(msgPreviewTitle.height, closeMsgPreviewBtn.height)
+                Txt {
+                    id: msgPreviewTitle
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    role: "headline"
+                    text: qsTr("Image attachment")
+                }
+                IconButton {
+                    id: closeMsgPreviewBtn
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconPath: Icons.close
+                    label: qsTr("Close")
+                    onClicked: msgImagePreviewSheet.close()
+                }
+            }
+            Rectangle {
+                width: parent.width
+                height: Math.min(480, Math.max(200, msgPreviewImg.status === Image.Ready
+                    ? width * msgPreviewImg.implicitHeight / Math.max(1, msgPreviewImg.implicitWidth)
+                    : 320))
+                radius: Theme.radiusMd
+                color: Theme.surfaceContainerHighest
+                clip: true
+                Image {
+                    id: msgPreviewImg
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    source: msgImagePreviewSheet.imageUrl
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                    mipmap: true
+                }
+            }
+            Row {
+                anchors.right: parent.right
+                spacing: 8
+                Button {
+                    variant: "tonal"
+                    iconPath: Icons.photo
+                    text: qsTr("Open externally")
+                    onClicked: Qt.openUrlExternally(msgImagePreviewSheet.imageUrl)
+                }
+                Button {
+                    text: qsTr("Done")
+                    onClicked: msgImagePreviewSheet.close()
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: 10
+        radius: Theme.radiusLg
+        color: "transparent"
+        border.width: 2
+        border.color: Theme.primary
+        visible: opacity > 0
+        opacity: AppController.highlightTarget === "messages:main" ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
     }
 }

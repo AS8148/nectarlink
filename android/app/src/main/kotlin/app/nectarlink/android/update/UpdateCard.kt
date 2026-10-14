@@ -12,6 +12,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -20,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -96,12 +98,28 @@ fun UpdateCard(updater: AppUpdater, modifier: Modifier = Modifier) {
     }
 }
 
-/** "Check for updates" in Settings, with what it found. */
+/** "Check for updates" in Settings, with what it found, and automatic updates on or off. */
 @Composable
 fun CheckForUpdates(updater: AppUpdater) {
     if (!updater.enabled) return
     val scope = rememberCoroutineScope()
     val state by updater.state.collectAsStateWithLifecycle()
+    val auto by updater.autoInstall.collectAsStateWithLifecycle()
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(stringResource(R.string.update_auto_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.update_auto_text),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = auto,
+            onCheckedChange = updater::setAutoInstall,
+            colors = app.nectarlink.android.ui.theme.nectarSwitchColors(),
+        )
+    }
     var checked by remember { mutableStateOf(false) }
     OutlinedButton(
         enabled = state !is AppUpdater.State.Checking && state !is AppUpdater.State.Downloading,

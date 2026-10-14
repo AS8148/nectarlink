@@ -202,9 +202,13 @@ fn link_addrs(mut addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
         IpAddr::V4(_) => 1,
         IpAddr::V6(_) => 2,
     };
-    addrs.retain(|a| match a.ip() {
+    let has_non_loopback = addrs.iter().any(|a| match a.ip() {
         IpAddr::V6(v6) => !v6.is_loopback() && !v6.is_unicast_link_local(),
         IpAddr::V4(v4) => !v4.is_loopback(),
+    });
+    addrs.retain(|a| match a.ip() {
+        IpAddr::V6(v6) => !v6.is_loopback() && !v6.is_unicast_link_local(),
+        IpAddr::V4(v4) => !has_non_loopback || !v4.is_loopback(),
     });
     addrs.sort_by_key(rank);
     let mut picked = Vec::new();
@@ -252,8 +256,14 @@ pub(crate) async fn join_qr(shared: &Arc<Shared>, uri: &PairingUri) -> Result<()
 /// mode. The 6-digit code arrives as [`PairingEvent::SasCode`]; answer with
 /// [`crate::Node::pairing_confirm`].
 pub(crate) async fn start_nearby(shared: &Arc<Shared>, peer: DeviceId) -> Result<()> {
-    let _nearby = shared.pairing.begin_nearby().ok_or(Error::Denied)?;
-    let conn = dial(shared, &peer).await?;
+    let nearby = shared.pairing.begin_nearby().ok_or(Error::Denied)?;
+    let conn = match dial(shared, &peer).await {
+        Ok(conn) => conn,
+        Err(e) => {
+            drop(nearby);
+            return Err(e);
+        }
+    };
     let result = async {
         let (mut send, mut recv) = conn.open_bi().await.map_err(crate::error::net)?;
         let n_a: [u8; NONCE_LEN] = rand::random();
@@ -269,6 +279,7 @@ pub(crate) async fn start_nearby(shared: &Arc<Shared>, peer: DeviceId) -> Result
         Ok(nonce.device)
     }
     .await;
+    drop(nearby);
     settle_initiator(shared, &conn, peer, result).await
 }
 
@@ -308,7 +319,8 @@ async fn settle_initiator(
 /// Handles an incoming pairing connection (host side of both flows).
 pub(crate) async fn accept(shared: Arc<Shared>, conn: Connection) {
     let peer = crate::device_id(&conn.remote_id());
-    if !shared.pairing.is_hosting() {
+    let is_usb = shared.is_usb_connection(&conn);
+    if !shared.pairing.is_hosting() && !is_usb {
         tracing::debug!(peer = %peer.short(), "refusing pairing connection: not in pairing mode");
         conn.close(VarInt::from_u32(ErrorCode::Denied.close_code()), b"not pairing");
         return;
@@ -324,18 +336,20 @@ pub(crate) async fn accept(shared: Arc<Shared>, conn: Connection) {
         let first = recv_env(&mut recv, STEP_TIMEOUT).await?;
         let device = match first.t.as_str() {
             types::PAIR_REQUEST => accept_qr(&shared, peer, first, &mut send).await?,
-            types::PAIR_COMMIT => match accept_nearby(&shared, peer, first, &mut send, &mut recv).await {
-                Ok(Some(device)) => device,
-                Ok(None) => return Err(Error::Denied),
-                Err(e) => {
-                    let ended = shared.pairing.record_failure();
-                    let err = fail(&shared, e);
-                    if ended && !matches!(err, Error::Denied) {
-                        shared.emit(NodeEvent::Pairing(PairingEvent::Failed(PairingFailure::Rejected)));
+            types::PAIR_COMMIT => {
+                match accept_nearby(&shared, peer, first, &mut send, &mut recv, is_usb).await {
+                    Ok(Some(device)) => device,
+                    Ok(None) => return Err(Error::Denied),
+                    Err(e) => {
+                        let ended = shared.pairing.record_failure();
+                        let err = fail(&shared, e);
+                        if ended && !matches!(err, Error::Denied) {
+                            shared.emit(NodeEvent::Pairing(PairingEvent::Failed(PairingFailure::Rejected)));
+                        }
+                        return Err(err);
                     }
-                    return Err(err);
                 }
-            },
+            }
             other => {
                 let reply = Envelope::error(ErrorCode::Unsupported, format!("unexpected {other}"));
                 send_env(&mut send, reply).await?;
@@ -395,8 +409,9 @@ async fn accept_nearby(
     env: Envelope,
     send: &mut SendStream,
     recv: &mut RecvStream,
+    is_usb: bool,
 ) -> Result<Option<DeviceInfo>> {
-    if !shared.pairing.is_hosting() {
+    if !shared.pairing.is_hosting() && !is_usb {
         send_env(send, Envelope::error(ErrorCode::Denied, "pairing mode ended")).await?;
         return Ok(None);
     }
@@ -405,6 +420,8 @@ async fn accept_nearby(
         return Ok(None);
     };
     let commit: PairCommit = env.body()?;
+    let peer_device = commit.device.sanitized();
+    shared.note_discovered(peer, Some(peer_device.name.clone()));
     let n_b: [u8; NONCE_LEN] = rand::random();
     let nonce = PairNonce { device: local_device(shared), n_b: n_b.to_vec() };
     send_env(send, Envelope::new(types::PAIR_NONCE, &nonce)?).await?;
@@ -418,7 +435,7 @@ async fn accept_nearby(
     let code = proto::sas_code(&reveal.n_a, &n_b, &peer, &shared.id);
     exchange_decisions(shared, peer, code, send, recv, Role::Host).await?;
     shared.pairing.end_host();
-    Ok(Some(commit.device))
+    Ok(Some(peer_device))
 }
 
 // ---- Code comparison ----
@@ -486,7 +503,10 @@ fn local_device(shared: &Shared) -> DeviceInfo {
 }
 
 async fn dial(shared: &Arc<Shared>, peer: &DeviceId) -> Result<Connection> {
-    let addr = EndpointAddr::new(crate::public_key(peer)?);
+    let mut addr = EndpointAddr::new(crate::public_key(peer)?);
+    if let Some(usb_addr) = shared.usb_peer_addr(peer) {
+        addr = addr.with_ip_addr(usb_addr);
+    }
     let err = match tokio::time::timeout(DIAL_TIMEOUT, shared.endpoint.connect(addr, ALPN_PAIR)).await {
         Ok(Ok(conn)) => return Ok(conn),
         Ok(Err(e)) => crate::error::net(e),
@@ -525,18 +545,21 @@ mod tests {
     #[test]
     fn pairing_links_carry_the_useful_addresses() {
         let addrs: Vec<SocketAddr> = [
-            "[2409:40d2::1]:5000",
+            "[2001:db8:1::1]:5000",
             "[fe80::1]:5000",
             "100.64.0.1:5000",
-            "[2409:40d2::2]:5000",
-            "192.168.31.121:5000",
+            "[2001:db8:1::2]:5000",
+            "192.168.1.20:5000",
             "127.0.0.1:5000",
         ]
         .iter()
         .map(|a| a.parse().unwrap())
         .collect();
         let picked: Vec<String> = link_addrs(addrs).iter().map(ToString::to_string).collect();
-        assert_eq!(picked, ["192.168.31.121:5000", "100.64.0.1:5000", "[2409:40d2::1]:5000"]);
+        assert_eq!(picked, ["192.168.1.20:5000", "100.64.0.1:5000", "[2001:db8:1::1]:5000"]);
+        let loopback_only: Vec<SocketAddr> = ["127.0.0.1:5000".parse().unwrap()].into();
+        let fallback: Vec<String> = link_addrs(loopback_only).iter().map(ToString::to_string).collect();
+        assert_eq!(fallback, ["127.0.0.1:5000"]);
         assert!(link_addrs(Vec::new()).is_empty());
     }
 

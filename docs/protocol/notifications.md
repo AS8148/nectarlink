@@ -26,7 +26,7 @@ doesn't know them ignores them (v0 §3.1).
 
 ```
 Notification = {
-  key:      text,        // The phone's ID for it (Android: StatusBarNotification key), 1–256 bytes
+  key:      text,        // The phone's ID for it (Android: StatusBarNotification key), 1 to 256 bytes
   app:      text,        // Package name, e.g. "com.whatsapp"
   app_name: text,        // User-visible app name, e.g. "WhatsApp"
   title:    text?,       // e.g. the sender
@@ -42,7 +42,7 @@ Notification = {
 }
 
 Action = {
-  id:    text,           // Opaque to the PC, 1–64 bytes
+  id:    text,           // Opaque to the PC, 1 to 64 bytes
   title: text,           // Button label, e.g. "Mark as read"
   reply: bool,           // Takes text (an inline reply field)
 }

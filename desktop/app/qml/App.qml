@@ -21,6 +21,29 @@ QtObject {
         active: AppController.laserActive
         source: active ? "qrc:/qt/qml/app/nectarlink/qml/LaserOverlay.qml" : ""
     }
+    property var islandWindow: null
+    readonly property Component islandWindowComponent: Component {
+        IslandWindow {}
+    }
+
+    function syncIslandWindow() {
+        if (Preferences.nectarIsland) {
+            if (!app.islandWindow) {
+                const w = islandWindowComponent.createObject(app)
+                if (w) {
+                    app.islandWindow = w
+                } else {
+                    console.warn("IslandWindow createObject failed:", islandWindowComponent.errorString())
+                }
+            }
+        } else {
+            if (app.islandWindow) {
+                app.islandWindow.destroy()
+                app.islandWindow = null
+            }
+        }
+    }
+
     property var shelfWindow: null
     readonly property Component shelfWindowComponent: Component {
         ShelfWindow {}
@@ -119,8 +142,10 @@ QtObject {
     Component.onCompleted: {
         Mirror.windowsChanged.connect(app.syncMirrorWindows)
         AppController.shelfOpenChanged.connect(app.syncShelfWindow)
+        Preferences.nectarIslandChanged.connect(app.syncIslandWindow)
         app.syncMirrorWindows()
         app.syncShelfWindow()
+        app.syncIslandWindow()
         if (!startMinimized)
             showMain()
         else

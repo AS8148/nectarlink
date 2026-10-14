@@ -60,7 +60,7 @@ internal class NotificationReader(private val context: Context) {
             actions = actions(n),
             silent = silent,
             icon = icon(sbn.packageName),
-            image = image(sbn.key, n),
+            image = image(sbn.key, n, content.title, content.text),
             live = live,
             conversation = conversation,
         )
@@ -192,13 +192,17 @@ internal class NotificationReader(private val context: Context) {
      * the last image in a conversation. `null` when there's none or it
      * can't be read (images in messages often aren't shared with listeners).
      */
-    private fun image(key: String, n: Notification): ByteArray? = runCatching {
+    private fun image(key: String, n: Notification, title: String?, text: String?): ByteArray? = runCatching {
         val source = pictureSource(n) ?: return null
-        images.get("$key\u0001${source.id}")?.let { return it }
+        // Apps reuse a key for new posts (X does), and a bitmap's size and
+        // generation ID can repeat, so the post's text is part of the key too:
+        // an update to the same post reuses its picture, a new post never does.
+        val cacheKey = "$key\u0001${source.id}\u0001${title.orEmpty()}\u0001${text.orEmpty()}"
+        images.get(cacheKey)?.let { return it }
         val bitmap = source.load() ?: return null
         jpeg(bitmap).also { bytes ->
             if (bitmap !== source.owned) bitmap.recycle()
-            if (bytes != null) images.put("$key\u0001${source.id}", bytes)
+            if (bytes != null) images.put(cacheKey, bytes)
         }
     }.getOrNull()
 

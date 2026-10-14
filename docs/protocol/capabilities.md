@@ -1,7 +1,7 @@
 # Capability registry
 
 Capability IDs a device may announce in `hello.caps` and `hello.update`
-(protocol §5–6). A device announces a capability only when it can provide it
+(protocol §5 to 6). A device announces a capability only when it can provide it
 **right now**: with its current power level, permissions, add-ons and OS
 version.
 

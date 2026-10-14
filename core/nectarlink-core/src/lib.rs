@@ -27,6 +27,7 @@ mod node;
 mod notifications;
 pub mod otp;
 mod pairing;
+pub mod palette;
 mod photos;
 pub mod remote;
 mod session;
@@ -36,6 +37,7 @@ mod store;
 pub mod timeline;
 pub mod toggles;
 mod transfer;
+pub mod usb;
 pub mod webcam;
 
 pub use actions::{PC_WAKE, PowerAction};
@@ -61,15 +63,16 @@ pub use events::{
 pub use features::{CapabilityMatrix, FeatureState};
 pub use handoff::{
     HandoffKind, HandoffLink, address_to_geo_uri, extract_handoff_link, format_video_timestamp,
-    geo_to_maps_https, is_safe_handoff_document, parse_video_timestamp, with_video_timestamp,
+    geo_to_maps_https, is_safe_handoff_document, parse_video_timestamp, timeline_link_title_and_detail,
+    with_video_timestamp,
 };
-pub use identity::{KeyProtector, PlainKeyProtector, default_protector};
+pub use identity::{KeyProtector, PlainKeyProtector, default_protector, install_id_from};
 pub use localsend::{
     LOCALSEND_DEFAULT_PORT, LOCALSEND_MULTICAST_ADDR, LOCALSEND_PROTOCOL_VERSION, LocalSendPeer,
     peer_device_id as localsend_peer_device_id,
 };
 pub use media::{MediaAction, MediaError};
-pub use mirror::{MirrorSend, MirrorSink, MirrorStream};
+pub use mirror::{MirrorSend, MirrorSink, MirrorStream, PC_MIRROR_TOGGLE};
 pub use nectarlink_protocol::messages::clip::{
     IMAGE_TYPES as CLIP_IMAGE_TYPES, MAX_IMAGE_BYTES as CLIP_MAX_IMAGE_BYTES,
 };
@@ -99,10 +102,10 @@ pub use nectarlink_protocol::{
         format_mac, ipv4_broadcast, is_package_name, is_valid_storage_dir_path, is_valid_storage_id,
         is_valid_storage_name, is_valid_storage_path, magic_packet,
         mirror::{
-            AUDIO as MIRROR_AUDIO, AUDIO_PLAYBACK as MIRROR_AUDIO_PLAYBACK, CAPTURE as MIRROR_CAPTURE,
-            INPUT as MIRROR_INPUT, LISTEN as MIRROR_LISTEN, MAX_TEXT_BYTES as MIRROR_MAX_TEXT_BYTES,
-            PCM as MIRROR_PCM, SCREEN as MIRROR_SCREEN, VIEW as MIRROR_VIEW,
-            VIRTUAL_DISPLAY as MIRROR_VIRTUAL_DISPLAY,
+            AUDIO as MIRROR_AUDIO, AUDIO_PLAYBACK as MIRROR_AUDIO_PLAYBACK, AV1 as MIRROR_AV1,
+            CAPTURE as MIRROR_CAPTURE, H264 as MIRROR_H264, H265 as MIRROR_H265, INPUT as MIRROR_INPUT,
+            LISTEN as MIRROR_LISTEN, MAX_TEXT_BYTES as MIRROR_MAX_TEXT_BYTES, PCM as MIRROR_PCM,
+            SCREEN as MIRROR_SCREEN, VIEW as MIRROR_VIEW, VIRTUAL_DISPLAY as MIRROR_VIRTUAL_DISPLAY,
         },
         mirror_keys, notify_limits, parse_mac,
         photos::{
@@ -130,22 +133,31 @@ pub use nectarlink_protocol::{
     },
     pairing::PairingUri,
 };
-pub use node::{DataRetentionCounts, Node};
+pub use node::{DataRetentionCounts, Node, PeerDiagnostics};
 pub use notifications::NotificationError;
+pub use palette::{
+    ACHROMATIC_SEED_RGB, MAX_SAMPLE_SIDE, Palette as ThemePaletteMap, RolePalette, ThemeScheme,
+    achromatic_scheme, downsample_rgb, downsample_rgba, extract_artwork_scheme_rgb,
+    extract_artwork_scheme_rgba, scheme_from_seed_rgb, scheme_json, seed_from_grid, seed_from_pixels,
+};
 pub use remote::{ButtonAction, INPUT_INJECT, KeyMod, MouseButton, RemoteInput, SlideAction, remote_keys};
 pub use storage::{FolderStorage, StorageError, StorageReadFile, TOGGLE as STORAGE_TOGGLE};
 pub use store::{
     CHAT_RETENTION_SECS, ChatMessageRecord, ChatThreadRecord, MAX_CHAT_MESSAGES_PER_THREAD,
-    MAX_CHAT_THREADS_PER_PEER, chat_thread_id,
+    MAX_CHAT_THREADS_PER_PEER, MAX_QUEUE_ACTIVE_BYTES, MAX_QUEUE_ACTIVE_ITEMS,
+    MAX_QUEUE_CLIPBOARD_IMAGE_BYTES, QueueItem, QueueKind, QueuePayload, QueueStatus, QueuedFileSpec,
+    chat_thread_id, file_mtime_ms,
 };
 pub use timeline::{
     DEFAULT_TIMELINE_MAX_DAYS, DEFAULT_TIMELINE_MAX_ENTRIES, DEFAULT_TIMELINE_PAGE_LIMIT,
     MAX_TIMELINE_PAGE_LIMIT, TimelineEntry, TimelineKind, TimelinePage, TimelineQuery, TimelineRetention,
+    format_clip_display,
 };
 pub use transfer::{
     Direction, FileSource, OutgoingFile, RECORDER, RecordingMarker, Transfer, TransferFailure, TransferState,
     outgoing_paths, safe_file_name,
 };
+pub use usb::{DEFAULT_ADB_ADDR, DEFAULT_USB_PORT};
 pub use webcam::{TOGGLE as WEBCAM_TOGGLE, WebcamSink};
 
 pub(crate) fn device_id(key: &iroh::PublicKey) -> DeviceId {
@@ -160,5 +172,12 @@ pub(crate) fn now_unix() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
+        .unwrap_or_default()
+}
+
+pub(crate) fn now_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
         .unwrap_or_default()
 }

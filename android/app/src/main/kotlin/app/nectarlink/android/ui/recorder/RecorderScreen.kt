@@ -10,6 +10,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,9 +28,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -50,6 +51,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -59,8 +61,6 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import app.nectarlink.android.ui.theme.LocalAppFonts
-import app.nectarlink.android.ui.theme.LocalReducedMotion
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -72,7 +72,11 @@ import app.nectarlink.android.core.Device
 import app.nectarlink.android.recorder.DeliveryState
 import app.nectarlink.android.recorder.RecorderService
 import app.nectarlink.android.recorder.SavedRecording
+import app.nectarlink.android.ui.theme.LocalAppFonts
+import app.nectarlink.android.ui.theme.LocalReducedMotion
 import kotlin.math.sin
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -84,7 +88,16 @@ fun RecorderScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val session by RecorderService.session.collectAsStateWithLifecycle()
+    val initialSession = remember { RecorderService.currentSession() }
+    val session by remember {
+        RecorderService.session.distinctUntilChanged { a, b ->
+            a.active == b.active &&
+                a.paused == b.paused &&
+                a.pcId == b.pcId &&
+                a.markers == b.markers &&
+                (a.elapsedMs / 1000L) == (b.elapsedMs / 1000L)
+        }
+    }.collectAsStateWithLifecycle(initialValue = initialSession)
     val recordings by core.recordings.recordings.collectAsStateWithLifecycle()
 
     var hasMicPermission by remember { mutableStateOf(RecorderService.hasPermission(context)) }
@@ -142,20 +155,13 @@ fun RecorderScreen(
         onDispose { stopPlayback() }
     }
 
-    val reducedMotion = LocalReducedMotion.current
-    val animatedLevel by animateFloatAsState(
-        targetValue = if (session.active && !session.paused) session.level else 0f,
-        animationSpec = if (reducedMotion) snap() else spring(),
-        label = "micLevel",
-    )
-
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         // Header: Back, PC name, online dot
-        item {
+        item(key = "header", contentType = "header") {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -172,17 +178,18 @@ fun RecorderScreen(
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f),
                 )
-                Surface(
-                    shape = CircleShape,
-                    color = if (device.online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.size(10.dp),
-                ) {}
+                val dotColor = if (device.online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                Spacer(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .drawBehind { drawCircle(dotColor) },
+                )
             }
         }
 
         // Contextual permission card when microphone access has not been granted yet
         if (!hasMicPermission) {
-            item {
+            item(key = "mic_permission", contentType = "permission_banner") {
                 Surface(
                     shape = MaterialTheme.shapes.extraLarge,
                     color = MaterialTheme.colorScheme.secondaryContainer,
@@ -215,7 +222,7 @@ fun RecorderScreen(
 
         // Offline notice when PC isn't currently connected
         if (!device.online) {
-            item {
+            item(key = "offline_notice", contentType = "offline_banner") {
                 Surface(
                     shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -237,7 +244,7 @@ fun RecorderScreen(
         }
 
         // Main Recorder Card: elapsed time, live level meter, big record/pause/stop buttons, markers
-        item {
+        item(key = "recorder_card", contentType = "recorder_card") {
             Surface(
                 shape = MaterialTheme.shapes.extraLarge,
                 color = MaterialTheme.colorScheme.primaryContainer,
@@ -266,9 +273,8 @@ fun RecorderScreen(
                     )
                     Spacer(Modifier.height(16.dp))
 
-                    // Live level meter
+                    // Live level meter (collects 25Hz mic level internally in draw phase)
                     LevelMeter(
-                        level = animatedLevel,
                         active = session.active && !session.paused,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -390,9 +396,14 @@ fun RecorderScreen(
                                 session.markers.forEachIndexed { idx, m ->
                                     val ts = RecorderService.formatDuration(m.atMs.toLong())
                                     val label = m.label ?: stringResource(R.string.recorder_marker_default, idx + 1)
-                                    AssistChip(
-                                        onClick = {},
-                                        label = { Text(stringResource(R.string.recorder_marker_chip, ts, label)) },
+                                    // A label, not a button: markers aren't actionable here.
+                                    Text(
+                                        text = stringResource(R.string.recorder_marker_chip, ts, label),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier
+                                            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(8.dp))
+                                            .padding(horizontal = 12.dp, vertical = 6.dp),
                                     )
                                 }
                             }
@@ -404,14 +415,14 @@ fun RecorderScreen(
 
         // Saved recordings list: play, send again, delete
         if (recordings.isNotEmpty()) {
-            item {
+            item(key = "saved_header", contentType = "section_header") {
                 Text(
                     stringResource(R.string.recorder_saved_title),
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
-            items(recordings, key = { it.id }) { rec ->
+            items(recordings, key = { it.id }, contentType = { "recording_row" }) { rec ->
                 RecordingRow(
                     recording = rec,
                     pcName = state.nameOf(rec.targetPcId ?: device.id) ?: device.name,
@@ -430,13 +441,22 @@ fun RecorderScreen(
 
 @Composable
 private fun LevelMeter(
-    level: Float,
     active: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val rawLevel by remember {
+        RecorderService.session.map { if (it.active && !it.paused) it.level else 0f }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = 0f)
+    val reducedMotion = LocalReducedMotion.current
+    val animatedLevelState = animateFloatAsState(
+        targetValue = if (active) rawLevel else 0f,
+        animationSpec = if (reducedMotion) snap() else spring(),
+        label = "micLevel",
+    )
     val activeColor = MaterialTheme.colorScheme.primary
     val inactiveColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f)
     Canvas(modifier = modifier) {
+        val level = animatedLevelState.value
         val barCount = 24
         val gap = 4.dp.toPx()
         val totalGaps = gap * (barCount - 1)

@@ -26,18 +26,20 @@ use windows::{
 /// inside Windows' Frame Server service, in another session than the app, so
 /// it has to be in the global namespace: the service creates it (only
 /// services may create global objects) and the signed-in user's app opens it.
-pub const DEFAULT_MAPPING_NAME: &str = "Global\\NectarlinkVcamFrame_v1";
+pub const DEFAULT_MAPPING_NAME: &str = "Global\\NectarlinkVcamFrame_v2";
 /// The same mapping in the caller's own session, when the global one can't be
 /// created (the media source running in-process, as in tests).
-pub const LOCAL_MAPPING_NAME: &str = "Local\\NectarlinkVcamFrame_v1";
+pub const LOCAL_MAPPING_NAME: &str = "Local\\NectarlinkVcamFrame_v2";
+/// Wide-string mapping name for local v2 virtual camera frame transport.
+pub const MAPPING_NAME: PCWSTR = w!("Local\\NectarlinkVirtualCamera_v2");
 
 /// Who may use the global mapping: the system, the Frame Server's
 /// LocalService account and administrators fully, signed-in (interactive)
 /// users read and write (the app), nobody else.
 const GLOBAL_SDDL: PCWSTR = w!("D:P(A;;GA;;;SY)(A;;GA;;;LS)(A;;GA;;;BA)(A;;GRGW;;;IU)");
 
-pub const MAX_WIDTH: u32 = 1920;
-pub const MAX_HEIGHT: u32 = 1080;
+pub const MAX_WIDTH: u32 = 3840;
+pub const MAX_HEIGHT: u32 = 2160;
 pub const MAX_FRAME_BYTES: usize = (MAX_WIDTH as usize) * (MAX_HEIGHT as usize) * 4;
 pub const HEADER_BYTES: usize = std::mem::size_of::<SharedHeader>();
 pub const TOTAL_MAPPING_BYTES: usize = HEADER_BYTES + MAX_FRAME_BYTES;
@@ -223,7 +225,7 @@ impl SharedFrameMapping {
 
     /// Writes a decoded top-down BGRX frame into the shared mapping.
     /// If `width > MAX_WIDTH` or `height > MAX_HEIGHT`, scales down to fit
-    /// `1920x1080`. Optionally mirrors horizontally when `mirror` is true.
+    /// `3840x2160`. Optionally mirrors horizontally when `mirror` is true.
     #[allow(unsafe_code)]
     pub fn write_frame(
         &self,
@@ -335,6 +337,22 @@ fn scale_or_mirror_bgrx(
     let sh = src_h as usize;
     let dw = dst_w as usize;
     let dh = dst_h as usize;
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+        return;
+    }
+    if sw == dw && sh == dh && mirror {
+        let row_bytes = sw * 4;
+        for (src_row, dst_row) in src[..sh * row_bytes]
+            .chunks_exact(row_bytes)
+            .zip(dst[..dh * row_bytes].chunks_exact_mut(row_bytes))
+        {
+            for (i, d_px) in dst_row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                let s_idx = row_bytes - (i + 1) * 4;
+                d_px.copy_from_slice(&src_row[s_idx..s_idx + 4]);
+            }
+        }
+        return;
+    }
     for y in 0..dh {
         let sy = (y * sh / dh).min(sh - 1);
         let src_row = &src[sy * sw * 4..(sy + 1) * sw * 4];
@@ -773,5 +791,14 @@ mod tests {
         let has_text_ink =
             frame.as_chunks::<4>().0.iter().any(|px| px[0] > 0xD0 && px[1] > 0xD0 && px[2] > 0xD0);
         assert!(has_text_ink, "placeholder should include bright headline text ink");
+    }
+
+    #[test]
+    fn supports_4k_uhd_frame_dimensions_and_mapping_v2() {
+        assert_eq!(MAX_WIDTH, 3840);
+        assert_eq!(MAX_HEIGHT, 2160);
+        assert_eq!(MAX_FRAME_BYTES, 3840 * 2160 * 4);
+        assert!(DEFAULT_MAPPING_NAME.ends_with("_v2"));
+        assert!(LOCAL_MAPPING_NAME.ends_with("_v2"));
     }
 }

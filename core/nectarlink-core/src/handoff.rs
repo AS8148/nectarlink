@@ -209,6 +209,66 @@ pub fn address_to_geo_uri(address: &str) -> String {
     format!("geo:0,0?q={}", percent_encode_query(address.trim()))
 }
 
+/// Formats a friendly Timeline `(title, detail)` pair for a handed-off link,
+/// map location, or video URL, keeping the raw link in `detail`.
+///
+/// Examples:
+/// - `geo:37.7749,-122.4194?q=San+Francisco` -> `("San Francisco on a map", "geo:37.7749,-122.4194?q=San+Francisco")`
+/// - `https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90` with media title `"Demo Video"`
+///   -> `("Demo Video · 1:30", "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90")`
+/// - `https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90` without media title
+///   -> `("YouTube · 1:30", "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90")`
+/// - `https://nectarlink.app/timeline` -> `("nectarlink.app/timeline", "https://nectarlink.app/timeline")`
+#[must_use]
+pub fn timeline_link_title_and_detail(url: &str, media_title: Option<&str>) -> (String, String) {
+    let raw = url.trim().to_owned();
+    let clean_media = media_title.map(|t| truncate_label(t, 80)).filter(|t| !t.is_empty());
+
+    if let Some(h) = extract_handoff_link(&raw) {
+        let title = match h.kind {
+            HandoffKind::MapLocation => match h.map_query {
+                Some(place) => format!("{place} on a map"),
+                None => "Map location".to_owned(),
+            },
+            HandoffKind::VideoLink => match (clean_media, h.timestamp_secs) {
+                (Some(t), Some(secs)) => format!("{t} · {}", format_video_timestamp(secs)),
+                (Some(t), None) => t,
+                (None, _) => h.label,
+            },
+            HandoffKind::WebLink => {
+                if let Some(t) = clean_media {
+                    t
+                } else {
+                    friendly_web_title(&raw, &h.label)
+                }
+            }
+        };
+        return (title, raw);
+    }
+
+    let fallback_host = link_host(&raw);
+    let title = if let Some(t) = clean_media {
+        t
+    } else if !fallback_host.is_empty() {
+        fallback_host.to_owned()
+    } else {
+        raw.clone()
+    };
+    (title, raw)
+}
+
+fn friendly_web_title(url: &str, host: &str) -> String {
+    let clean_host = host.strip_prefix("www.").unwrap_or(host);
+    let Some(after_scheme) = url.split("://").nth(1) else {
+        return clean_host.to_owned();
+    };
+    let Some(slash_idx) = after_scheme.find('/') else {
+        return clean_host.to_owned();
+    };
+    let path = after_scheme[slash_idx..].split(['?', '#']).next().unwrap_or("").trim_matches('/');
+    if path.is_empty() { clean_host.to_owned() } else { truncate_label(&format!("{clean_host}/{path}"), 60) }
+}
+
 fn find_url_or_geo_token(text: &str) -> Option<String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -589,5 +649,28 @@ mod tests {
         ] {
             assert!(!is_safe_handoff_document(unsafe_name), "{unsafe_name} must be rejected");
         }
+    }
+
+    #[test]
+    fn formats_friendly_timeline_link_titles_and_keeps_raw_url_in_detail() {
+        let (title, detail) = timeline_link_title_and_detail("geo:37.7749,-122.4194?q=San+Francisco", None);
+        assert_eq!(title, "San Francisco on a map");
+        assert_eq!(detail, "geo:37.7749,-122.4194?q=San+Francisco");
+
+        let (v_title, v_detail) = timeline_link_title_and_detail(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90",
+            Some("Never Gonna Give You Up"),
+        );
+        assert_eq!(v_title, "Never Gonna Give You Up · 1:30");
+        assert_eq!(v_detail, "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90");
+
+        let (v_site, v_site_detail) =
+            timeline_link_title_and_detail("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90", None);
+        assert_eq!(v_site, "YouTube · 1:30");
+        assert_eq!(v_site_detail, "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90");
+
+        let (w_title, w_detail) = timeline_link_title_and_detail("https://nectarlink.app/timeline", None);
+        assert_eq!(w_title, "nectarlink.app/timeline");
+        assert_eq!(w_detail, "https://nectarlink.app/timeline");
     }
 }

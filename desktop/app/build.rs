@@ -17,6 +17,7 @@ mod mark;
 
 const QML: &[&str] = &[
     "qml/App.qml",
+    "qml/IslandWindow.qml",
     "qml/LaserOverlay.qml",
     "qml/MainWindow.qml",
     "qml/MirrorWindow.qml",
@@ -31,6 +32,7 @@ const QML: &[&str] = &[
     "qml/components/CodeDigits.qml",
     "qml/components/CommandPalette.qml",
     "qml/components/Divider.qml",
+    "qml/components/GlassRim.qml",
     "qml/components/DoctorSheet.qml",
     "qml/components/HistoryItem.qml",
     "qml/components/Icon.qml",
@@ -50,15 +52,22 @@ const QML: &[&str] = &[
     "qml/components/Toggle.qml",
     "qml/components/TransferItem.qml",
     "qml/components/Txt.qml",
+    "qml/pages/AppsPage.qml",
     "qml/pages/CallsPage.qml",
     "qml/pages/DeckPage.qml",
+    "qml/pages/FeaturesGuidePage.qml",
     "qml/pages/HomePage.qml",
     "qml/pages/MessagesPage.qml",
     "qml/pages/PairingPanel.qml",
     "qml/pages/PhotosPage.qml",
     "qml/pages/SettingsPage.qml",
     "qml/pages/TimelinePage.qml",
+    "qml/pages/WalkthroughPage.qml",
     "qml/pages/WelcomePage.qml",
+    "qml/setup/HiveBackdrop.qml",
+    "qml/setup/SadBee.qml",
+    "qml/setup/SetupButton.qml",
+    "qml/setup/SetupWindow.qml",
 ];
 
 /// QML singletons.
@@ -145,6 +154,41 @@ fn icon_file() -> Vec<u8> {
     ico
 }
 
+/// Fragment shaders, served under `qrc:/shaders/`.
+const SHADERS: &[&str] = &["glassrim.frag", "hive.frag"];
+
+/// Compiles the shaders with Qt's `qsb` when it can be found (next to qmake, or on PATH),
+/// otherwise uses the compiled copies committed beside the sources. Returns the qrc path.
+fn shaders_qrc() -> PathBuf {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("shaders");
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
+    let qsb = std::env::var_os("QMAKE")
+        .map(PathBuf::from)
+        .and_then(|qmake| qmake.parent().map(|bin| bin.join("qsb")))
+        .unwrap_or_else(|| PathBuf::from("qsb"));
+    let mut qrc = String::from("<RCC>\n  <qresource prefix=\"/shaders\">\n");
+    for shader in SHADERS {
+        let source = src.join(shader);
+        let committed = src.join(format!("{shader}.qsb"));
+        println!("cargo::rerun-if-changed={}", source.display());
+        println!("cargo::rerun-if-changed={}", committed.display());
+        let built = out.join(format!("{shader}.qsb"));
+        let compiled = std::process::Command::new(&qsb)
+            .args(["--glsl", "100es,120,150", "--hlsl", "50", "--msl", "12", "-o"])
+            .arg(&built)
+            .arg(&source)
+            .status()
+            .is_ok_and(|s| s.success());
+        let path = if compiled { built } else { committed };
+        let path = path.display().to_string().replace('\\', "/");
+        qrc.push_str(&format!("    <file alias=\"{shader}.qsb\">{path}</file>\n"));
+    }
+    qrc.push_str("  </qresource>\n</RCC>\n");
+    let qrc_path = out.join("shaders.qrc");
+    write_if_changed(&qrc_path, qrc);
+    qrc_path
+}
+
 /// The .exe's icon and version information (what Explorer, shortcuts and
 /// Task Manager show).
 fn windows_resources() {
@@ -213,6 +257,7 @@ fn main() {
             "cpp/video_view.cpp",
         ])
         .qrc(fonts_qrc())
+        .qrc(shaders_qrc())
         .files([
             "src/bridge/native.rs",
             "src/bridge/app.rs",
@@ -226,6 +271,7 @@ fn main() {
             "src/bridge/pairing.rs",
             "src/bridge/photos.rs",
             "src/bridge/prefs.rs",
+            "src/bridge/setup.rs",
             "src/bridge/timeline.rs",
             "src/bridge/transfers.rs",
             "src/bridge/webcam.rs",

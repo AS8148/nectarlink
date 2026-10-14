@@ -1,12 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Updates for an installed copy: the latest GitHub release is checked at
-//! startup and once a day (unless turned off). When it's newer, the user is
-//! told and can update: the installer is downloaded, checked against the
-//! release's SHA-256 sums, and run silently; it closes this copy, installs
-//! and opens the new one.
+//! startup and once a day (unless turned off). A newer one is downloaded,
+//! checked against the release's SHA-256 sums, and installed silently.
+//!
+//! The app lives in Program Files, so installing needs administrator rights.
+//! The installer registers a scheduled task, [`TASK`], that runs this program
+//! as SYSTEM with [`SERVICE_ARG`]: it takes nothing from the user, fetches
+//! the latest release itself, and only ever installs a newer published one.
+//! Any signed-in user may start it, so updates need no prompt. With
+//! automatic updates on, the app starts it at a quiet moment (nobody at the
+//! PC, nothing being mirrored, sent or called); "Update" starts it right
+//! away. Without the task (a copy installed before it existed), "Update"
+//! runs the installer with the usual administrator prompt.
+//!
+//! The installer replaces the running app, so the app starts a small hidden
+//! relauncher first and quits; the relauncher opens the new version once the
+//! installer is done.
 
 use std::{
-    path::PathBuf,
+    os::windows::process::CommandExt,
+    path::{Path, PathBuf},
+    process::ExitCode,
     sync::{
         Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering},
@@ -41,7 +55,19 @@ pub struct Update {
     sums_url: String,
 }
 
+/// The scheduled task the installer registers (see the module docs).
+pub const TASK: &str = "Nectarlink Update";
+/// What the task runs: `nectarlink-desktop.exe --update-service`.
+pub const SERVICE_ARG: &str = "--update-service";
+/// How long nobody may have used the PC before an update installs by itself.
+const QUIET_FOR: Duration = Duration::from_secs(10 * 60);
+/// While an update waits for a quiet moment, how often to look for one.
+const LOOK_FOR_QUIET: Duration = Duration::from_secs(5 * 60);
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const DETACHED_PROCESS: u32 = 0x0000_0008;
+
 static AUTO: AtomicBool = AtomicBool::new(true);
+static AUTO_INSTALL: AtomicBool = AtomicBool::new(true);
 static CHECKING: AtomicBool = AtomicBool::new(false);
 static FOUND: Mutex<Option<Update>> = Mutex::new(None);
 
@@ -56,6 +82,11 @@ pub fn available() -> Option<Update> {
 
 pub fn set_auto(on: bool) {
     AUTO.store(on, Ordering::Relaxed);
+}
+
+/// Whether a newer release installs by itself at a quiet moment.
+pub fn set_auto_install(on: bool) {
+    AUTO_INSTALL.store(on, Ordering::Relaxed);
 }
 
 /// Whether this copy updates itself (an installed one, not a build run
@@ -75,7 +106,22 @@ pub fn start() {
             if AUTO.load(Ordering::Relaxed) {
                 check_now(false);
             }
-            std::thread::sleep(EVERY);
+            // Daily; while an update waits to install itself, look for a quiet moment.
+            let next_check = std::time::Instant::now() + EVERY;
+            while let Some(left) = next_check.checked_duration_since(std::time::Instant::now()) {
+                if AUTO.load(Ordering::Relaxed)
+                    && AUTO_INSTALL.load(Ordering::Relaxed)
+                    && available().is_some()
+                    && quiet()
+                    && task_registered()
+                {
+                    tracing::info!("installing the update at a quiet moment");
+                    if let Err(e) = install_with_task(false) {
+                        tracing::warn!(error = e, "the automatic update didn't start");
+                    }
+                }
+                std::thread::sleep(left.min(LOOK_FOR_QUIET));
+            }
         }
     });
     if let Err(e) = spawned {
@@ -144,7 +190,12 @@ struct Asset {
 }
 
 fn latest() -> Result<Option<Update>, String> {
-    let body = http::get(LATEST, 1024 * 1024)?;
+    let body = match http::get(LATEST, 1024 * 1024) {
+        Ok(body) => body,
+        // GitHub answers 404 until the first release is published: nothing newer.
+        Err(e) if e == "HTTP 404" => return Ok(None),
+        Err(e) => return Err(e),
+    };
     let release: Release = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
     Ok(newer_release(release, env!("CARGO_PKG_VERSION")))
 }
@@ -166,7 +217,13 @@ fn newer_release_for(release: Release, current: &str, suffix: &str) -> Option<Up
     if !is_newer(&version, current) {
         return None;
     }
-    let installer = release.assets.iter().find(|a| a.name.ends_with(suffix))?;
+    // The name becomes a file name under %TEMP%: a plain name only, never a path.
+    let installer = release.assets.iter().find(|a| {
+        a.name.ends_with(suffix)
+            && a.name.starts_with("Nectarlink-")
+            && a.name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'))
+            && !a.name.contains("..")
+    })?;
     let sums = release.assets.iter().find(|a| a.name == "SHA256SUMS.txt")?;
     Some(Update {
         version,
@@ -182,7 +239,7 @@ type Version<'a> = ((u64, u64, u64), Option<&'a str>);
 
 /// `1.2.3` style versions, with an optional `-pre` part (a release is
 /// newer than its pre-releases).
-fn is_newer(candidate: &str, current: &str) -> bool {
+pub(crate) fn is_newer(candidate: &str, current: &str) -> bool {
     fn parse(v: &str) -> Option<Version<'_>> {
         let (numbers, pre) = match v.split_once('-') {
             Some((n, p)) => (n, Some(p)),
@@ -212,9 +269,245 @@ fn listed_hash(sums: &str, name: &str) -> Option<String> {
     })
 }
 
-/// Downloads, checks and runs the installer (blocking). Returns what went
-/// wrong, in words for the user.
+/// Nobody has used the PC for a while, and nothing is going on that an update
+/// would cut off: mirroring, an app window, a transfer, a call, screen sharing
+/// or the webcam.
+fn quiet() -> bool {
+    if crate::win::input::is_user_active_within_ms(QUIET_FOR.as_millis() as u32) {
+        return false;
+    }
+    let mirroring = crate::mirror::windows().iter().any(|(_, shown)| {
+        matches!(shown.phase, crate::mirror::Phase::Asking | crate::mirror::Phase::Showing)
+    });
+    let transferring = core_host::host().hub.read(|s| {
+        s.transfers.iter().any(|t| {
+            matches!(
+                t.transfer.state,
+                nectarlink_core::TransferState::Running | nectarlink_core::TransferState::Waiting
+            )
+        })
+    });
+    let calling = crate::calls::active_or_ringing(None).is_some();
+    let webcam = !matches!(crate::webcam::phase(), crate::webcam::Phase::Idle);
+    !(mirroring || transferring || calling || webcam || crate::pc_mirror::is_active())
+}
+
+/// Whether the installer registered [`TASK`] on this PC.
+fn task_registered() -> bool {
+    std::process::Command::new("schtasks.exe")
+        .args(["/Query", "/TN", TASK])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Installs the update found: with [`TASK`] when it's there (no prompt),
+/// otherwise by running the installer, which asks for administrator rights.
+/// Blocking. Returns what went wrong, in words for the user.
 pub fn install() -> Result<(), String> {
+    available().ok_or("There's no update to install.")?;
+    if task_registered() {
+        match install_with_task(true) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                tracing::warn!(error = e, "the update task didn't start; asking for permission instead")
+            }
+        }
+    }
+    install_with_prompt()
+}
+
+/// Starts [`TASK`], and quits so the installer can replace this copy; a
+/// hidden relauncher opens the new version afterwards. `shown`: open its
+/// window again (the user asked for the update) rather than start in the tray.
+fn install_with_task(shown: bool) -> Result<(), String> {
+    let update = available().ok_or("no update")?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    spawn_relauncher(&exe, &update.version, shown)?;
+    let started = std::process::Command::new("schtasks.exe")
+        .args(["/Run", "/TN", TASK])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !started.success() {
+        return Err(format!("schtasks /Run: {started}"));
+    }
+    tracing::info!(version = update.version, "updating; quitting for the installer");
+    crate::bridge::app::request_quit();
+    Ok(())
+}
+
+/// A hidden PowerShell that waits (up to ten minutes) until `version` is
+/// installed and the installer has finished, then opens the app again.
+fn spawn_relauncher(exe: &Path, version: &str, shown: bool) -> Result<(), String> {
+    // Both come from this program (its own path, and a version the release
+    // check already parsed); checked again so they can't break out of the
+    // script's quotes.
+    let exe =
+        exe.to_str().filter(|e| !e.contains('\'') && !e.contains('\n')).ok_or("unusual install path")?;
+    if !version.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-')) {
+        return Err("unusual version".into());
+    }
+    let arguments = if shown { "" } else { "--minimized" };
+    let script = relauncher_script(exe, version, arguments);
+    let encoded: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"])
+        .arg(data_encoding::BASE64.encode(&encoded))
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("relauncher: {e}"))
+}
+
+fn relauncher_script(exe: &str, version: &str, arguments: &str) -> String {
+    let start = if arguments.is_empty() {
+        format!("Start-Process -FilePath '{exe}'")
+    } else {
+        format!("Start-Process -FilePath '{exe}' -ArgumentList '{arguments}'")
+    };
+    format!(
+        "$key = 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Nectarlink'\n\
+         $deadline = (Get-Date).AddMinutes(10)\n\
+         Start-Sleep -Seconds 5\n\
+         while ((Get-Date) -lt $deadline) {{\n\
+           $installed = (Get-ItemProperty -Path $key -Name DisplayVersion -ErrorAction SilentlyContinue).DisplayVersion\n\
+           $running = Get-Process -ErrorAction SilentlyContinue | Where-Object {{ $_.Name -like 'Nectarlink-*-setup' }}\n\
+           if ($installed -eq '{version}' -and -not $running) {{ break }}\n\
+           Start-Sleep -Seconds 2\n\
+         }}\n\
+         {start}\n"
+    )
+}
+
+/// The task's job (as SYSTEM, from [`SERVICE_ARG`]): installs the latest
+/// release if it's newer than this copy. Writes what it did to `update.log`
+/// beside the program, where only administrators can write.
+pub fn run_service() -> ExitCode {
+    let log_path =
+        std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("update.log")));
+    let log = |message: &str| {
+        tracing::info!("{message}");
+        if let Some(path) = &log_path {
+            let line = format!("{} {message}\n", unix_seconds_now());
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+        }
+    };
+    let update = match latest() {
+        Ok(Some(update)) => update,
+        Ok(None) => {
+            log("up to date");
+            return ExitCode::SUCCESS;
+        }
+        Err(e) => {
+            log(&format!("couldn't check: {e}"));
+            return ExitCode::FAILURE;
+        }
+    };
+    let dir = match service_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            log(&format!("no folder for the download: {e}"));
+            return ExitCode::FAILURE;
+        }
+    };
+    let path = match download_verified(&update, &dir) {
+        Ok(path) => path,
+        Err(e) => {
+            log(&format!("{} not installed: {e}", update.version));
+            return ExitCode::FAILURE;
+        }
+    };
+    // Not waited for: the installer replaces this program, which must not be running.
+    match std::process::Command::new(&path)
+        .arg("/S")
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .spawn()
+    {
+        Ok(_) => {
+            log(&format!("installing {}", update.version));
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            log(&format!("couldn't start the installer: {e}"));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Seconds since 1970, for the log (no calendar needed).
+fn unix_seconds_now() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    format!("[{secs}]")
+}
+
+/// A new, empty folder for the download that only SYSTEM and administrators
+/// can change: Windows' `SystemTemp` (older Windows: the SYSTEM account's
+/// temp folder, whose new subfolders users can't write to). Earlier ones are
+/// removed first (in `SystemTemp` only, where nobody else can create them).
+fn service_dir() -> std::io::Result<PathBuf> {
+    let windows =
+        std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    let system_temp = windows.join("SystemTemp");
+    let parent = if system_temp.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&system_temp) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with("nectarlink-update-") {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+        system_temp
+    } else {
+        std::env::temp_dir()
+    };
+    let mut random = [0u8; 8];
+    if !crate::win::secure_random(&mut random) {
+        return Err(std::io::Error::other("no secure random source"));
+    }
+    let name = format!("nectarlink-update-{}", random.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    let dir = parent.join(name);
+    std::fs::create_dir(&dir)?;
+    Ok(dir)
+}
+
+/// Downloads the installer and its sums into `dir`, checks it, and returns
+/// its path. Errors are for the log.
+fn download_verified(update: &Update, dir: &Path) -> Result<PathBuf, String> {
+    let sums = http::get(&update.sums_url, 64 * 1024)?;
+    let expected = listed_hash(&String::from_utf8_lossy(&sums), &update.installer_name)
+        .ok_or("the checksum is missing from the release")?;
+    let installer = http::get(&update.installer_url, MAX_INSTALLER)?;
+    let actual = Sha256::digest(&installer).iter().map(|b| format!("{b:02x}")).collect::<String>();
+    if actual != expected {
+        return Err("checksum mismatch".into());
+    }
+    let path = dir.join(&update.installer_name);
+    {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| e.to_string())?;
+        file.write_all(&installer).and_then(|()| file.sync_all()).map_err(|e| e.to_string())?;
+    }
+    Ok(path)
+}
+
+/// The installer with Windows' administrator prompt (no update task).
+fn install_with_prompt() -> Result<(), String> {
     let update = available().ok_or("There's no update to install.")?;
     let failed = |e: String| {
         tracing::warn!(error = e, "update failed");
@@ -231,8 +524,19 @@ pub fn install() -> Result<(), String> {
     }
     let dir = std::env::temp_dir().join("Nectarlink update");
     let path: PathBuf = dir.join(&update.installer_name);
+    // A fresh file each time (an older copy is removed first), written in one go and run
+    // straight after, so what runs is what was checked.
     std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::write(&path, &installer))
+        .and_then(|()| match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        })
+        .and_then(|()| {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
+            file.write_all(&installer)?;
+            file.sync_all()
+        })
         .map_err(|e| failed(e.to_string()))?;
     // Silent, then opens the new version (/RUN); Windows asks for
     // permission first. The installer closes this copy itself.
@@ -272,6 +576,36 @@ mod tests {
                 },
                 Asset { name: "SHA256SUMS.txt".into(), browser_download_url: "https://x/sums".into() },
             ],
+        }
+    }
+
+    #[test]
+    fn the_relauncher_waits_for_the_version_then_opens_the_app() {
+        let script =
+            relauncher_script(r"C:\Program Files\Nectarlink\nectarlink-desktop.exe", "0.2.0", "--minimized");
+        assert!(script.contains("$installed -eq '0.2.0'"));
+        assert!(script.contains("Nectarlink-*-setup"));
+        assert!(script.contains(
+            r"Start-Process -FilePath 'C:\Program Files\Nectarlink\nectarlink-desktop.exe' -ArgumentList '--minimized'"
+        ));
+        let shown = relauncher_script(r"C:\Program Files\Nectarlink\nectarlink-desktop.exe", "0.2.0", "");
+        assert!(!shown.contains("-ArgumentList"));
+    }
+
+    #[test]
+    fn the_relauncher_refuses_paths_and_versions_that_could_break_its_quotes() {
+        let odd = Path::new(r"C:\Program Files\it's\nectarlink-desktop.exe");
+        assert!(spawn_relauncher(odd, "0.2.0", false).is_err());
+        let fine = Path::new(r"C:\Program Files\Nectarlink\nectarlink-desktop.exe");
+        assert!(spawn_relauncher(fine, "0.2.0'; Remove-Item x; '", false).is_err());
+    }
+
+    #[test]
+    fn installer_names_that_are_not_plain_file_names_are_refused() {
+        for name in [r"..\..\evil-x64-setup.exe", "Nectarlink-9/../x-x64-setup.exe", "evil-x64-setup.exe"] {
+            let mut r = release("v9.0.0");
+            r.assets[0].name = name.into();
+            assert!(newer_release_for(r, "0.0.1", "-x64-setup.exe").is_none(), "{name}");
         }
     }
 

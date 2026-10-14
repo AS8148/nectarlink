@@ -30,5 +30,8 @@ windows = { workspace = true, features = [
 ] }
 windows-core = "0.62"
 
+[build-dependencies]
+embed-resource.workspace = true
+
 [lints]
 workspace = true

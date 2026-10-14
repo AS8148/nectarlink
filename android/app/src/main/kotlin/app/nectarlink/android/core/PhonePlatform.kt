@@ -92,6 +92,9 @@ internal class PhonePlatform(
 
     override fun setClipboard(text: String): Boolean = PhoneClipboard.write(context, text)
 
+    override fun setClipboardRich(text: String, html: String?, rtf: String?): Boolean =
+        PhoneClipboard.write(context, text, html)
+
     override fun setClipboardImage(mime: String, bytes: ByteArray): Boolean =
         PhoneClipboard.writeImage(context, mime, bytes)
 
@@ -134,7 +137,11 @@ internal class PhonePlatform(
                 options.stayAwake,
                 options.screenOff,
             )
-            onMirror(pcId, request)
+            if (Elevated.running && MirrorService.startElevated(context, request)) {
+                true
+            } else {
+                onMirror(pcId, request)
+            }
         }
 
     override fun mirrorPowerRequested(pcId: String, stayAwake: Boolean, screenOff: Boolean) {

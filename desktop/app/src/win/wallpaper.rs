@@ -38,9 +38,9 @@ use windows::{
 
 use crate::palette;
 
-/// Wallpapers are shrunk to fit this square before their colors are
-/// counted: plenty for picking a seed, and fast.
-const SAMPLE_SIZE: u32 = 128;
+/// Images are shrunk to fit this square before their colors are
+/// counted: plenty for picking a seed, and fast (112x112).
+const SAMPLE_SIZE: u32 = palette::MAX_SAMPLE_SIDE;
 
 /// Where the wallpaper came from, so an unchanged one isn't decoded again
 /// (Windows announces setting changes far more often than wallpapers
@@ -90,19 +90,38 @@ fn current_source() -> Option<Source> {
     })
 }
 
+pub fn seed_from_path(path: &Path) -> Option<Rgb> {
+    match sample_grid(path) {
+        Ok((w, h, pixels)) => palette::seed_from_grid(&pixels, w, h),
+        Err(e) => {
+            tracing::debug!(error = %e, path = %path.display(), "can't read image colors");
+            None
+        }
+    }
+}
+
+/// Extracts the full Material 3 / Bloom JSON scheme from an artwork image file,
+/// including neutral monochrome schemes for black-and-white covers.
+pub fn artwork_scheme_from_path(path: &Path) -> Option<String> {
+    match sample_grid(path) {
+        Ok((w, h, pixels)) => {
+            palette::extract_artwork_scheme_rgb(&pixels, w, h, Some(&path.to_string_lossy()))
+                .map(|s| s.to_json().to_string())
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, path = %path.display(), "can't read artwork colors");
+            None
+        }
+    }
+}
+
 fn seed_of(source: &Source) -> Option<Rgb> {
     match source {
         Source::Solid(colorref) => {
             let [r, g, b, _] = colorref.to_le_bytes();
             palette::seed_from_pixels(&[Rgb::new(r, g, b)])
         }
-        Source::Image { path, .. } => match sample(path) {
-            Ok(pixels) => palette::seed_from_pixels(&pixels),
-            Err(e) => {
-                tracing::debug!(error = %e, path = %path.display(), "can't read the wallpaper");
-                None
-            }
-        },
+        Source::Image { path, .. } => seed_from_path(path),
     }
 }
 
@@ -155,7 +174,7 @@ impl Drop for Com {
 
 /// Decodes the image and shrinks it to fit `SAMPLE_SIZE`, keeping its
 /// aspect ratio.
-fn sample(path: &Path) -> windows::core::Result<Vec<Rgb>> {
+fn sample_grid(path: &Path) -> windows::core::Result<(u32, u32, Vec<Rgb>)> {
     let _com = Com::init()?;
     // SAFETY: plain WIC calls on live interfaces; the pixel buffer is sized
     // for the width, height and stride passed to CopyPixels.
@@ -172,7 +191,7 @@ fn sample(path: &Path) -> windows::core::Result<Vec<Rgb>> {
         let (mut width, mut height) = (0, 0);
         frame.GetSize(&mut width, &mut height)?;
         if width == 0 || height == 0 {
-            return Ok(Vec::new());
+            return Ok((0, 0, Vec::new()));
         }
         let scale = (f64::from(SAMPLE_SIZE) / f64::from(width.max(height))).min(1.0);
         let (w, h) = (
@@ -194,8 +213,14 @@ fn sample(path: &Path) -> windows::core::Result<Vec<Rgb>> {
         let stride = w * 4;
         let mut bgrx = vec![0u8; (stride * h) as usize];
         converter.CopyPixels(std::ptr::null(), stride, &mut bgrx)?;
-        Ok(bgrx.as_chunks::<4>().0.iter().map(|&[b, g, r, _]| Rgb::new(r, g, b)).collect())
+        let pixels = bgrx.as_chunks::<4>().0.iter().map(|&[b, g, r, _]| Rgb::new(r, g, b)).collect();
+        Ok((w, h, pixels))
     }
+}
+
+#[cfg(test)]
+fn sample(path: &Path) -> windows::core::Result<Vec<Rgb>> {
+    sample_grid(path).map(|(_, _, p)| p)
 }
 
 #[cfg(test)]

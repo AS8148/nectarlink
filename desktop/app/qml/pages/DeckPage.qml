@@ -12,13 +12,7 @@ Item {
     Component.onCompleted: if (active) DeckController.setPageActive(true)
     Component.onDestruction: DeckController.setPageActive(false)
 
-    opacity: active ? 1 : 0
-    visible: opacity > 0
-    Behavior on opacity { NumberAnimation { duration: Theme.fadeNormal } }
-    transform: Translate {
-        y: page.active || Theme.reduceMotion ? 0 : 12
-        Behavior on y { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springGentle; damping: Theme.dampingGentle } }
-    }
+    visible: active
 
     readonly property var pagesList: {
         try {
@@ -70,7 +64,7 @@ Item {
         case "text": return Icons.text
         case "app": return Icons.apps
         case "terminal": return Icons.terminal
-        case "sparkle": return Icons.sparkle
+        case "sparkle":
         case "bolt": return Icons.bolt
         case "star": return Icons.star
         case "music": return Icons.music
@@ -93,7 +87,7 @@ Item {
         "volume_up", "volume_down", "volume_off", "mic",
         "mic_off", "lock", "desktop", "switch_window",
         "screenshot", "shortcut", "globe", "text",
-        "app", "terminal", "sparkle", "star"
+        "app", "terminal", "bolt", "star"
     ]
 
     readonly property var actionChoices: [
@@ -198,7 +192,7 @@ Item {
                                 wrapMode: Text.WordWrap
                                 role: "bodySmall"
                                 muted: true
-                                text: qsTr("One-tap buttons on your phone for media, volume, mic mute, window management, shortcuts, and apps. Drag tiles to reorder them or click any tile to customize it.")
+                                text: qsTr("Drag to reorder · click to edit.")
                             }
                         }
                         Row {
@@ -651,7 +645,7 @@ Item {
                         wrapMode: Text.WordWrap
                         role: "bodySmall"
                         muted: true
-                        text: qsTr("Phones only receive the tile's label, icon, and action kind. File paths and commands stay on this PC.")
+                        text: qsTr("Phones see only each tile's label and icon. Paths and commands stay on this PC.")
                     }
                 }
 
@@ -1069,5 +1063,17 @@ Item {
                 }
             }
         }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: 10
+        radius: Theme.radiusLg
+        color: "transparent"
+        border.width: 2
+        border.color: Theme.primary
+        visible: opacity > 0
+        opacity: AppController.highlightTarget === "deck:main" ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
     }
 }

@@ -18,12 +18,12 @@ import android.view.WindowManager
 import app.nectarlink.core.MirrorSendResult
 import app.nectarlink.core.MirrorStream
 import app.nectarlink.core.VideoPacketKind
-import app.nectarlink.core.mirrorConfig
+import app.nectarlink.core.mirrorConfigCodec
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * The screen as H.264 for a PC (docs/protocol/mirror.md): the projection
+ * The screen as H.264 / H.265 / AV1 for a PC (docs/protocol/mirror.md): the projection
  * draws into the hardware encoder's input surface, and each encoded
  * picture goes straight to the stream. When the network is behind, the
  * stream drops pictures and this asks the encoder for a keyframe. Turning
@@ -36,11 +36,13 @@ internal class ScreenEncoder(
     private val maxSize: Int,
     private val fps: Int,
     private val bitrate: Int,
+    preferredCodec: String = "h264",
     private val onEnded: () -> Unit,
 ) {
     private val context = context.applicationContext
     private val displays = context.getSystemService(DisplayManager::class.java)
     private val main = Handler(Looper.getMainLooper())
+    private val codecName = selectCodec(preferredCodec)
 
     @Volatile private var running = true
     @Volatile private var keyframeWanted = false
@@ -80,7 +82,7 @@ internal class ScreenEncoder(
             while (running) {
                 size = screenSize()
                 resizeWanted = false
-                val codec = encoder(size)
+                val (activeCodecName, codec) = encoder(size)
                 val surface = codec.createInputSurface()
                 codec.start()
                 val current = display
@@ -93,8 +95,11 @@ internal class ScreenEncoder(
                     current.resize(size.width, size.height, size.dpi)
                     current.surface = surface
                 }
-                val closed = stream.send(VideoPacketKind.CONFIG, 0u, mirrorConfig(size.width.toUInt(), size.height.toUInt(), 0u)) ==
-                    MirrorSendResult.CLOSED || drain(codec)
+                val closed = stream.send(
+                    VideoPacketKind.CONFIG,
+                    0u,
+                    mirrorConfigCodec(activeCodecName, size.width.toUInt(), size.height.toUInt(), 0u),
+                ) == MirrorSendResult.CLOSED || drain(codec)
                 runCatching { codec.stop() }
                 codec.release()
                 surface.release()
@@ -152,8 +157,8 @@ internal class ScreenEncoder(
         return !running
     }
 
-    private fun encoder(size: Size): MediaCodec {
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, size.width, size.height).apply {
+    private fun createCodecForMime(mime: String, size: Size): MediaCodec {
+        val format = MediaFormat.createVideoFormat(mime, size.width, size.height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
@@ -170,29 +175,62 @@ internal class ScreenEncoder(
             setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
             setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
         }
-        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        val codec = MediaCodec.createEncoderByType(mime)
         codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         return codec
     }
 
+    private fun encoder(size: Size): Pair<String, MediaCodec> {
+        val preferredMime = mimeForCodec(codecName)
+        if (preferredMime != MediaFormat.MIMETYPE_VIDEO_AVC) {
+            runCatching { return codecName to createCodecForMime(preferredMime, size) }
+        }
+        return "h264" to createCodecForMime(MediaFormat.MIMETYPE_VIDEO_AVC, size)
+    }
+
     /** The screen's size scaled to fit `maxSize`, in multiples of 16 (what encoders like). */
     private fun screenSize(): Size {
-        val windows = context.getSystemService(WindowManager::class.java)
-        val (w, h) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            windows.maximumWindowMetrics.bounds.let { it.width() to it.height() }
-        } else {
-            val metrics = android.util.DisplayMetrics()
-            @Suppress("DEPRECATION")
-            windows.defaultDisplay.getRealMetrics(metrics)
-            metrics.widthPixels to metrics.heightPixels
-        }
-        val scale = min(1.0, maxSize.toDouble() / max(w, h))
-        fun fit(v: Int) = max(16, ((v * scale) / 16).toInt() * 16)
-        return Size(fit(w), fit(h), context.resources.displayMetrics.densityDpi)
+        val (w, h, dpi) = computeScreenSize(context, maxSize)
+        return Size(w, h, dpi)
     }
 
     companion object {
         private const val TAG = "ScreenEncoder"
         private const val WAIT_US = 50_000L
+
+        fun mimeForCodec(name: String): String = when (name.lowercase()) {
+            "h265", "hevc" -> MediaFormat.MIMETYPE_VIDEO_HEVC
+            "av1" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) "video/av01" else MediaFormat.MIMETYPE_VIDEO_AVC
+            else -> MediaFormat.MIMETYPE_VIDEO_AVC
+        }
+
+        fun selectCodec(preferred: String = "h264"): String {
+            val want = preferred.lowercase()
+            if (want != "h265" && want != "av1") return "h264"
+            val mime = mimeForCodec(want)
+            val supported = runCatching {
+                android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+                    .codecInfos
+                    .any { info ->
+                        info.isEncoder && info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
+                    }
+            }.getOrDefault(false)
+            return if (supported) want else "h264"
+        }
+
+        fun computeScreenSize(context: Context, maxSize: Int): Triple<Int, Int, Int> {
+            val windows = context.getSystemService(WindowManager::class.java)
+            val (w, h) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                windows.maximumWindowMetrics.bounds.let { it.width() to it.height() }
+            } else {
+                val metrics = android.util.DisplayMetrics()
+                @Suppress("DEPRECATION")
+                windows.defaultDisplay.getRealMetrics(metrics)
+                metrics.widthPixels to metrics.heightPixels
+            }
+            val scale = min(1.0, maxSize.toDouble() / max(w, h))
+            fun fit(v: Int) = max(16, ((v * scale) / 16).toInt() * 16)
+            return Triple(fit(w), fit(h), context.resources.displayMetrics.densityDpi)
+        }
     }
 }

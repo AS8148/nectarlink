@@ -21,6 +21,7 @@ use tokio::sync::broadcast::Receiver;
 const WAIT: Duration = Duration::from_secs(20);
 
 type MmsRecord = (Vec<String>, String, Vec<nectarlink_core::SmsAttachment>);
+type RichClipboardRecord = (String, Option<String>, Option<String>);
 
 #[derive(Debug, Default)]
 struct RecordingPlatform {
@@ -28,6 +29,7 @@ struct RecordingPlatform {
     dismissed: Mutex<Vec<String>>,
     actions: Mutex<Vec<(String, String, Option<String>)>>,
     clipboard: Mutex<Vec<String>>,
+    clipboard_rich: Mutex<Vec<RichClipboardRecord>>,
     images: Mutex<Vec<(String, Vec<u8>)>>,
     media: Mutex<Vec<(String, MediaAction, Option<u64>)>>,
     power: Mutex<Vec<PowerAction>>,
@@ -37,6 +39,7 @@ struct RecordingPlatform {
     texts: Mutex<Vec<(Vec<String>, String)>>,
     mms_sent: Mutex<Vec<MmsRecord>>,
     mirror_asks: Mutex<Vec<String>>,
+    mirror_reject: std::sync::atomic::AtomicBool,
     /// What a PC got of a phone's screen.
     screen: Arc<ScreenSink>,
     webcam_asks: Mutex<Vec<String>>,
@@ -81,6 +84,15 @@ impl Platform for RecordingPlatform {
         self.clipboard.lock().unwrap().push(text.to_owned());
         Ok(())
     }
+    fn set_clipboard_rich(&self, text: &str, html: Option<&str>, rtf: Option<&str>) -> Result<(), String> {
+        self.clipboard.lock().unwrap().push(text.to_owned());
+        self.clipboard_rich.lock().unwrap().push((
+            text.to_owned(),
+            html.map(str::to_owned),
+            rtf.map(str::to_owned),
+        ));
+        Ok(())
+    }
     fn set_clipboard_image(&self, mime: &str, bytes: &[u8]) -> Result<(), String> {
         self.images.lock().unwrap().push((mime.to_owned(), bytes.to_vec()));
         Ok(())
@@ -114,6 +126,9 @@ impl Platform for RecordingPlatform {
         _peer: &nectarlink_core::DeviceId,
         options: &nectarlink_core::MirrorStart,
     ) -> Result<(), String> {
+        if self.mirror_reject.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("consent declined".into());
+        }
         let sound = if options.audio { " with sound" } else { "" };
         let app = options.app.as_deref().map(|a| format!(" {a} as {}", options.session)).unwrap_or_default();
         self.mirror_asks.lock().unwrap().push(format!("start {}{sound}{app}", options.max_size));
@@ -587,6 +602,7 @@ fn info(name: &str, kind: DeviceKind) -> DeviceInfo {
         model: None,
         accent: None,
         screen: None,
+        install_id: None,
     }
 }
 
@@ -699,7 +715,15 @@ async fn ring_and_battery_flow_between_devices() {
     with_timeout("stop ring", pc.node.ring(phone_id, false)).await.expect("stop succeeds");
     assert_eq!(*phone.platform.rings.lock().unwrap(), vec![true, false]);
 
-    let battery = Battery { level: 82, charging: true, plugged: Some("usb".into()), full_in: Some(28) };
+    let battery = Battery {
+        level: 82,
+        charging: true,
+        plugged: Some("usb".into()),
+        full_in: Some(28),
+        cell_bars: Some(4),
+        cell_type: Some("5G".into()),
+        wifi_bars: Some(3),
+    };
     phone.node.update_battery(battery.clone()).await;
     let received = wait_for(&mut pc, "battery", |e| match e {
         NodeEvent::Battery { device, battery } if *device == phone_id => Some(battery.clone()),
@@ -1154,6 +1178,45 @@ async fn clipboard_text_goes_both_ways_with_consent() {
         .expect("sent");
     assert_eq!(*pc.platform.clipboard.lock().unwrap(), ["from the phone ✓"]);
 
+    // Rich text (HTML + RTF) accompanies plain text both ways.
+    with_timeout(
+        "rich pc to phone",
+        pc.node.send_clipboard_rich(
+            phone_id,
+            "Hello world".into(),
+            Some("<b>Hello</b> world".into()),
+            Some("{\\rtf1\\ansi\\b Hello\\b0  world}".into()),
+        ),
+    )
+    .await
+    .expect("rich sent");
+    assert_eq!(
+        phone.platform.clipboard_rich.lock().unwrap().last(),
+        Some(&(
+            "Hello world".to_owned(),
+            Some("<b>Hello</b> world".to_owned()),
+            Some("{\\rtf1\\ansi\\b Hello\\b0  world}".to_owned()),
+        )),
+    );
+
+    // Oversized rich text markup is dropped so the plain text still arrives.
+    let big_rtf = "r".repeat(nectarlink_core::CLIP_MAX_BYTES);
+    with_timeout(
+        "oversized rtf dropped",
+        pc.node.send_clipboard_rich(
+            phone_id,
+            "Plain survives".into(),
+            Some("<i>Plain</i> survives".into()),
+            Some(big_rtf),
+        ),
+    )
+    .await
+    .expect("plain + html sent");
+    assert_eq!(
+        phone.platform.clipboard_rich.lock().unwrap().last(),
+        Some(&("Plain survives".to_owned(), Some("<i>Plain</i> survives".to_owned()), None)),
+    );
+
     // The receiver turned the clipboard off for the sender.
     phone.node.set_device_toggle(pc_id, "clipboard", false).unwrap();
     let denied = with_timeout("denied", pc.node.send_clipboard(phone_id, "nope".into())).await;
@@ -1161,7 +1224,7 @@ async fn clipboard_text_goes_both_ways_with_consent() {
     // The sender turned it off: nothing leaves.
     let not_sent = with_timeout("not sent", phone.node.send_clipboard(pc_id, "nope".into())).await;
     assert!(matches!(not_sent, Err(Error::Denied)), "{not_sent:?}");
-    assert_eq!(phone.platform.clipboard.lock().unwrap().len(), 1);
+    assert_eq!(phone.platform.clipboard.lock().unwrap().len(), 3);
 
     let huge = "x".repeat(nectarlink_core::CLIP_MAX_BYTES + 1);
     assert!(matches!(pc.node.send_clipboard(phone_id, huge).await, Err(Error::TooLarge)));
@@ -1668,9 +1731,18 @@ async fn the_phone_screen_streams_to_the_pc() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert!(sound.is_closed(), "and its sound stream");
-    let asks = phone.platform.mirror_asks.lock().unwrap().clone();
-    for wanted in ["keyframe 0", "power awake=true off=true", "Touch(Down) on 0", "Key(back) on 0", "stop 0"]
-    {
+    // The phone records the stop after the streams close; under load that can lag a little.
+    let wanted = ["keyframe 0", "power awake=true off=true", "Touch(Down) on 0", "Key(back) on 0", "stop 0"];
+    let deadline = tokio::time::Instant::now() + WAIT;
+    let asks = loop {
+        let asks = phone.platform.mirror_asks.lock().unwrap().clone();
+        let complete = wanted.iter().all(|w| asks.iter().any(|a| a == w));
+        if complete || tokio::time::Instant::now() >= deadline {
+            break asks;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
+    for wanted in wanted {
         assert!(asks.iter().any(|a| a == wanted), "{wanted}: {asks:?}");
     }
     let shown = pc.platform.mirror_asks.lock().unwrap().clone();
@@ -2702,7 +2774,7 @@ async fn wake_info_syncs_persists_respects_toggle_and_sends_magic_packet() {
 
     pc.node
         .set_wake_info(PcWakeInfo {
-            macs: vec!["38:A7:46:37:2E:64".into()],
+            macs: vec!["00:00:5E:00:53:01".into()],
             broadcasts: vec!["192.168.1.255".into()],
         })
         .await;
@@ -2718,14 +2790,14 @@ async fn wake_info_syncs_persists_respects_toggle_and_sends_magic_packet() {
     .await;
     assert_eq!(
         phone.node.wake_info(pc_id).unwrap(),
-        Some(PcWakeInfo { macs: vec!["38:a7:46:37:2e:64".into()], broadcasts: vec!["192.168.1.255".into()] })
+        Some(PcWakeInfo { macs: vec!["00:00:5e:00:53:01".into()], broadcasts: vec!["192.168.1.255".into()] })
     );
     assert!(phone.node.paired_devices().unwrap().iter().any(|d| d.id == pc_id && d.can_wake));
 
     // Adapter change on the PC updates connected phones immediately.
     pc.node
         .set_wake_info(PcWakeInfo {
-            macs: vec!["38:A7:46:37:2E:64".into(), "aa-bb-cc-dd-ee-ff".into()],
+            macs: vec!["00:00:5E:00:53:01".into(), "aa-bb-cc-dd-ee-ff".into()],
             broadcasts: vec!["192.168.1.255".into(), "10.0.0.255".into()],
         })
         .await;
@@ -2778,7 +2850,7 @@ async fn wake_info_syncs_persists_respects_toggle_and_sends_magic_packet() {
     let mut buf = [0u8; 256];
     let (n, _) = with_timeout("receive magic packet", listener.recv_from(&mut buf)).await.unwrap();
     assert_eq!(n, 102);
-    assert_eq!(&buf[..102], &magic_packet(&[0x38, 0xA7, 0x46, 0x37, 0x2E, 0x64])[..]);
+    assert_eq!(&buf[..102], &magic_packet(&[0x00, 0x00, 0x5E, 0x00, 0x53, 0x01])[..]);
     phone.node.shutdown().await;
 }
 
@@ -3450,8 +3522,9 @@ async fn timeline_records_files_clips_links_photos_recordings_and_sessions_witho
     })
     .await;
 
-    // 3. Web link opened.
+    // 3. Web link and map handoff opened.
     phone.node.open_link(pc_id, "https://nectarlink.app/timeline".into()).await.unwrap();
+    phone.node.open_link(pc_id, "geo:37.7749,-122.4194?q=San+Francisco".into()).await.unwrap();
 
     // 4. Photo saved from phone.
     let photo_path = phone.dir.path().join("IMG_100.jpg");
@@ -3513,6 +3586,12 @@ async fn timeline_records_files_clips_links_photos_recordings_and_sessions_witho
     assert!(kinds.contains(&TimelineKind::File), "expected File in {kinds:?}");
     assert!(kinds.contains(&TimelineKind::Clip), "expected Clip in {kinds:?}");
     assert!(kinds.contains(&TimelineKind::Link), "expected Link in {kinds:?}");
+    let geo_item = page
+        .entries
+        .iter()
+        .find(|i| i.kind == TimelineKind::Link && i.detail == "geo:37.7749,-122.4194?q=San+Francisco")
+        .expect("geo link recorded with raw URI in detail");
+    assert_eq!(geo_item.title, "San Francisco on a map");
     assert!(kinds.contains(&TimelineKind::Photo), "expected Photo in {kinds:?}");
     assert!(kinds.contains(&TimelineKind::Recording), "expected Recording in {kinds:?}");
     assert!(
@@ -3710,7 +3789,7 @@ async fn mms_image_attachments_send_over_sms_service() {
     assert_eq!(sent[1].2, vec![png.clone()]);
 
     // Unsupported MIME type is rejected as a protocol error; oversized or too many attachments return TooLarge.
-    let bad_mime = SmsAttachment { mime: "image/gif".into(), data: vec![1, 2, 3] };
+    let bad_mime = SmsAttachment { mime: "application/x-executable".into(), data: vec![1, 2, 3] };
     assert!(matches!(
         pc.node
             .send_sms_with_attachments(phone_id, vec!["+15550100".into()], String::new(), vec![bad_mime])
@@ -4354,4 +4433,1098 @@ async fn localsend_declining_transfer_returns_denied_to_sender() {
 
     sender.node.shutdown().await;
     receiver.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn transfer_blake3_integrity_verified_and_mismatch_keeps_partial() {
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = device("Pixel", DeviceKind::Phone).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+    let src = tempfile::tempdir().unwrap();
+
+    // 1. A transfer whose bytes are altered on the sender after the offer hash is computed
+    //    must fail with TransferFailure::Integrity on both sides and keep the .part file.
+    let payload = data(48 * 1024 * 1024, 42);
+    let src_path = src.path().join("corrupt_me.bin");
+    std::fs::write(&src_path, &payload).unwrap();
+
+    let id = pc
+        .node
+        .send_files(
+            phone_id,
+            vec![OutgoingFile {
+                name: "corrupt_me.bin".into(),
+                folder: None,
+                source: FileSource::Path(src_path.clone()),
+            }],
+        )
+        .await
+        .unwrap();
+
+    wait_transfer(&mut phone, &id, "receiving before pause", |t| {
+        (t.state == TransferState::Running && t.done > 0).then_some(())
+    })
+    .await;
+    pc.node.pause_transfer(&id);
+    wait_transfer(&mut pc, &id, "sender paused", |t| (t.state == TransferState::Paused).then_some(())).await;
+    wait_transfer(&mut phone, &id, "receiver paused", |t| (t.state == TransferState::Paused).then_some(()))
+        .await;
+
+    // Flip the last byte of the source file while paused so the remaining stream bytes
+    // no longer match the BLAKE3 digest in the offer.
+    let mut corrupted = payload.clone();
+    let last = corrupted.len() - 1;
+    corrupted[last] ^= 0xFF;
+    std::fs::write(&src_path, &corrupted).unwrap();
+
+    pc.node.resume_transfer(&id);
+
+    let phone_state = wait_transfer(&mut phone, &id, "receiver integrity failure", |t| {
+        t.state.is_finished().then(|| t.state.clone())
+    })
+    .await;
+    let pc_state = wait_transfer(&mut pc, &id, "sender integrity failure", |t| {
+        t.state.is_finished().then(|| t.state.clone())
+    })
+    .await;
+    assert_eq!(phone_state, TransferState::Failed(TransferFailure::Integrity));
+    assert_eq!(pc_state, TransferState::Failed(TransferFailure::Integrity));
+
+    // The partial file is kept in incoming/<pc_id>/<id>/0.part and NOT moved to received/.
+    let part_path = phone.dir.path().join("incoming").join(pc_id.to_string()).join(&id).join("0.part");
+    assert!(part_path.exists(), "partial .part file must be kept on integrity failure");
+    assert!(!phone.dir.path().join("received").join("corrupt_me.bin").exists());
+
+    // 2. Restore the valid bytes and send again: normal BLAKE3 verification succeeds.
+    std::fs::write(&src_path, &payload).unwrap();
+    let id2 = pc
+        .node
+        .send_files(
+            phone_id,
+            vec![OutgoingFile {
+                name: "corrupt_me.bin".into(),
+                folder: None,
+                source: FileSource::Path(src_path),
+            }],
+        )
+        .await
+        .unwrap();
+    let received = wait_transfer(&mut phone, &id2, "valid transfer received", saved).await;
+    assert_eq!(std::fs::read(&received[0]).unwrap(), payload);
+    wait_transfer(&mut pc, &id2, "valid transfer sent", saved).await;
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn transfer_manual_pause_and_resume_both_sides() {
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = device("Pixel", DeviceKind::Phone).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+    let src = tempfile::tempdir().unwrap();
+
+    let big = data(64 * 1024 * 1024, 77);
+    let id = pc.node.send_files(phone_id, vec![outgoing(src.path(), "movie.bin", &big)]).await.unwrap();
+
+    // 1. Wait until bytes flow, then pause from the sender (PC).
+    wait_transfer(&mut phone, &id, "receiving initial", |t| {
+        (t.state == TransferState::Running && t.done > 0).then_some(())
+    })
+    .await;
+    pc.node.pause_transfer(&id);
+
+    wait_transfer(&mut pc, &id, "pc paused", |t| (t.state == TransferState::Paused).then_some(())).await;
+    wait_transfer(&mut phone, &id, "phone paused", |t| (t.state == TransferState::Paused).then_some(()))
+        .await;
+
+    let part_path = phone.dir.path().join("incoming").join(pc_id.to_string()).join(&id).join("0.part");
+    assert!(part_path.exists(), "partial file kept while paused");
+
+    // 2. Resume from the sender (PC), then pause from the receiver (phone), then resume from the receiver.
+    pc.node.resume_transfer(&id);
+    wait_transfer(&mut phone, &id, "phone running after sender resume", |t| {
+        (t.state == TransferState::Running).then_some(())
+    })
+    .await;
+
+    phone.node.pause_transfer(&id);
+    wait_transfer(&mut phone, &id, "phone paused by receiver", |t| {
+        (t.state == TransferState::Paused).then_some(())
+    })
+    .await;
+    wait_transfer(&mut pc, &id, "pc paused by receiver", |t| {
+        (t.state == TransferState::Paused).then_some(())
+    })
+    .await;
+
+    phone.node.resume_transfer(&id);
+    let received = wait_transfer(&mut phone, &id, "received after receiver resume", saved).await;
+    assert_eq!(std::fs::read(&received[0]).unwrap(), big);
+    wait_transfer(&mut pc, &id, "sent after receiver resume", saved).await;
+
+    // 3. Pause a transfer and cancel it while paused from the receiver: partial files are cleaned up
+    //    and both sides transition to Cancelled.
+    let id2 =
+        pc.node.send_files(phone_id, vec![outgoing(src.path(), "cancel_paused.bin", &big)]).await.unwrap();
+    wait_transfer(&mut phone, &id2, "receiving second", |t| {
+        (t.state == TransferState::Running && t.done > 0).then_some(())
+    })
+    .await;
+    phone.node.pause_transfer(&id2);
+    wait_transfer(&mut phone, &id2, "phone paused second", |t| {
+        (t.state == TransferState::Paused).then_some(())
+    })
+    .await;
+    wait_transfer(&mut pc, &id2, "pc paused second", |t| (t.state == TransferState::Paused).then_some(()))
+        .await;
+
+    phone.node.cancel_transfer(&id2);
+    let phone_end = wait_transfer(&mut phone, &id2, "phone cancelled from pause", |t| {
+        t.state.is_finished().then(|| t.state.clone())
+    })
+    .await;
+    let pc_end = wait_transfer(&mut pc, &id2, "pc cancelled from pause", |t| {
+        t.state.is_finished().then(|| t.state.clone())
+    })
+    .await;
+    assert_eq!((phone_end, pc_end), (TransferState::Cancelled, TransferState::Cancelled));
+    let part_dir2 = phone.dir.path().join("incoming").join(pc_id.to_string()).join(&id2);
+    assert!(!part_dir2.exists(), "cancelled paused transfer removes incoming directory");
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn battery_signal_strength_and_peer_diagnostics_flow() {
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = device("Pixel", DeviceKind::Phone).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (_pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+
+    // 1. Signal strength fields in Battery flow intact and clamp/sanitize on the wire.
+    let signal_battery = Battery {
+        level: 64,
+        charging: false,
+        plugged: None,
+        full_in: None,
+        cell_bars: Some(4),
+        cell_type: Some("5G".into()),
+        wifi_bars: Some(3),
+    };
+    phone.node.update_battery(signal_battery.clone()).await;
+    let received = wait_for(&mut pc, "battery with signal", |e| match e {
+        NodeEvent::Battery { device, battery } if *device == phone_id => Some(battery.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(received, signal_battery);
+
+    // 2. PeerDiagnostics starts empty when mDNS is disabled in test harness, and records
+    //    LAN sightings and dial failures accurately.
+    let initial = pc.node.peer_diagnostics(&phone_id);
+    assert_eq!(initial.mdns_seen_ago_secs, None);
+    assert!(initial.mdns_addrs.is_empty());
+    assert_eq!(initial.dial_failures, 0);
+
+    let lan_addr: SocketAddr = "192.168.1.55:4242".parse().unwrap();
+    pc.node.record_lan_sighting(phone_id, vec![lan_addr]);
+    pc.node.record_dial_failure(phone_id);
+    pc.node.record_dial_failure(phone_id);
+
+    let diag = pc.node.peer_diagnostics(&phone_id);
+    assert!(diag.mdns_seen_ago_secs.is_some_and(|s| s < 5));
+    assert_eq!(diag.mdns_addrs, vec![lan_addr]);
+    assert_eq!(diag.dial_failures, 2);
+
+    // 3. Unpairing clears LAN sighting and dial failure diagnostics for the peer.
+    with_timeout("unpair", pc.node.unpair(phone_id)).await.unwrap();
+    let cleared = pc.node.peer_diagnostics(&phone_id);
+    assert_eq!(cleared.mdns_seen_ago_secs, None);
+    assert!(cleared.mdns_addrs.is_empty());
+    assert_eq!(cleared.dial_failures, 0);
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+async fn start_usb_device(
+    name: &'static str,
+    kind: DeviceKind,
+    usb_port: Option<u16>,
+    offers: &[&str],
+) -> TestDevice {
+    init_logging();
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = NodeConfig::new(dir.path(), info(name, kind), "0.0.1-test");
+    config.lan_discovery = false;
+    config.away_mode = false;
+    config.usb_port = usb_port;
+    config.adb_server = None;
+    config.key_protector = Some(Arc::new(PlainKeyProtector));
+    let mut caps = vec!["media.control".to_owned()];
+    caps.extend(offers.iter().map(|c| (*c).to_owned()));
+    config.capabilities = caps;
+    let platform = Arc::new(RecordingPlatform::default());
+    let node = Node::start(config, platform.clone()).await.expect("usb test node starts");
+    let events = node.events();
+    TestDevice { node, events, platform, dir, name }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn usb_auto_pair_requires_consent_on_both_sides_and_connects_over_usb() {
+    use nectarlink_core::ConnectionPath;
+
+    let mut phone = start_usb_device("Pixel USB", DeviceKind::Phone, Some(0), &[]).await;
+    let mut pc = start_usb_device("Desktop USB", DeviceKind::Desktop, None, &[]).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+
+    let usb_port = phone.node.usb_port().expect("phone bound ephemeral USB TCP listener");
+    let tunnel_addr: SocketAddr = ("127.0.0.1".parse::<std::net::IpAddr>().unwrap(), usb_port).into();
+
+    pc.node.connect_usb_tunnel(tunnel_addr).await.expect("connect USB tunnel");
+
+    // 1. Both PC and Phone emit NodeEvent::Discovered for each other.
+    let mut pc_saw_discovered = false;
+    let mut pc_code: Option<String> = None;
+    while !pc_saw_discovered || pc_code.is_none() {
+        let ev = wait_for(&mut pc, "pc discovered + sas code", |e| Some(e.clone())).await;
+        match ev {
+            NodeEvent::Discovered(d) if d.id == phone_id => pc_saw_discovered = true,
+            NodeEvent::Pairing(PairingEvent::SasCode { peer, code }) if peer == phone_id => {
+                pc_code = Some(code);
+            }
+            _ => {}
+        }
+    }
+
+    let mut phone_saw_discovered = false;
+    let mut phone_code: Option<String> = None;
+    while !phone_saw_discovered || phone_code.is_none() {
+        let ev = wait_for(&mut phone, "phone discovered + sas code", |e| Some(e.clone())).await;
+        match ev {
+            NodeEvent::Discovered(d) if d.id == pc_id => phone_saw_discovered = true,
+            NodeEvent::Pairing(PairingEvent::SasCode { peer, code }) if peer == pc_id => {
+                phone_code = Some(code);
+            }
+            _ => {}
+        }
+    }
+
+    // 2. Both emitted matching 6-digit SAS codes without calling pairing_start_qr or pairing_start_nearby.
+    let code_a = pc_code.unwrap();
+    let code_b = phone_code.unwrap();
+    assert_eq!(code_a.len(), 6);
+    assert_eq!(code_a, code_b);
+
+    // 3. Before user confirmation on both sides, neither device is paired.
+    assert!(pc.node.paired_devices().unwrap().is_empty());
+    assert!(phone.node.paired_devices().unwrap().is_empty());
+
+    // 4. Declining on one side aborts pairing and keeps paired_devices() empty on both sides.
+    phone.node.pairing_confirm(false).unwrap();
+    let phone_fail = wait_for(&mut phone, "phone pairing declined", |e| match e {
+        NodeEvent::Pairing(PairingEvent::Failed(r)) => Some(r.clone()),
+        _ => None,
+    })
+    .await;
+    let pc_fail = wait_for(&mut pc, "pc pairing rejected", |e| match e {
+        NodeEvent::Pairing(PairingEvent::Failed(r)) => Some(r.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(phone_fail, PairingFailure::Declined);
+    assert_eq!(pc_fail, PairingFailure::Rejected);
+    assert!(pc.node.paired_devices().unwrap().is_empty());
+    assert!(phone.node.paired_devices().unwrap().is_empty());
+
+    // 5. Re-triggering over USB (via refresh) starts a fresh SAS prompt; confirming on both sides pairs
+    //    and connects with ConnectionPath::Usb.
+    pc.node.refresh().await;
+    let code_pc_2 = wait_for(&mut pc, "pc second sas code", |e| match e {
+        NodeEvent::Pairing(PairingEvent::SasCode { peer, code }) if *peer == phone_id => Some(code.clone()),
+        _ => None,
+    })
+    .await;
+    let code_phone_2 = wait_for(&mut phone, "phone second sas code", |e| match e {
+        NodeEvent::Pairing(PairingEvent::SasCode { peer, code }) if *peer == pc_id => Some(code.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(code_pc_2, code_phone_2);
+
+    pc.node.pairing_confirm(true).unwrap();
+    phone.node.pairing_confirm(true).unwrap();
+
+    wait_for(&mut pc, "pc paired over usb", |e| match e {
+        NodeEvent::Pairing(PairingEvent::Paired(d)) if d.id == phone_id => Some(()),
+        _ => None,
+    })
+    .await;
+    wait_for(&mut phone, "phone paired over usb", |e| match e {
+        NodeEvent::Pairing(PairingEvent::Paired(d)) if d.id == pc_id => Some(()),
+        _ => None,
+    })
+    .await;
+
+    wait_for(&mut pc, "pc online over usb", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Online { path: ConnectionPath::Usb, .. } }
+            if *device == phone_id =>
+        {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+    wait_for(&mut phone, "phone online over usb", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Online { path: ConnectionPath::Usb, .. } }
+            if *device == pc_id =>
+        {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+
+    // 6. Plugged in, the link stays up: the phone lets the PC dial through the cable instead
+    //    of racing it, so neither side sees its connection replaced and dropped.
+    let settle = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
+    let mut drops = 0;
+    while tokio::time::Instant::now() < settle {
+        tokio::select! {
+            ev = pc.events.recv() => if let Ok(NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } }) = ev
+                && device == phone_id { drops += 1 },
+            ev = phone.events.recv() => if let Ok(NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } }) = ev
+                && device == pc_id { drops += 1 },
+            () = tokio::time::sleep_until(settle) => {}
+        }
+    }
+    assert_eq!(drops, 0, "the USB link must not drop while plugged in");
+    let pc_paired = pc.node.paired_devices().unwrap();
+    assert!(
+        matches!(pc_paired[0].link, LinkState::Online { path: ConnectionPath::Usb, .. }),
+        "still connected over USB after settling"
+    );
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn usb_transport_carries_features_when_wifi_unavailable() {
+    use nectarlink_core::{ConnectionPath, MirrorSend, PacketKind};
+
+    let mut phone = start_usb_device(
+        "Pixel USB",
+        DeviceKind::Phone,
+        Some(0),
+        &["clip.write", nectarlink_core::MIRROR_CAPTURE],
+    )
+    .await;
+    let mut pc = start_usb_device(
+        "Desktop USB",
+        DeviceKind::Desktop,
+        None,
+        &["clip.write", nectarlink_core::MIRROR_VIEW],
+    )
+    .await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+
+    let usb_port = phone.node.usb_port().expect("phone USB TCP listener");
+    let tunnel_addr: SocketAddr = ("127.0.0.1".parse::<std::net::IpAddr>().unwrap(), usb_port).into();
+    pc.node.connect_usb_tunnel(tunnel_addr).await.expect("connect USB tunnel");
+
+    let code_pc = wait_for(&mut pc, "pc sas code", |e| match e {
+        NodeEvent::Pairing(PairingEvent::SasCode { peer, code }) if *peer == phone_id => Some(code.clone()),
+        _ => None,
+    })
+    .await;
+    let code_phone = wait_for(&mut phone, "phone sas code", |e| match e {
+        NodeEvent::Pairing(PairingEvent::SasCode { peer, code }) if *peer == pc_id => Some(code.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(code_pc, code_phone);
+
+    pc.node.pairing_confirm(true).unwrap();
+    phone.node.pairing_confirm(true).unwrap();
+
+    wait_for(&mut pc, "pc online over usb", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Online { path: ConnectionPath::Usb, .. } }
+            if *device == phone_id =>
+        {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+    wait_for(&mut phone, "phone online over usb", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Online { path: ConnectionPath::Usb, .. } }
+            if *device == pc_id =>
+        {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+
+    // 4. paired_devices() reports LinkState::Online { path: ConnectionPath::Usb, .. }.
+    let pc_paired = pc.node.paired_devices().unwrap();
+    assert_eq!(pc_paired.len(), 1);
+    assert!(matches!(pc_paired[0].link, LinkState::Online { path: ConnectionPath::Usb, .. }));
+
+    // 1. Clipboard sync over USB tunnel.
+    with_timeout("send clipboard over USB", pc.node.send_clipboard(phone_id, "Clipboard over USB!".into()))
+        .await
+        .unwrap();
+    wait_for(&mut phone, "phone clipboard history changed", |e| match e {
+        NodeEvent::ClipboardHistoryChanged => Some(()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(*phone.platform.clipboard.lock().unwrap(), ["Clipboard over USB!"]);
+
+    // 2. File transfer over USB tunnel.
+    let src = tempfile::tempdir().unwrap();
+    let payload = b"USB cable file payload 1234567890".repeat(512);
+    let transfer_id = with_timeout(
+        "send file over USB",
+        pc.node.send_files(phone_id, vec![outgoing(src.path(), "usb_file.bin", &payload)]),
+    )
+    .await
+    .unwrap();
+    let received_paths = wait_transfer(&mut phone, &transfer_id, "phone received usb_file.bin", saved).await;
+    assert_eq!(std::fs::read(&received_paths[0]).unwrap(), payload);
+    wait_transfer(&mut pc, &transfer_id, "pc sent usb_file.bin", saved).await;
+
+    // 3. Screen mirroring over USB tunnel.
+    let options = nectarlink_core::MirrorStart {
+        max_size: 1280,
+        fps: 60,
+        bitrate: 6_000_000,
+        audio: false,
+        session: 0,
+        app: None,
+        stay_awake: false,
+        screen_off: false,
+    };
+    with_timeout("start mirror over USB", pc.node.mirror_start(phone_id, options)).await.unwrap();
+    let stream = Arc::new(with_timeout("open mirror over USB", phone.node.mirror_open(pc_id)).await.unwrap());
+    let mirror_cfg =
+        nectarlink_core::MirrorConfig { codec: "h264".into(), width: 1080, height: 2400, session: 0 };
+    let sender = stream.clone();
+    let sent = tokio::task::spawn_blocking(move || {
+        [
+            sender.send(PacketKind::Config, 0, mirror_cfg.to_cbor()),
+            sender.send(PacketKind::Keyframe, 42, vec![7u8; 16_384]),
+        ]
+    })
+    .await
+    .unwrap();
+    assert!(sent.iter().all(|s| *s == MirrorSend::Queued), "{sent:?}");
+
+    wait_for(&mut pc, "pc mirroring active over USB", |e| {
+        matches!(e, NodeEvent::Mirroring { on: true, .. }).then_some(())
+    })
+    .await;
+
+    let screen = pc.platform.screen.clone();
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while screen.got.lock().unwrap().len() < 2 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(*screen.got.lock().unwrap(), ["config 1080x2400", "key 42 16384"]);
+
+    pc.node.mirror_stop(phone_id, 0).await;
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reverse_mirror_requires_pc_consent_and_remote_input_toggle() {
+    use nectarlink_core::{
+        MIRROR_CAPTURE, MIRROR_INPUT, MIRROR_SCREEN, MirrorConfig, MirrorInput, MirrorSend, MirrorStart,
+        PC_MIRROR_TOGGLE, PacketKind, TouchAction,
+    };
+    use std::sync::atomic::Ordering;
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[MIRROR_CAPTURE, MIRROR_INPUT]).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &[nectarlink_core::MIRROR_VIEW]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+
+    let options = MirrorStart {
+        max_size: 1280,
+        fps: 30,
+        bitrate: 4_000_000,
+        audio: false,
+        session: MIRROR_SCREEN,
+        app: None,
+        stay_awake: false,
+        screen_off: false,
+    };
+
+    // (a) A paired phone calling `mirror_start` against a PC is denied by default
+    // (`pc_mirror` is false by default), and emits `NodeEvent::PcMirrorRequested` on the PC.
+    let denied_default = phone.node.mirror_start(pc_id, options.clone()).await;
+    assert!(
+        matches!(denied_default, Err(Error::Denied)),
+        "expected Denied by default, got {denied_default:?}"
+    );
+    let prompt_opts = wait_for(&mut pc, "pc mirror consent prompt event", |e| match e {
+        NodeEvent::PcMirrorRequested { device, options } if *device == phone_id => Some(options.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(prompt_opts.max_size, 1280);
+    assert!(pc.platform.mirror_asks.lock().unwrap().is_empty());
+
+    // Opening a PC mirror stream from the PC while `pc_mirror` is off is also denied.
+    assert!(matches!(pc.node.mirror_open(phone_id).await, Err(Error::Denied)));
+
+    // (b) Even after enabling `pc_mirror` on the PC, if the platform consent hook
+    // (`Platform::mirror_requested`) rejects, `mirror_start` is denied.
+    pc.node.set_device_toggle(phone_id, PC_MIRROR_TOGGLE, true).unwrap();
+    pc.platform.mirror_reject.store(true, Ordering::SeqCst);
+    let declined = phone.node.mirror_start(pc_id, options.clone()).await;
+    assert!(
+        matches!(declined, Err(Error::Denied)),
+        "expected Denied when consent hook rejects, got {declined:?}"
+    );
+    assert!(pc.platform.mirror_asks.lock().unwrap().is_empty());
+
+    // Once both `pc_mirror` is enabled on the PC AND the platform consent hook approves,
+    // `mirror_start` succeeds and the PC streams frames to the phone.
+    pc.platform.mirror_reject.store(false, Ordering::SeqCst);
+    with_timeout("mirror_start after toggle + consent", phone.node.mirror_start(pc_id, options.clone()))
+        .await
+        .unwrap();
+    assert_eq!(*pc.platform.mirror_asks.lock().unwrap(), ["start 1280"]);
+
+    let stream = Arc::new(with_timeout("pc mirror_open", pc.node.mirror_open(phone_id)).await.unwrap());
+    let cfg = MirrorConfig { codec: "h264".into(), width: 1280, height: 720, session: MIRROR_SCREEN };
+    let sender = stream.clone();
+    let sent = tokio::task::spawn_blocking(move || {
+        [
+            sender.send(PacketKind::Config, 0, cfg.to_cbor()),
+            sender.send(PacketKind::Keyframe, 100, vec![9u8; 4096]),
+        ]
+    })
+    .await
+    .unwrap();
+    assert!(sent.iter().all(|s| *s == MirrorSend::Queued), "{sent:?}");
+    wait_for(&mut phone, "phone mirroring on", |e| {
+        matches!(e, NodeEvent::Mirroring { on: true, .. }).then_some(())
+    })
+    .await;
+
+    // (c) `mirror_input` against a PC is refused unless `remote_input` is also on
+    // on both sides.
+    let touch = MirrorInput::Touch { action: TouchAction::Down, x: 0.5, y: 0.5 };
+    let input_denied_both_off = phone.node.mirror_input(pc_id, MIRROR_SCREEN, touch.clone()).await;
+    assert!(
+        matches!(input_denied_both_off, Err(Error::Denied)),
+        "expected Denied when remote_input is off on phone, got {input_denied_both_off:?}"
+    );
+    phone.node.set_device_toggle(pc_id, "remote_input", true).unwrap();
+    phone.node.mirror_input(pc_id, MIRROR_SCREEN, touch.clone()).await.unwrap();
+    wait_for(&mut pc, "pc remote input prompt event", |e| match e {
+        NodeEvent::RemoteInputRequested { device } if *device == phone_id => Some(()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(
+        *pc.platform.mirror_asks.lock().unwrap(),
+        ["start 1280"],
+        "PC must refuse to inject mirror_input while remote_input is off on PC"
+    );
+
+    // Once the PC also enables `remote_input`, `mirror_input` succeeds.
+    pc.node.set_device_toggle(phone_id, "remote_input", true).unwrap();
+    with_timeout("mirror_input with remote_input on", phone.node.mirror_input(pc_id, MIRROR_SCREEN, touch))
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while pc.platform.mirror_asks.lock().unwrap().len() < 2 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(pc.platform.mirror_asks.lock().unwrap().len(), 2);
+
+    phone.node.mirror_stop(pc_id, MIRROR_SCREEN).await;
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn queue_offline_fifo_clipboard_replacement_and_drain_on_reconnect() {
+    use nectarlink_core::{QueueKind, QueueStatus};
+
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &["clip.write", "link.open"]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let phone_id = phone.node.device_id();
+
+    let phone_dir = phone.dir;
+    phone.node.shutdown().await;
+    wait_for(&mut pc, "phone offline", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == phone_id => Some(()),
+        _ => None,
+    })
+    .await;
+
+    let src = tempfile::tempdir().unwrap();
+    let file_id = pc
+        .node
+        .send_files(phone_id, vec![outgoing(src.path(), "alpha.txt", b"queued-alpha-payload")])
+        .await
+        .unwrap();
+    pc.node.send_clipboard(phone_id, "clip-v1".into()).await.unwrap();
+    pc.node.open_link(phone_id, "https://example.com/queued".into()).await.unwrap();
+    pc.node.send_clipboard(phone_id, "clip-v2".into()).await.unwrap();
+
+    let queued = pc.node.send_queue(Some(phone_id)).unwrap();
+    assert_eq!(queued.len(), 3, "second clipboard send must replace the waiting first clipboard item");
+    assert_eq!(queued[0].id, file_id);
+    assert_eq!(queued[0].kind, QueueKind::Files);
+    assert_eq!(queued[0].status, QueueStatus::Waiting);
+    assert_eq!(queued[1].kind, QueueKind::Link);
+    assert_eq!(queued[1].status, QueueStatus::Waiting);
+    assert_eq!(queued[2].kind, QueueKind::Clipboard);
+    assert_eq!(queued[2].title, "clip-v2");
+    assert_eq!(queued[2].status, QueueStatus::Waiting);
+    assert!(queued[0].seq < queued[1].seq && queued[1].seq < queued[2].seq);
+
+    let mut phone = start_in(phone_dir, "Pixel", DeviceKind::Phone).await;
+    phone
+        .node
+        .update_power(
+            PowerLevel::NotApplicable,
+            vec!["media.control".into(), "clip.write".into(), "link.open".into()],
+        )
+        .await;
+
+    let received = wait_transfer(&mut phone, &file_id, "queued file delivered on reconnect", saved).await;
+    assert_eq!(std::fs::read(&received[0]).unwrap(), b"queued-alpha-payload");
+
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while (phone.platform.clipboard.lock().unwrap().is_empty()
+        || phone.platform.links.lock().unwrap().is_empty()
+        || !pc.node.send_queue(Some(phone_id)).unwrap().is_empty())
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    assert_eq!(*phone.platform.clipboard.lock().unwrap(), ["clip-v2"]);
+    assert_eq!(*phone.platform.links.lock().unwrap(), ["https://example.com/queued"]);
+    assert!(pc.node.send_queue(Some(phone_id)).unwrap().is_empty());
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn queue_survives_node_restart_and_delivers_on_reconnect() {
+    use nectarlink_core::QueueStatus;
+
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &["clip.write"]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let phone_id = phone.node.device_id();
+
+    let phone_dir = phone.dir;
+    phone.node.shutdown().await;
+    wait_for(&mut pc, "phone offline", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == phone_id => Some(()),
+        _ => None,
+    })
+    .await;
+
+    let src = tempfile::tempdir().unwrap();
+    let file_id = pc
+        .node
+        .send_files(phone_id, vec![outgoing(src.path(), "persisted.txt", b"survives-node-restart")])
+        .await
+        .unwrap();
+    pc.node.send_clipboard(phone_id, "persisted-clip".into()).await.unwrap();
+    assert_eq!(pc.node.send_queue(Some(phone_id)).unwrap().len(), 2);
+
+    let pc_dir = pc.dir;
+    pc.node.shutdown().await;
+
+    let pc = start_in(pc_dir, "Desktop", DeviceKind::Desktop).await;
+    let recovered = pc.node.send_queue(Some(phone_id)).unwrap();
+    assert_eq!(recovered.len(), 2);
+    assert!(recovered.iter().all(|i| i.status == QueueStatus::Waiting));
+
+    let mut phone = start_in(phone_dir, "Pixel", DeviceKind::Phone).await;
+    phone
+        .node
+        .update_power(PowerLevel::NotApplicable, vec!["media.control".into(), "clip.write".into()])
+        .await;
+    pc.node.add_known_addrs(phone_id, &phone.node.direct_addrs().await);
+    phone.node.add_known_addrs(pc.node.device_id(), &pc.node.direct_addrs().await);
+
+    let received = wait_transfer(&mut phone, &file_id, "persisted file delivered", saved).await;
+    assert_eq!(std::fs::read(&received[0]).unwrap(), b"survives-node-restart");
+
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while (phone.platform.clipboard.lock().unwrap().is_empty()
+        || !pc.node.send_queue(Some(phone_id)).unwrap().is_empty())
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(*phone.platform.clipboard.lock().unwrap(), ["persisted-clip"]);
+    assert!(pc.node.send_queue(None).unwrap().is_empty());
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn queue_source_file_deleted_or_modified_fails_cleanly_and_retry_works() {
+    use nectarlink_core::QueueStatus;
+
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = device("Pixel", DeviceKind::Phone).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let phone_id = phone.node.device_id();
+
+    let phone_dir = phone.dir;
+    phone.node.shutdown().await;
+    wait_for(&mut pc, "phone offline", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == phone_id => Some(()),
+        _ => None,
+    })
+    .await;
+
+    let src = tempfile::tempdir().unwrap();
+    let missing_path = src.path().join("missing.txt");
+    let modified_path = src.path().join("modified.txt");
+    let valid_path = src.path().join("valid.txt");
+    std::fs::write(&missing_path, b"will-be-deleted").unwrap();
+    std::fs::write(&modified_path, b"original-bytes").unwrap();
+    std::fs::write(&valid_path, b"good-bytes").unwrap();
+
+    let missing_id = pc
+        .node
+        .send_files(
+            phone_id,
+            vec![OutgoingFile {
+                name: "missing.txt".into(),
+                folder: None,
+                source: FileSource::Path(missing_path.clone()),
+            }],
+        )
+        .await
+        .unwrap();
+    let modified_id = pc
+        .node
+        .send_files(
+            phone_id,
+            vec![OutgoingFile {
+                name: "modified.txt".into(),
+                folder: None,
+                source: FileSource::Path(modified_path.clone()),
+            }],
+        )
+        .await
+        .unwrap();
+    let valid_id = pc
+        .node
+        .send_files(
+            phone_id,
+            vec![OutgoingFile {
+                name: "valid.txt".into(),
+                folder: None,
+                source: FileSource::Path(valid_path),
+            }],
+        )
+        .await
+        .unwrap();
+
+    // Mutate/remove the first two source files while queued.
+    std::fs::remove_file(&missing_path).unwrap();
+    std::fs::write(&modified_path, b"modified-after-queuing-different-length").unwrap();
+
+    let mut phone = start_in(phone_dir, "Pixel", DeviceKind::Phone).await;
+    let received =
+        wait_transfer(&mut phone, &valid_id, "valid file still delivered past failed items", saved).await;
+    assert_eq!(std::fs::read(&received[0]).unwrap(), b"good-bytes");
+
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while pc.node.send_queue(Some(phone_id)).unwrap().len() != 2 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let queue = pc.node.send_queue(Some(phone_id)).unwrap();
+    assert_eq!(queue.len(), 2);
+    let missing_item = queue.iter().find(|i| i.id == missing_id).unwrap();
+    assert!(matches!(
+        &missing_item.status,
+        QueueStatus::Failed { error } if error.contains("File was deleted before sending: missing.txt")
+    ));
+    let modified_item = queue.iter().find(|i| i.id == modified_id).unwrap();
+    assert!(matches!(
+        &modified_item.status,
+        QueueStatus::Failed { error } if error.contains("File was modified before sending: modified.txt")
+    ));
+
+    // Clearing finished items removes both failed entries.
+    assert_eq!(pc.node.clear_finished_queue_items(Some(phone_id)).unwrap(), 2);
+    assert!(pc.node.send_queue(Some(phone_id)).unwrap().is_empty());
+
+    // Also verify retry_queue_item when a toggle caused a failure while queued:
+    let phone_dir2 = phone.dir;
+    phone.node.shutdown().await;
+    wait_for(&mut pc, "phone offline 2", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == phone_id => Some(()),
+        _ => None,
+    })
+    .await;
+
+    let retry_id = pc
+        .node
+        .send_files(phone_id, vec![outgoing(src.path(), "retry.txt", b"retry-success")])
+        .await
+        .unwrap();
+    pc.node.set_device_toggle(phone_id, "files", false).unwrap();
+
+    let mut phone = start_in(phone_dir2, "Pixel", DeviceKind::Phone).await;
+    wait_online(&mut pc, phone_id).await;
+
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while !pc
+        .node
+        .send_queue(Some(phone_id))
+        .unwrap()
+        .iter()
+        .any(|i| i.id == retry_id && matches!(i.status, QueueStatus::Failed { .. }))
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    pc.node.set_device_toggle(phone_id, "files", true).unwrap();
+    assert!(pc.node.retry_queue_item(&retry_id).unwrap());
+
+    let retried_paths = wait_transfer(&mut phone, &retry_id, "retried file delivered", saved).await;
+    assert_eq!(std::fs::read(&retried_paths[0]).unwrap(), b"retry-success");
+
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while !pc.node.send_queue(Some(phone_id)).unwrap().is_empty() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(pc.node.send_queue(Some(phone_id)).unwrap().is_empty());
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn queue_cancel_waiting_and_mid_transfer_cleans_up_and_unpair_drops_queue() {
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = device("Pixel", DeviceKind::Phone).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let phone_id = phone.node.device_id();
+
+    phone.node.shutdown().await;
+    wait_for(&mut pc, "phone offline", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == phone_id => Some(()),
+        _ => None,
+    })
+    .await;
+
+    let src = tempfile::tempdir().unwrap();
+    let fd_src_path = src.path().join("fd_source.bin");
+    std::fs::write(&fd_src_path, b"staged-descriptor-bytes").unwrap();
+    let fd_handle = std::fs::File::open(&fd_src_path).unwrap();
+
+    let staged_id = pc
+        .node
+        .send_files(
+            phone_id,
+            vec![OutgoingFile {
+                name: "staged.bin".into(),
+                folder: None,
+                source: FileSource::File(fd_handle),
+            }],
+        )
+        .await
+        .unwrap();
+
+    let staging_dir = pc.dir.path().join("queue_staging").join(&staged_id);
+    assert!(staging_dir.exists(), "FileSource::File must be staged in queue_staging/<id>");
+
+    assert!(pc.node.cancel_queue_item(&staged_id).unwrap());
+    assert!(pc.node.send_queue(Some(phone_id)).unwrap().is_empty());
+    assert!(!staging_dir.exists(), "cancelling a queued item must delete its staged files");
+
+    // Enqueue 2 items (one staged file + one clipboard clip) and unpair: both are dropped and
+    // QueueDroppedOnUnpair is emitted with dropped_count == 2.
+    let fd_handle2 = std::fs::File::open(&fd_src_path).unwrap();
+    let staged_id2 = pc
+        .node
+        .send_files(
+            phone_id,
+            vec![OutgoingFile {
+                name: "staged2.bin".into(),
+                folder: None,
+                source: FileSource::File(fd_handle2),
+            }],
+        )
+        .await
+        .unwrap();
+    pc.node.send_clipboard(phone_id, "dropped-on-unpair".into()).await.unwrap();
+    let staging_dir2 = pc.dir.path().join("queue_staging").join(&staged_id2);
+    assert!(staging_dir2.exists());
+    assert_eq!(pc.node.send_queue(Some(phone_id)).unwrap().len(), 2);
+
+    pc.node.unpair(phone_id).await.unwrap();
+    let dropped_count = wait_for(&mut pc, "QueueDroppedOnUnpair event", |e| match e {
+        NodeEvent::QueueDroppedOnUnpair { peer, dropped_count, .. } if *peer == phone_id => {
+            Some(*dropped_count)
+        }
+        _ => None,
+    })
+    .await;
+    assert_eq!(dropped_count, 2);
+    assert!(pc.node.send_queue(None).unwrap().is_empty());
+    assert!(!staging_dir2.exists(), "unpairing must clean up staged files for dropped queue items");
+
+    pc.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn queue_offline_no_busy_loop_timeline_only_on_delivery_and_clear_history_preserves_queue() {
+    use nectarlink_core::{TimelineKind, TimelineQuery};
+
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &["clip.write", "link.open"]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let phone_id = phone.node.device_id();
+
+    let phone_dir = phone.dir;
+    phone.node.shutdown().await;
+    wait_for(&mut pc, "phone offline", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == phone_id => Some(()),
+        _ => None,
+    })
+    .await;
+
+    // Enqueue a staged file, a clipboard item, and a link while phone is offline.
+    let src = tempfile::tempdir().unwrap();
+    let fd_src_path = src.path().join("staged_deliver.txt");
+    std::fs::write(&fd_src_path, b"staged-for-delivery").unwrap();
+    let fd_handle = std::fs::File::open(&fd_src_path).unwrap();
+    let file_id = pc
+        .node
+        .send_files(
+            phone_id,
+            vec![OutgoingFile {
+                name: "staged_deliver.txt".into(),
+                folder: None,
+                source: FileSource::File(fd_handle),
+            }],
+        )
+        .await
+        .unwrap();
+    pc.node.send_clipboard(phone_id, "offline-clip-text".into()).await.unwrap();
+    pc.node.open_link(phone_id, "https://example.com/offline-link".into()).await.unwrap();
+
+    let staging_dir = pc.dir.path().join("queue_staging").join(&file_id);
+    assert!(staging_dir.exists());
+
+    // 1. Timeline must NOT record any Sent/Opened entries while items are still waiting in the queue.
+    let tl_before = pc
+        .node
+        .timeline_page(&TimelineQuery { device: Some(phone_id), limit: 50, ..Default::default() })
+        .unwrap();
+    assert_eq!(
+        tl_before.total, 0,
+        "timeline must not record queued items before they are actually delivered"
+    );
+
+    // 2. Setting a past next_retry_ms on a waiting item for an offline peer must NOT cause a 50ms busy loop.
+    assert!(pc.node.debug_set_queue_retry_ms(&file_id, 1, 1_000).unwrap());
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    let ticks_start = pc.node.queue_coordinator_ticks();
+    tokio::time::sleep(Duration::from_millis(450)).await;
+    let ticks_elapsed = pc.node.queue_coordinator_ticks().saturating_sub(ticks_start);
+    assert!(
+        ticks_elapsed <= 1,
+        "queue coordinator must stay idle while peer is offline, got {ticks_elapsed} ticks in 450ms"
+    );
+
+    // 3. Clearing local history/cache must preserve send_queue and staged files.
+    pc.node.clear_all_local_data().unwrap();
+    assert_eq!(pc.node.send_queue(Some(phone_id)).unwrap().len(), 3);
+    assert!(staging_dir.exists(), "clear_all_local_data must not delete queue_staging");
+
+    // 4. Bring phone online: all 3 items are delivered, staged files are deleted, and timeline records all 3.
+    let mut phone = start_in(phone_dir, "Pixel", DeviceKind::Phone).await;
+    phone
+        .node
+        .update_power(
+            PowerLevel::NotApplicable,
+            vec!["media.control".into(), "clip.write".into(), "link.open".into()],
+        )
+        .await;
+
+    let received = wait_transfer(&mut phone, &file_id, "staged file delivered", saved).await;
+    assert_eq!(std::fs::read(&received[0]).unwrap(), b"staged-for-delivery");
+
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while (phone.platform.clipboard.lock().unwrap().is_empty()
+        || phone.platform.links.lock().unwrap().is_empty()
+        || !pc.node.send_queue(Some(phone_id)).unwrap().is_empty())
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    assert!(!staging_dir.exists(), "staged directory must be deleted once file delivery completes");
+    let tl_after = pc
+        .node
+        .timeline_page(&TimelineQuery { device: Some(phone_id), limit: 50, ..Default::default() })
+        .unwrap();
+    assert_eq!(tl_after.total, 3, "timeline must record File, Clip, and Link once delivered");
+    assert!(tl_after.entries.iter().any(|e| e.kind == TimelineKind::File && !e.incoming));
+    assert!(tl_after.entries.iter().any(|e| e.kind == TimelineKind::Clip && !e.incoming));
+    assert!(tl_after.entries.iter().any(|e| e.kind == TimelineKind::Link && !e.incoming));
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pc_audio_reaches_the_phone_over_both_paths() {
+    use nectarlink_core::{DECK_ACTIONS, PC_AUDIO};
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[DECK_ACTIONS, PC_AUDIO]).await;
+    let mut phone = device("Pixel", DeviceKind::Phone).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let phone_id = phone.node.device_id();
+
+    // "Phone speaker" can be turned on from either device, so the phone plays whatever its
+    // paired PC streams: small frames go as datagrams, larger ones on a stream.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut heard = 0;
+    while heard == 0 && tokio::time::Instant::now() < deadline {
+        let _ = pc.node.send_pc_audio_pcm(&phone_id, 48_000, 2, vec![1u8; 480]).await;
+        let _ = pc.node.send_pc_audio_pcm(&phone_id, 48_000, 2, vec![2u8; 4000]).await;
+        while let Ok(Ok(ev)) = tokio::time::timeout(Duration::from_millis(40), phone.events.recv()).await {
+            if matches!(ev, NodeEvent::PcAudioFrame { .. }) {
+                heard += 1;
+            }
+        }
+    }
+    assert!(heard > 0, "the phone never surfaced the PC's audio");
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
 }

@@ -44,8 +44,25 @@ fn sample_live_state() -> DeckState {
     let (volume, muted) = win::audio::speaker_state().unwrap_or((50, false));
     let mic_muted = win::audio::mic_muted();
     let playing = MEDIA_PLAYING.load(Ordering::Relaxed);
-    let output_devices = win::audio::output_devices();
+    let mut output_devices = win::audio::output_devices();
+    if crate::pc_audio_stream::is_enabled() {
+        output_devices.push(nectarlink_core::AudioOutputDevice {
+            id: "nectarlink:phone_speaker".to_owned(),
+            name: "Phone speaker (Nectarlink)".to_owned(),
+            is_default: false,
+        });
+    }
     DeckState { volume, muted, mic_muted, playing, output_devices }
+}
+
+/// Immediately re-samples and broadcasts `deck.state` to connected phones when
+/// the core node is running.
+pub fn broadcast_live_state() {
+    if core_host::node().is_some() {
+        core_host::spawn(async {
+            refresh_live_state().await;
+        });
+    }
 }
 
 /// Marks whether the desktop Deck page is currently visible so idle background
@@ -225,8 +242,22 @@ pub fn handle_press(_peer: &DeviceId, tile_id: &str) -> Result<(), String> {
 
 /// Called when a paired phone changes the PC's speaker volume and/or mute state
 /// (`Platform::set_pc_audio`).
-pub fn handle_set_audio(_peer: &DeviceId, volume: Option<u8>, muted: Option<bool>) -> Result<(), String> {
+pub fn handle_set_audio(peer: &DeviceId, volume: Option<u8>, muted: Option<bool>) -> Result<(), String> {
     if let Some(level) = volume {
+        if level == nectarlink_core::deck::PHONE_SPEAKER_OFF
+            || level == nectarlink_core::deck::PHONE_SPEAKER_ON
+        {
+            let on = level == nectarlink_core::deck::PHONE_SPEAKER_ON;
+            crate::pc_audio_stream::set_target(on.then_some(*peer));
+            crate::pc_audio_stream::set_enabled(on);
+            let dir = &core_host::host().data_dir;
+            let mut s = crate::settings::Settings::load(dir);
+            s.stream_pc_audio_to_phone = on;
+            let _ = s.save(dir);
+            crate::settings::set_stream_pc_audio_to_phone(on);
+            core_host::host().hub.changed(Changes::PREFS);
+            return Ok(());
+        }
         win::audio::set_speaker_volume(level)?;
     }
     if let Some(m) = muted {
@@ -302,8 +333,21 @@ fn execute_action(action: &DeckAction) -> Result<(), String> {
             Ok(())
         }
         DeckAction::LaunchApp { path } => win::shell::launch_app(Path::new(path)),
-        DeckAction::RunCommand { command } => win::shell::run_command(command),
+        DeckAction::RunCommand { command } => {
+            if let Some(obs_cmd) = command.trim().strip_prefix("obs:") {
+                send_obs_command(obs_cmd.trim())
+            } else {
+                win::shell::run_command(command)
+            }
+        }
     }
+}
+
+/// Runs an OBS Studio command (`record`, `stream`, `scene:<name>`, ...) from a Deck tile,
+/// with the port and password from Settings.
+pub fn send_obs_command(obs_cmd: &str) -> Result<(), String> {
+    let (port, _) = crate::settings::obs_settings();
+    crate::obs::run(obs_cmd, port, crate::settings::obs_password().as_deref())
 }
 
 fn next_unique_id(prefix: &str, existing: &[String]) -> String {

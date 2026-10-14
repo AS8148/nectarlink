@@ -12,6 +12,7 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -365,6 +366,10 @@ private fun DeckAudioHeaderBar(
     onSetPcAudio: (volume: Int?, muted: Boolean?) -> Unit,
 ) {
     var draggingVolume by remember { mutableStateOf<Float?>(null) }
+    var lastSentVolume by remember { mutableStateOf(liveState.volume.toInt()) }
+    if (draggingVolume == null) {
+        lastSentVolume = liveState.volume.toInt()
+    }
     var showOutputs by remember { mutableStateOf(false) }
     val shownVolume = draggingVolume?.roundToInt() ?: liveState.volume.toInt()
     val defaultOutput = liveState.outputDevices.firstOrNull { it.isDefault } ?: liveState.outputDevices.firstOrNull()
@@ -398,7 +403,11 @@ private fun DeckAudioHeaderBar(
                     value = (draggingVolume ?: liveState.volume.toFloat()).coerceIn(0f, 100f),
                     onValueChange = { v ->
                         draggingVolume = v
-                        onSetPcAudio(v.roundToInt(), null)
+                        val rounded = v.roundToInt()
+                        if (rounded != lastSentVolume) {
+                            lastSentVolume = rounded
+                            onSetPcAudio(rounded, null)
+                        }
                     },
                     onValueChangeFinished = { draggingVolume = null },
                     valueRange = 0f..100f,
@@ -634,18 +643,17 @@ private fun DeckTileButton(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Top,
             ) {
-                Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = palette.iconWell,
-                    modifier = Modifier.size(if (compact) 34.dp else 36.dp),
+                Box(
+                    modifier = Modifier
+                        .size(if (compact) 34.dp else 36.dp)
+                        .background(palette.iconWell, MaterialTheme.shapes.medium),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        DeckIcon(
-                            name = iconName,
-                            tint = palette.fg,
-                            modifier = Modifier.size(if (compact) 18.dp else 20.dp),
-                        )
-                    }
+                    DeckIcon(
+                        name = iconName,
+                        tint = palette.fg,
+                        modifier = Modifier.size(if (compact) 18.dp else 20.dp),
+                    )
                 }
 
                 if (badge != null) {
@@ -686,12 +694,13 @@ private fun DeckIcon(
     tint: Color,
     modifier: Modifier = Modifier,
 ) {
+    val scratchPath = remember { Path() }
     Canvas(modifier = modifier) {
-        drawDeckIcon(name, tint)
+        drawDeckIcon(name, tint, scratchPath)
     }
 }
 
-private fun DrawScope.drawDeckIcon(name: String, color: Color) {
+private fun DrawScope.drawDeckIcon(name: String, color: Color, scratchPath: Path) {
     val w = size.width
     val h = size.height
     val stroke = Stroke(
@@ -705,40 +714,37 @@ private fun DrawScope.drawDeckIcon(name: String, color: Color) {
 
     when (name) {
         "play", "play_pause" -> {
-            val play = Path().apply {
-                moveTo(sx(6f), sy(4.5f))
-                lineTo(sx(19f), sy(12f))
-                lineTo(sx(6f), sy(19.5f))
-                close()
-            }
-            drawPath(play, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(6f), sy(4.5f))
+            scratchPath.lineTo(sx(19f), sy(12f))
+            scratchPath.lineTo(sx(6f), sy(19.5f))
+            scratchPath.close()
+            drawPath(scratchPath, color = color, style = stroke)
         }
         "pause" -> {
             drawLine(color, pt(8f, 5f), pt(8f, 19f), strokeWidth = stroke.width * 1.15f, cap = StrokeCap.Round)
             drawLine(color, pt(16f, 5f), pt(16f, 19f), strokeWidth = stroke.width * 1.15f, cap = StrokeCap.Round)
         }
         "skip_next" -> {
-            val tri = Path().apply {
-                moveTo(sx(5f), sy(5f))
-                lineTo(sx(15f), sy(12f))
-                lineTo(sx(5f), sy(19f))
-                close()
-            }
-            drawPath(tri, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(5f), sy(5f))
+            scratchPath.lineTo(sx(15f), sy(12f))
+            scratchPath.lineTo(sx(5f), sy(19f))
+            scratchPath.close()
+            drawPath(scratchPath, color = color, style = stroke)
             drawLine(color, pt(19f, 5f), pt(19f, 19f), strokeWidth = stroke.width, cap = StrokeCap.Round)
         }
         "skip_previous" -> {
-            val tri = Path().apply {
-                moveTo(sx(19f), sy(5f))
-                lineTo(sx(9f), sy(12f))
-                lineTo(sx(19f), sy(19f))
-                close()
-            }
-            drawPath(tri, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(19f), sy(5f))
+            scratchPath.lineTo(sx(9f), sy(12f))
+            scratchPath.lineTo(sx(19f), sy(19f))
+            scratchPath.close()
+            drawPath(scratchPath, color = color, style = stroke)
             drawLine(color, pt(5f, 5f), pt(5f, 19f), strokeWidth = stroke.width, cap = StrokeCap.Round)
         }
         "volume_up" -> {
-            drawSpeakerCone(color, stroke, ::sx, ::sy)
+            drawSpeakerCone(color, stroke, scratchPath, ::sx, ::sy)
             drawArc(
                 color = color,
                 startAngle = -45f,
@@ -759,7 +765,7 @@ private fun DrawScope.drawDeckIcon(name: String, color: Color) {
             )
         }
         "volume_down" -> {
-            drawSpeakerCone(color, stroke, ::sx, ::sy)
+            drawSpeakerCone(color, stroke, scratchPath, ::sx, ::sy)
             drawArc(
                 color = color,
                 startAngle = -45f,
@@ -771,7 +777,7 @@ private fun DrawScope.drawDeckIcon(name: String, color: Color) {
             )
         }
         "volume_off" -> {
-            drawSpeakerCone(color, stroke, ::sx, ::sy)
+            drawSpeakerCone(color, stroke, scratchPath, ::sx, ::sy)
             drawLine(color, pt(16f, 9f), pt(21f, 15f), strokeWidth = stroke.width, cap = StrokeCap.Round)
             drawLine(color, pt(21f, 9f), pt(16f, 15f), strokeWidth = stroke.width, cap = StrokeCap.Round)
         }
@@ -837,14 +843,13 @@ private fun DrawScope.drawDeckIcon(name: String, color: Color) {
                 cornerRadius = CornerRadius(sx(2f), sy(2f)),
                 style = stroke,
             )
-            val back = Path().apply {
-                moveTo(sx(8f), sy(7f))
-                lineTo(sx(8f), sy(5f))
-                lineTo(sx(21f), sy(5f))
-                lineTo(sx(21f), sy(15f))
-                lineTo(sx(16f), sy(15f))
-            }
-            drawPath(back, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(8f), sy(7f))
+            scratchPath.lineTo(sx(8f), sy(5f))
+            scratchPath.lineTo(sx(21f), sy(5f))
+            scratchPath.lineTo(sx(21f), sy(15f))
+            scratchPath.lineTo(sx(16f), sy(15f))
+            drawPath(scratchPath, color = color, style = stroke)
         }
         "screenshot", "camera" -> {
             drawRoundRect(
@@ -866,9 +871,11 @@ private fun DrawScope.drawDeckIcon(name: String, color: Color) {
                 style = stroke,
             )
             drawLine(color, pt(8f, 15f), pt(16f, 15f), strokeWidth = stroke.width, cap = StrokeCap.Round)
-            for (x in listOf(6f, 10f, 14f, 18f)) {
-                drawCircle(color = color, radius = sx(1f), center = pt(x, 10f))
-            }
+            val r = sx(1f)
+            drawCircle(color = color, radius = r, center = pt(6f, 10f))
+            drawCircle(color = color, radius = r, center = pt(10f, 10f))
+            drawCircle(color = color, radius = r, center = pt(14f, 10f))
+            drawCircle(color = color, radius = r, center = pt(18f, 10f))
         }
         "globe" -> {
             drawCircle(color = color, radius = sx(9f), center = pt(12f, 12f), style = stroke)
@@ -886,47 +893,39 @@ private fun DrawScope.drawDeckIcon(name: String, color: Color) {
             drawLine(color, pt(9f, 19f), pt(15f, 19f), strokeWidth = stroke.width, cap = StrokeCap.Round)
         }
         "app", "rocket" -> {
-            for (gx in listOf(4f, 13f)) {
-                for (gy in listOf(4f, 13f)) {
-                    drawRoundRect(
-                        color = color,
-                        topLeft = pt(gx, gy),
-                        size = Size(sx(7f), sy(7f)),
-                        cornerRadius = CornerRadius(sx(1.5f), sy(1.5f)),
-                        style = stroke,
-                    )
-                }
-            }
+            val cellSize = Size(sx(7f), sy(7f))
+            val cr = CornerRadius(sx(1.5f), sy(1.5f))
+            drawRoundRect(color = color, topLeft = pt(4f, 4f), size = cellSize, cornerRadius = cr, style = stroke)
+            drawRoundRect(color = color, topLeft = pt(13f, 4f), size = cellSize, cornerRadius = cr, style = stroke)
+            drawRoundRect(color = color, topLeft = pt(4f, 13f), size = cellSize, cornerRadius = cr, style = stroke)
+            drawRoundRect(color = color, topLeft = pt(13f, 13f), size = cellSize, cornerRadius = cr, style = stroke)
         }
         "terminal" -> {
-            val chevron = Path().apply {
-                moveTo(sx(4f), sy(7f))
-                lineTo(sx(10f), sy(12f))
-                lineTo(sx(4f), sy(17f))
-            }
-            drawPath(chevron, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(4f), sy(7f))
+            scratchPath.lineTo(sx(10f), sy(12f))
+            scratchPath.lineTo(sx(4f), sy(17f))
+            drawPath(scratchPath, color = color, style = stroke)
             drawLine(color, pt(12f, 17f), pt(20f, 17f), strokeWidth = stroke.width, cap = StrokeCap.Round)
         }
         "spark", "bolt" -> {
-            val bolt = Path().apply {
-                moveTo(sx(13f), sy(2f))
-                lineTo(sx(4f), sy(14f))
-                lineTo(sx(11f), sy(14f))
-                lineTo(sx(10f), sy(22f))
-                lineTo(sx(20f), sy(10f))
-                lineTo(sx(13f), sy(10f))
-                close()
-            }
-            drawPath(bolt, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(13f), sy(2f))
+            scratchPath.lineTo(sx(4f), sy(14f))
+            scratchPath.lineTo(sx(11f), sy(14f))
+            scratchPath.lineTo(sx(10f), sy(22f))
+            scratchPath.lineTo(sx(20f), sy(10f))
+            scratchPath.lineTo(sx(13f), sy(10f))
+            scratchPath.close()
+            drawPath(scratchPath, color = color, style = stroke)
         }
         "music" -> {
-            val note = Path().apply {
-                moveTo(sx(9f), sy(18f))
-                lineTo(sx(9f), sy(6f))
-                lineTo(sx(19f), sy(4f))
-                lineTo(sx(19f), sy(16f))
-            }
-            drawPath(note, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(9f), sy(18f))
+            scratchPath.lineTo(sx(9f), sy(6f))
+            scratchPath.lineTo(sx(19f), sy(4f))
+            scratchPath.lineTo(sx(19f), sy(16f))
+            drawPath(scratchPath, color = color, style = stroke)
             drawCircle(color = color, radius = sx(2.5f), center = pt(6.5f, 18f), style = stroke)
             drawCircle(color = color, radius = sx(2.5f), center = pt(16.5f, 16f), style = stroke)
         }
@@ -938,53 +937,49 @@ private fun DrawScope.drawDeckIcon(name: String, color: Color) {
                 cornerRadius = CornerRadius(sx(2f), sy(2f)),
                 style = stroke,
             )
-            val lens = Path().apply {
-                moveTo(sx(15f), sy(10f))
-                lineTo(sx(21f), sy(7f))
-                lineTo(sx(21f), sy(17f))
-                lineTo(sx(15f), sy(14f))
-                close()
-            }
-            drawPath(lens, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(15f), sy(10f))
+            scratchPath.lineTo(sx(21f), sy(7f))
+            scratchPath.lineTo(sx(21f), sy(17f))
+            scratchPath.lineTo(sx(15f), sy(14f))
+            scratchPath.close()
+            drawPath(scratchPath, color = color, style = stroke)
         }
         "folder" -> {
-            val folder = Path().apply {
-                moveTo(sx(3f), sy(6f))
-                lineTo(sx(9f), sy(6f))
-                lineTo(sx(11f), sy(8f))
-                lineTo(sx(21f), sy(8f))
-                lineTo(sx(21f), sy(19f))
-                lineTo(sx(3f), sy(19f))
-                close()
-            }
-            drawPath(folder, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(3f), sy(6f))
+            scratchPath.lineTo(sx(9f), sy(6f))
+            scratchPath.lineTo(sx(11f), sy(8f))
+            scratchPath.lineTo(sx(21f), sy(8f))
+            scratchPath.lineTo(sx(21f), sy(19f))
+            scratchPath.lineTo(sx(3f), sy(19f))
+            scratchPath.close()
+            drawPath(scratchPath, color = color, style = stroke)
         }
         "star" -> {
-            val star = Path().apply {
-                moveTo(sx(12f), sy(3f))
-                lineTo(sx(14.8f), sy(8.8f))
-                lineTo(sx(21f), sy(9.7f))
-                lineTo(sx(16.5f), sy(14.1f))
-                lineTo(sx(17.6f), sy(20.3f))
-                lineTo(sx(12f), sy(17.4f))
-                lineTo(sx(6.4f), sy(20.3f))
-                lineTo(sx(7.5f), sy(14.1f))
-                lineTo(sx(3f), sy(9.7f))
-                lineTo(sx(9.2f), sy(8.8f))
-                close()
-            }
-            drawPath(star, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(12f), sy(3f))
+            scratchPath.lineTo(sx(14.8f), sy(8.8f))
+            scratchPath.lineTo(sx(21f), sy(9.7f))
+            scratchPath.lineTo(sx(16.5f), sy(14.1f))
+            scratchPath.lineTo(sx(17.6f), sy(20.3f))
+            scratchPath.lineTo(sx(12f), sy(17.4f))
+            scratchPath.lineTo(sx(6.4f), sy(20.3f))
+            scratchPath.lineTo(sx(7.5f), sy(14.1f))
+            scratchPath.lineTo(sx(3f), sy(9.7f))
+            scratchPath.lineTo(sx(9.2f), sy(8.8f))
+            scratchPath.close()
+            drawPath(scratchPath, color = color, style = stroke)
         }
         "bell" -> {
-            val bell = Path().apply {
-                moveTo(sx(6f), sy(16f))
-                lineTo(sx(6f), sy(10f))
-                cubicTo(sx(6f), sy(6.5f), sx(18f), sy(6.5f), sx(18f), sy(10f))
-                lineTo(sx(18f), sy(16f))
-                lineTo(sx(4f), sy(16f))
-                lineTo(sx(20f), sy(16f))
-            }
-            drawPath(bell, color = color, style = stroke)
+            scratchPath.rewind()
+            scratchPath.moveTo(sx(6f), sy(16f))
+            scratchPath.lineTo(sx(6f), sy(10f))
+            scratchPath.cubicTo(sx(6f), sy(6.5f), sx(18f), sy(6.5f), sx(18f), sy(10f))
+            scratchPath.lineTo(sx(18f), sy(16f))
+            scratchPath.lineTo(sx(4f), sy(16f))
+            scratchPath.lineTo(sx(20f), sy(16f))
+            drawPath(scratchPath, color = color, style = stroke)
             drawLine(color, pt(10f, 19.5f), pt(14f, 19.5f), strokeWidth = stroke.width, cap = StrokeCap.Round)
         }
         else -> {
@@ -1006,19 +1001,19 @@ private fun DrawScope.drawDeckIcon(name: String, color: Color) {
 private fun DrawScope.drawSpeakerCone(
     color: Color,
     stroke: Stroke,
+    scratchPath: Path,
     sx: (Float) -> Float,
     sy: (Float) -> Float,
 ) {
-    val cone = Path().apply {
-        moveTo(sx(11f), sy(5f))
-        lineTo(sx(6f), sy(9f))
-        lineTo(sx(3f), sy(9f))
-        lineTo(sx(3f), sy(15f))
-        lineTo(sx(6f), sy(15f))
-        lineTo(sx(11f), sy(19f))
-        close()
-    }
-    drawPath(cone, color = color, style = stroke)
+    scratchPath.rewind()
+    scratchPath.moveTo(sx(11f), sy(5f))
+    scratchPath.lineTo(sx(6f), sy(9f))
+    scratchPath.lineTo(sx(3f), sy(9f))
+    scratchPath.lineTo(sx(3f), sy(15f))
+    scratchPath.lineTo(sx(6f), sy(15f))
+    scratchPath.lineTo(sx(11f), sy(19f))
+    scratchPath.close()
+    drawPath(scratchPath, color = color, style = stroke)
 }
 
 private fun fallbackDefaultLayout(context: Context): DeckLayout = DeckLayout(

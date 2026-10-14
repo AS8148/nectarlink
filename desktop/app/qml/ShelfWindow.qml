@@ -21,12 +21,88 @@ Window {
     readonly property int availW: Screen.desktopAvailableWidth > 0 ? Screen.desktopAvailableWidth : 1920
     readonly property int availH: Screen.desktopAvailableHeight > 0 ? Screen.desktopAvailableHeight : 1080
 
+    // The work area (the screen minus the taskbar, wherever the taskbar is). Qt only knows
+    // its size, so Windows reports the position; refreshed when the work area changes.
+    property var workArea: AppController.workArea()
+    readonly property int workAreaKey: Screen.desktopAvailableWidth * 100000 + Screen.desktopAvailableHeight
+    onWorkAreaKeyChanged: workArea = AppController.workArea()
+    readonly property real dpr: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+    readonly property real areaX: workArea && workArea.width ? workArea.x / dpr : Screen.virtualX
+    readonly property real areaY: workArea && workArea.height ? workArea.y / dpr : Screen.virtualY
+    readonly property real areaW: workArea && workArea.width ? workArea.width / dpr : availW
+    readonly property real areaH: workArea && workArea.height ? workArea.height / dpr : availH
+
     width: 348
     height: Math.min(620, Math.max(420, availH - 48))
-    x: Screen.virtualX + availW - width - 12
-    y: Screen.virtualY + Math.round((availH - height) / 2)
+    x: areaX + areaW - width - 12
+    y: areaY + Math.round((areaH - height) / 2)
 
     property bool justDropped: false
+    property bool undoPending: false
+    property bool undoCancelled: false
+    property var pendingUrls: []
+    property string pendingText: ""
+    property string pendingLabel: ""
+    property real undoProgress: 0.0
+
+    readonly property string targetPhoneName: shelfData.hasDevice && shelfData.deviceName.length > 0
+        ? shelfData.deviceName
+        : qsTr("phone")
+
+    function queueSendToPhone(urls, text, label) {
+        const cleanUrls = urls ? urls : []
+        const cleanText = text ? String(text) : ""
+        if (cleanUrls.length === 0 && cleanText.trim().length === 0)
+            return
+        if (undoPending) {
+            commitPendingSend()
+        }
+        pendingUrls = cleanUrls
+        pendingText = cleanText
+        pendingLabel = label ? String(label) : ""
+        undoCancelled = false
+        justDropped = false
+        undoPending = true
+        undoProgress = 1.0
+        if (!Theme.reduceMotion) {
+            undoProgressAnim.restart()
+        }
+        undoSendTimer.restart()
+    }
+
+    function commitPendingSend() {
+        if (!undoPending)
+            return
+        undoSendTimer.stop()
+        undoProgressAnim.stop()
+        const urls = pendingUrls
+        const text = pendingText
+        undoPending = false
+        pendingUrls = []
+        pendingText = ""
+        pendingLabel = ""
+        undoProgress = 0.0
+        if (urls.length > 0 || text.trim().length > 0) {
+            AppController.dropToShelf(urls, text)
+            justDropped = true
+            dropConfirmTimer.restart()
+        }
+    }
+
+    function cancelPendingSend() {
+        if (!undoPending)
+            return
+        undoSendTimer.stop()
+        undoProgressAnim.stop()
+        undoPending = false
+        pendingUrls = []
+        pendingText = ""
+        pendingLabel = ""
+        undoProgress = 0.0
+        justDropped = false
+        undoCancelled = true
+        dropConfirmTimer.restart()
+    }
 
     readonly property var shelfData: {
         if (!AppController.shelfItems || AppController.shelfItems === "") {
@@ -74,6 +150,8 @@ Window {
     onVisibleChanged: {
         if (visible) {
             Qt.callLater(() => AppController.styleShelfWindow())
+        } else if (undoPending) {
+            commitPendingSend()
         }
     }
 
@@ -82,10 +160,36 @@ Window {
         onActivated: AppController.closeShelf()
     }
 
+    Shortcut {
+        sequence: "Ctrl+Z"
+        enabled: shelfWin.undoPending
+        onActivated: shelfWin.cancelPendingSend()
+    }
+
+    Timer {
+        id: undoSendTimer
+        interval: 3000
+        repeat: false
+        onTriggered: shelfWin.commitPendingSend()
+    }
+
+    NumberAnimation {
+        id: undoProgressAnim
+        target: shelfWin
+        property: "undoProgress"
+        from: 1.0
+        to: 0.0
+        duration: 3000
+        easing.type: Easing.Linear
+    }
+
     Timer {
         id: dropConfirmTimer
         interval: 1800
-        onTriggered: shelfWin.justDropped = false
+        onTriggered: {
+            shelfWin.justDropped = false
+            shelfWin.undoCancelled = false
+        }
     }
 
     Item {
@@ -120,7 +224,7 @@ Window {
                 ColorAnimation { duration: Theme.fadeFast }
             }
 
-            // Whole-window drop target so dropping anywhere on the Shelf sends to phone.
+            // Whole-window drop target so dropping anywhere on the Shelf queues a send with 3s Undo.
             DropArea {
                 id: shelfDropArea
                 anchors.fill: parent
@@ -133,9 +237,7 @@ Window {
                     }
                     const text = drop.text ? String(drop.text) : ""
                     if (urls.length > 0 || text.trim().length > 0) {
-                        AppController.dropToShelf(urls, text)
-                        shelfWin.justDropped = true
-                        dropConfirmTimer.restart()
+                        shelfWin.queueSendToPhone(urls, text, "")
                     }
                     drop.acceptProposedAction()
                 }
@@ -168,7 +270,7 @@ Window {
                                 anchors.centerIn: parent
                                 width: 15
                                 height: 15
-                                path: Icons.sparkle
+                                path: Icons.shelf
                                 color: Theme.primaryContainerContent
                             }
                         }
@@ -214,29 +316,34 @@ Window {
                     }
                 }
 
-                // ---- Drop Zone Banner ----
+                // ---- Drop Zone / Undo Banner ----
                 Rectangle {
                     id: dropBanner
                     width: parent.width
                     height: 52
                     radius: Theme.radiusMd
-                    color: shelfDropArea.containsDrag
+                    clip: true
+                    color: shelfDropArea.containsDrag || shelfWin.undoPending
                         ? Theme.primaryContainer
                         : (shelfWin.justDropped ? Theme.secondaryContainer : Theme.surfaceContainerLow)
                     border.width: 1
-                    border.color: shelfDropArea.containsDrag ? Theme.primary : Theme.outlineVariant
+                    border.color: shelfDropArea.containsDrag || shelfWin.undoPending ? Theme.primary : Theme.outlineVariant
 
                     Accessible.role: Accessible.StaticText
-                    Accessible.name: dropLabel.text
+                    Accessible.name: shelfWin.undoPending
+                        ? undoBannerText.text
+                        : dropLabel.text
 
                     Behavior on color {
                         enabled: !Theme.reduceMotion
                         ColorAnimation { duration: Theme.fadeFast }
                     }
 
+                    // Normal drop / confirmation state
                     Row {
                         anchors.centerIn: parent
                         spacing: 8
+                        visible: !shelfWin.undoPending
 
                         Icon {
                             anchors.verticalCenter: parent.verticalCenter
@@ -257,11 +364,68 @@ Window {
                                 ? Theme.primaryContainerContent
                                 : (shelfWin.justDropped ? Theme.secondaryContainerContent : Theme.surfaceContent)
                             text: shelfDropArea.containsDrag
-                                ? qsTr("Release to send to phone")
+                                ? qsTr("Release to send to %1").arg(shelfWin.targetPhoneName)
                                 : (shelfWin.justDropped
-                                    ? qsTr("Sent to phone")
-                                    : qsTr("Drop files, photos, or text here to send"))
+                                    ? qsTr("Sent to %1").arg(shelfWin.targetPhoneName)
+                                    : (shelfWin.undoCancelled
+                                        ? qsTr("Send cancelled")
+                                        : qsTr("Drop or flick items here to send")))
                         }
+                    }
+
+                    // 3-second "Sending to <phone>… [Undo]" bar
+                    Item {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 10
+                        visible: shelfWin.undoPending
+
+                        Row {
+                            anchors.left: parent.left
+                            anchors.right: undoBtn.left
+                            anchors.rightMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 8
+
+                            Icon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 15
+                                height: 15
+                                path: Icons.send
+                                color: Theme.primaryContainerContent
+                            }
+
+                            Txt {
+                                id: undoBannerText
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width - 23
+                                role: "bodySmall"
+                                weight: 600
+                                elide: Text.ElideRight
+                                color: Theme.primaryContainerContent
+                                text: qsTr("Sending to %1…").arg(shelfWin.targetPhoneName)
+                            }
+                        }
+
+                        Button {
+                            id: undoBtn
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            variant: "tonal"
+                            size: "sm"
+                            text: qsTr("Undo")
+                            onClicked: shelfWin.cancelPendingSend()
+                        }
+                    }
+
+                    // Countdown progress bar along the bottom edge of the Undo pill
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.bottom: parent.bottom
+                        height: 3
+                        width: parent.width * Math.max(0, Math.min(1, shelfWin.undoProgress))
+                        color: Theme.primary
+                        visible: shelfWin.undoPending
                     }
                 }
 
@@ -309,13 +473,54 @@ Window {
                                     readonly property bool hasItem: itemData !== null && itemData !== undefined
                                     readonly property string thumbSource: hasItem ? (itemData.thumbUrl || itemData.thumbnailDataUrl || "") : ""
                                     readonly property string targetRef: hasItem ? (itemData.localPath || itemData.id || "") : ""
+                                    readonly property string sendUrl: hasItem
+                                        ? ((itemData.localPath && itemData.localPath.length > 0) ? itemData.localPath : thumbSource)
+                                        : ""
+
+                                    property real flickOffsetX: 0
+                                    property real flickOffsetY: 0
 
                                     width: Math.floor((cardsColumn.width - 8) / 2)
                                     height: 152
                                     radius: Theme.radiusMd
                                     color: Theme.surfaceContainer
-                                    border.width: Theme.graphite ? 1 : 0
-                                    border.color: Theme.outlineVariant
+                                    border.width: mediaDragArea.flicking ? 1.5 : (Theme.graphite ? 1 : 0)
+                                    border.color: mediaDragArea.flicking ? Theme.primary : Theme.outlineVariant
+                                    z: (flickOffsetY !== 0 || mediaDragArea.flicking) ? 10 : 0
+
+                                    transform: Translate {
+                                        x: mediaCard.flickOffsetX
+                                        y: mediaCard.flickOffsetY
+                                    }
+
+                                    Behavior on flickOffsetX {
+                                        enabled: !Theme.reduceMotion && !mediaDragArea.pressed
+                                        SpringAnimation { spring: 4.5; damping: 0.35; epsilon: 0.25 }
+                                    }
+
+                                    Behavior on flickOffsetY {
+                                        enabled: !Theme.reduceMotion && !mediaDragArea.pressed && !mediaFlickAnim.running
+                                        SpringAnimation { spring: 4.5; damping: 0.35; epsilon: 0.25 }
+                                    }
+
+                                    SequentialAnimation {
+                                        id: mediaFlickAnim
+                                        NumberAnimation {
+                                            target: mediaCard
+                                            property: "flickOffsetY"
+                                            to: -54
+                                            duration: Theme.reduceMotion ? 0 : 140
+                                            easing.type: Easing.OutBack
+                                        }
+                                        SpringAnimation {
+                                            target: mediaCard
+                                            property: "flickOffsetY"
+                                            to: 0
+                                            spring: 4.5
+                                            damping: 0.35
+                                            epsilon: 0.25
+                                        }
+                                    }
 
                                     Column {
                                         anchors.fill: parent
@@ -348,7 +553,7 @@ Window {
                                         // Thumbnail or empty state
                                         Item {
                                             width: parent.width
-                                            height: 86
+                                            height: mediaCard.hasItem ? 86 : 116
 
                                             Rectangle {
                                                 anchors.fill: parent
@@ -383,7 +588,11 @@ Window {
 
                                                 property real pressX: 0
                                                 property real pressY: 0
+                                                property real lastY: 0
+                                                property double lastTime: 0
+                                                property real velY: 0
                                                 property bool dragged: false
+                                                property bool flicking: false
 
                                                 Accessible.role: Accessible.Button
                                                 Accessible.name: mediaCard.hasItem
@@ -397,7 +606,11 @@ Window {
                                                 onPressed: (mouse) => {
                                                     pressX = mouse.x
                                                     pressY = mouse.y
+                                                    lastY = mouse.y
+                                                    lastTime = Date.now()
+                                                    velY = 0
                                                     dragged = false
+                                                    flicking = false
                                                 }
 
                                                 onPositionChanged: (mouse) => {
@@ -405,14 +618,48 @@ Window {
                                                         return
                                                     const dx = mouse.x - pressX
                                                     const dy = mouse.y - pressY
-                                                    if (dx * dx + dy * dy > 36) {
+                                                    const now = Date.now()
+                                                    const dt = Math.max(1, now - lastTime)
+                                                    velY = ((mouse.y - lastY) * 1000.0) / dt
+                                                    lastY = mouse.y
+                                                    lastTime = now
+
+                                                    if (dy < -8 && Math.abs(dy) >= Math.abs(dx) * 0.75) {
+                                                        flicking = true
+                                                        mediaCard.flickOffsetX = dx * 0.2
+                                                        mediaCard.flickOffsetY = Math.max(-68, dy * 0.65)
+                                                    } else if (!flicking && (dx * dx + dy * dy > 64)) {
                                                         dragged = true
+                                                        mediaCard.flickOffsetX = 0
+                                                        mediaCard.flickOffsetY = 0
                                                         AppController.startShelfDrag(
                                                             modelData.slotKind,
                                                             mediaCard.targetRef,
                                                             mediaCard.itemData.name
                                                         )
                                                     }
+                                                }
+
+                                                onReleased: (mouse) => {
+                                                    if (!flicking)
+                                                        return
+                                                    const dy = mouse.y - pressY
+                                                    const shouldSend = (dy < -24 && velY < -280) || (dy < -48)
+                                                    flicking = false
+                                                    dragged = true
+                                                    mediaCard.flickOffsetX = 0
+                                                    if (shouldSend && mediaCard.sendUrl.length > 0) {
+                                                        mediaFlickAnim.restart()
+                                                        shelfWin.queueSendToPhone([mediaCard.sendUrl], "", mediaCard.itemData.name)
+                                                    } else {
+                                                        mediaCard.flickOffsetY = 0
+                                                    }
+                                                }
+
+                                                onCanceled: {
+                                                    flicking = false
+                                                    mediaCard.flickOffsetX = 0
+                                                    mediaCard.flickOffsetY = 0
                                                 }
 
                                                 onClicked: {
@@ -431,6 +678,7 @@ Window {
                                         Item {
                                             width: parent.width
                                             height: 24
+                                            visible: mediaCard.hasItem
 
                                             Txt {
                                                 anchors.left: parent.left
@@ -439,8 +687,8 @@ Window {
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 role: "caption"
                                                 size: 11
-                                                muted: !mediaCard.hasItem
-                                                text: mediaCard.hasItem ? mediaCard.itemData.name : "—"
+                                                visible: mediaCard.hasItem
+                                                text: mediaCard.hasItem ? mediaCard.itemData.name : ""
                                             }
 
                                             Row {
@@ -487,12 +735,50 @@ Window {
                             readonly property bool hasClip: clipData !== null && clipData !== undefined
                             readonly property string clipId: hasClip ? (clipData.id || "") : ""
 
+                            property real flickOffsetX: 0
+                            property real flickOffsetY: 0
+
                             width: parent.width
                             implicitHeight: clipColumn.implicitHeight + 16
                             radius: Theme.radiusMd
                             color: Theme.surfaceContainer
-                            border.width: Theme.graphite ? 1 : 0
-                            border.color: Theme.outlineVariant
+                            border.width: clipDragArea.flicking ? 1.5 : (Theme.graphite ? 1 : 0)
+                            border.color: clipDragArea.flicking ? Theme.primary : Theme.outlineVariant
+                            z: (flickOffsetY !== 0 || clipDragArea.flicking) ? 10 : 0
+
+                            transform: Translate {
+                                x: clipCard.flickOffsetX
+                                y: clipCard.flickOffsetY
+                            }
+
+                            Behavior on flickOffsetX {
+                                enabled: !Theme.reduceMotion && !clipDragArea.pressed
+                                SpringAnimation { spring: 4.5; damping: 0.35; epsilon: 0.25 }
+                            }
+
+                            Behavior on flickOffsetY {
+                                enabled: !Theme.reduceMotion && !clipDragArea.pressed && !clipFlickAnim.running
+                                SpringAnimation { spring: 4.5; damping: 0.35; epsilon: 0.25 }
+                            }
+
+                            SequentialAnimation {
+                                id: clipFlickAnim
+                                NumberAnimation {
+                                    target: clipCard
+                                    property: "flickOffsetY"
+                                    to: -54
+                                    duration: Theme.reduceMotion ? 0 : 140
+                                    easing.type: Easing.OutBack
+                                }
+                                SpringAnimation {
+                                    target: clipCard
+                                    property: "flickOffsetY"
+                                    to: 0
+                                    spring: 4.5
+                                    damping: 0.35
+                                    epsilon: 0.25
+                                }
+                            }
 
                             Column {
                                 id: clipColumn
@@ -528,15 +814,31 @@ Window {
                                         }
                                     }
 
-                                    IconButton {
+                                    Row {
                                         anchors.right: parent.right
                                         anchors.verticalCenter: parent.verticalCenter
-                                        width: 24
-                                        height: 24
+                                        spacing: 2
                                         visible: clipCard.hasClip
-                                        iconPath: Icons.copy
-                                        label: qsTr("Copy clip")
-                                        onClicked: AppController.activateShelfItem("clip", "copy", clipCard.clipId)
+
+                                        IconButton {
+                                            width: 24
+                                            height: 24
+                                            visible: clipCard.hasClip && (clipCard.clipData.text || "").length > 0
+                                            iconPath: Icons.send
+                                            label: qsTr("Send clip to phone")
+                                            onClicked: {
+                                                clipFlickAnim.restart()
+                                                shelfWin.queueSendToPhone([], clipCard.clipData.text || "", qsTr("Clip"))
+                                            }
+                                        }
+
+                                        IconButton {
+                                            width: 24
+                                            height: 24
+                                            iconPath: Icons.copy
+                                            label: qsTr("Copy clip")
+                                            onClicked: AppController.activateShelfItem("clip", "copy", clipCard.clipId)
+                                        }
                                     }
                                 }
 
@@ -572,6 +874,7 @@ Window {
                                     }
 
                                     MouseArea {
+                                        id: clipDragArea
                                         anchors.fill: parent
                                         enabled: clipCard.hasClip
                                         hoverEnabled: true
@@ -579,7 +882,11 @@ Window {
 
                                         property real pressX: 0
                                         property real pressY: 0
+                                        property real lastY: 0
+                                        property double lastTime: 0
+                                        property real velY: 0
                                         property bool dragged: false
+                                        property bool flicking: false
 
                                         Accessible.role: Accessible.Button
                                         Accessible.name: clipCard.hasClip
@@ -593,7 +900,11 @@ Window {
                                         onPressed: (mouse) => {
                                             pressX = mouse.x
                                             pressY = mouse.y
+                                            lastY = mouse.y
+                                            lastTime = Date.now()
+                                            velY = 0
                                             dragged = false
+                                            flicking = false
                                         }
 
                                         onPositionChanged: (mouse) => {
@@ -601,14 +912,48 @@ Window {
                                                 return
                                             const dx = mouse.x - pressX
                                             const dy = mouse.y - pressY
-                                            if (dx * dx + dy * dy > 36) {
+                                            const now = Date.now()
+                                            const dt = Math.max(1, now - lastTime)
+                                            velY = ((mouse.y - lastY) * 1000.0) / dt
+                                            lastY = mouse.y
+                                            lastTime = now
+
+                                            if (dy < -8 && Math.abs(dy) >= Math.abs(dx) * 0.75) {
+                                                flicking = true
+                                                clipCard.flickOffsetX = dx * 0.2
+                                                clipCard.flickOffsetY = Math.max(-68, dy * 0.65)
+                                            } else if (!flicking && (dx * dx + dy * dy > 64)) {
                                                 dragged = true
+                                                clipCard.flickOffsetX = 0
+                                                clipCard.flickOffsetY = 0
                                                 AppController.startShelfDrag(
                                                     "clip",
                                                     clipCard.clipId,
                                                     clipCard.clipData.text || ""
                                                 )
                                             }
+                                        }
+
+                                        onReleased: (mouse) => {
+                                            if (!flicking)
+                                                return
+                                            const dy = mouse.y - pressY
+                                            const shouldSend = (dy < -24 && velY < -280) || (dy < -48)
+                                            flicking = false
+                                            dragged = true
+                                            clipCard.flickOffsetX = 0
+                                            if (shouldSend && (clipCard.clipData.text || "").length > 0) {
+                                                clipFlickAnim.restart()
+                                                shelfWin.queueSendToPhone([], clipCard.clipData.text || "", qsTr("Clip"))
+                                            } else {
+                                                clipCard.flickOffsetY = 0
+                                            }
+                                        }
+
+                                        onCanceled: {
+                                            flicking = false
+                                            clipCard.flickOffsetX = 0
+                                            clipCard.flickOffsetY = 0
                                         }
 
                                         onClicked: {
@@ -681,10 +1026,51 @@ Window {
                                     model: filesCard.filesList
 
                                     delegate: Rectangle {
+                                        id: fileRowCard
                                         width: filesColumn.width
                                         height: 44
                                         radius: Theme.radiusSm
                                         color: Theme.surfaceContainerHigh
+                                        border.width: fileRowDrag.flicking ? 1.5 : 0
+                                        border.color: Theme.primary
+                                        z: (flickOffsetY !== 0 || fileRowDrag.flicking) ? 10 : 0
+
+                                        property real flickOffsetX: 0
+                                        property real flickOffsetY: 0
+
+                                        transform: Translate {
+                                            x: fileRowCard.flickOffsetX
+                                            y: fileRowCard.flickOffsetY
+                                        }
+
+                                        Behavior on flickOffsetX {
+                                            enabled: !Theme.reduceMotion && !fileRowDrag.pressed
+                                            SpringAnimation { spring: 4.5; damping: 0.35; epsilon: 0.25 }
+                                        }
+
+                                        Behavior on flickOffsetY {
+                                            enabled: !Theme.reduceMotion && !fileRowDrag.pressed && !fileFlickAnim.running
+                                            SpringAnimation { spring: 4.5; damping: 0.35; epsilon: 0.25 }
+                                        }
+
+                                        SequentialAnimation {
+                                            id: fileFlickAnim
+                                            NumberAnimation {
+                                                target: fileRowCard
+                                                property: "flickOffsetY"
+                                                to: -54
+                                                duration: Theme.reduceMotion ? 0 : 140
+                                                easing.type: Easing.OutBack
+                                            }
+                                            SpringAnimation {
+                                                target: fileRowCard
+                                                property: "flickOffsetY"
+                                                to: 0
+                                                spring: 4.5
+                                                damping: 0.35
+                                                epsilon: 0.25
+                                            }
+                                        }
 
                                         MouseArea {
                                             id: fileRowDrag
@@ -697,7 +1083,11 @@ Window {
 
                                             property real pressX: 0
                                             property real pressY: 0
+                                            property real lastY: 0
+                                            property double lastTime: 0
+                                            property real velY: 0
                                             property bool dragged: false
+                                            property bool flicking: false
 
                                             Accessible.role: Accessible.Button
                                             Accessible.name: modelData.name
@@ -706,7 +1096,11 @@ Window {
                                             onPressed: (mouse) => {
                                                 pressX = mouse.x
                                                 pressY = mouse.y
+                                                lastY = mouse.y
+                                                lastTime = Date.now()
+                                                velY = 0
                                                 dragged = false
+                                                flicking = false
                                             }
 
                                             onPositionChanged: (mouse) => {
@@ -714,10 +1108,44 @@ Window {
                                                     return
                                                 const dx = mouse.x - pressX
                                                 const dy = mouse.y - pressY
-                                                if (dx * dx + dy * dy > 36) {
+                                                const now = Date.now()
+                                                const dt = Math.max(1, now - lastTime)
+                                                velY = ((mouse.y - lastY) * 1000.0) / dt
+                                                lastY = mouse.y
+                                                lastTime = now
+
+                                                if (dy < -8 && Math.abs(dy) >= Math.abs(dx) * 0.75) {
+                                                    flicking = true
+                                                    fileRowCard.flickOffsetX = dx * 0.2
+                                                    fileRowCard.flickOffsetY = Math.max(-68, dy * 0.65)
+                                                } else if (!flicking && (dx * dx + dy * dy > 64)) {
                                                     dragged = true
+                                                    fileRowCard.flickOffsetX = 0
+                                                    fileRowCard.flickOffsetY = 0
                                                     AppController.startShelfDrag("file", modelData.path, modelData.name)
                                                 }
+                                            }
+
+                                            onReleased: (mouse) => {
+                                                if (!flicking)
+                                                    return
+                                                const dy = mouse.y - pressY
+                                                const shouldSend = (dy < -24 && velY < -280) || (dy < -48)
+                                                flicking = false
+                                                dragged = true
+                                                fileRowCard.flickOffsetX = 0
+                                                if (shouldSend && modelData.path && modelData.path.length > 0) {
+                                                    fileFlickAnim.restart()
+                                                    shelfWin.queueSendToPhone([modelData.path], "", modelData.name)
+                                                } else {
+                                                    fileRowCard.flickOffsetY = 0
+                                                }
+                                            }
+
+                                            onCanceled: {
+                                                flicking = false
+                                                fileRowCard.flickOffsetX = 0
+                                                fileRowCard.flickOffsetY = 0
                                             }
 
                                             onClicked: {
@@ -773,6 +1201,17 @@ Window {
                                             IconButton {
                                                 width: 28
                                                 height: 28
+                                                iconPath: Icons.send
+                                                label: qsTr("Send to phone")
+                                                onClicked: {
+                                                    fileFlickAnim.restart()
+                                                    shelfWin.queueSendToPhone([modelData.path], "", modelData.name)
+                                                }
+                                            }
+
+                                            IconButton {
+                                                width: 28
+                                                height: 28
                                                 iconPath: Icons.openExternal
                                                 label: qsTr("Open file")
                                                 onClicked: AppController.activateShelfItem("file", "open", modelData.path)
@@ -797,7 +1236,7 @@ Window {
                             role: "caption"
                             size: 11
                             muted: true
-                            text: qsTr("Drag any card out to use, or drop files in to send")
+                            text: qsTr("Flick any card up to send to phone, drag out to use, or drop files in")
                         }
                     }
                 }

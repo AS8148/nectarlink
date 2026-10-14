@@ -28,6 +28,7 @@ pub mod qobject {
         #[qproperty(QString, selected_phone, cxx_name = "selectedPhone")]
         #[qproperty(QString, selected_phone_name, cxx_name = "selectedPhoneName")]
         #[qproperty(i32, height)]
+        #[qproperty(QString, camera)]
         #[qproperty(bool, mirror)]
         #[qproperty(QString, phase)]
         #[qproperty(QString, active_device, cxx_name = "activeDevice")]
@@ -71,6 +72,7 @@ pub struct WebcamRust {
     selected_phone: QString,
     selected_phone_name: QString,
     height: i32,
+    camera: QString,
     mirror: bool,
     phase: QString,
     active_device: QString,
@@ -78,7 +80,15 @@ pub struct WebcamRust {
 }
 
 impl cxx_qt::Initialize for qobject::Webcam {
-    fn initialize(self: Pin<&mut Self>) {
+    fn initialize(mut self: Pin<&mut Self>) {
+        self.as_mut()
+            .on_camera_changed(|w| {
+                let c = String::from(w.camera());
+                if !c.is_empty() && c != webcam::camera() {
+                    webcam::set_camera(&c);
+                }
+            })
+            .release();
         super::subscribe(
             self.qt_thread(),
             Changes::WEBCAM | Changes::DEVICES | Changes::CAPABILITIES,
@@ -93,6 +103,7 @@ impl qobject::Webcam {
         self.as_mut().set_addon_registered(webcam::addon_registered());
         self.as_mut().set_addon_busy(webcam::addon_busy());
         self.as_mut().set_height(webcam::height() as i32);
+        self.as_mut().set_camera(QString::from(webcam::camera()));
         self.as_mut().set_mirror(webcam::mirror());
 
         let selected = webcam::selected_phone();

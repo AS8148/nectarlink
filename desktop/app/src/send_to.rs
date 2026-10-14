@@ -151,7 +151,7 @@ fn reconcile(dir: &Path, desired: &[(DeviceId, String)], exe: &Path) -> io::Resu
             .chain(std::iter::once(format!("{base} (Nectarlink)")))
             .chain((2..).map(|n| format!("{base} (Nectarlink {n})")))
             .find(|c| !taken(c))
-            .expect("an endless list has a free name");
+            .unwrap_or(base);
         planned.push((
             dir.join(format!("{candidate}.lnk")),
             Shortcut {
@@ -203,8 +203,80 @@ pub fn handle(request: Request) {
         Request::Show => request_activation(),
         Request::Quit => crate::bridge::app::request_quit(),
         Request::Send { device, paths } => send(device, paths),
+        Request::Share { files, url, text } => share(files, url, text),
         Request::TaskNotify { device, task } => task_notify(device, task),
+        Request::Task { action } => crate::bridge::app::handle_jump_task(&action),
     }
+}
+
+fn share(files: Vec<PathBuf>, url: Option<String>, text: Option<String>) {
+    core_host::spawn(async move {
+        let Ok(Some(node)) = tokio::time::timeout(START_TIMEOUT, core_host::wait_for_node()).await else {
+            tracing::warn!("share target wasn't handled: the core didn't start");
+            return;
+        };
+        let (target, show_window) = core_host::host().hub.read(|s| {
+            let online: Vec<(DeviceId, String)> = s
+                .devices
+                .iter()
+                .filter(|d| matches!(d.link, nectarlink_core::LinkState::Online { .. }))
+                .map(|d| (d.id, d.info.name.clone()))
+                .collect();
+            let all: Vec<(DeviceId, String)> =
+                s.devices.iter().map(|d| (d.id, d.info.name.clone())).collect();
+            if online.len() == 1 {
+                (online.into_iter().next(), false)
+            } else if online.is_empty() && all.len() == 1 {
+                (all.into_iter().next(), false)
+            } else if !online.is_empty() {
+                (online.into_iter().next(), true)
+            } else {
+                (all.into_iter().next(), true)
+            }
+        });
+        if show_window {
+            request_activation();
+        }
+        let Some((device_id, device_name)) = target else {
+            failed("No phone paired", "Pair your phone in Nectarlink to share with it.");
+            return;
+        };
+        if !files.is_empty() {
+            send(device_id.to_string(), files);
+        }
+        if let Some(url) = url.filter(|u| !u.trim().is_empty()) {
+            crate::links::send_to(device_id, url);
+        }
+        if let Some(text) = text.filter(|t| !t.trim().is_empty()) {
+            let is_online = core_host::host().hub.read(|s| {
+                s.device(&device_id)
+                    .is_some_and(|d| matches!(d.link, nectarlink_core::LinkState::Online { .. }))
+            });
+            match node.send_clipboard(device_id, text).await {
+                Ok(()) => {
+                    if is_online {
+                        toast::show(Toast {
+                            device: TOAST_GROUP.into(),
+                            key: "share-text".into(),
+                            title: format!("Sent to {device_name}"),
+                            body: "Copied to your phone's clipboard.".into(),
+                            attribution: "Nectarlink".into(),
+                            icon: None,
+                            image: None,
+                            actions: Vec::new(),
+                            reply: None,
+                            silent: true,
+                            progress: None,
+                            call: false,
+                        });
+                    } else {
+                        let _ = crate::bridge::app::show_offline_queued_toast(device_id, None);
+                    }
+                }
+                Err(e) => failed(&format!("Couldn't share with {device_name}"), &describe(&e)),
+            }
+        }
+    });
 }
 
 fn task_notify(device: Option<String>, task: nectarlink_core::TaskNotify) {
@@ -216,7 +288,14 @@ fn task_notify(device: Option<String>, task: nectarlink_core::TaskNotify) {
         let query = device.as_deref().map(str::trim).filter(|s| !s.is_empty());
         match query {
             None => {
-                if let Err(e) = node.task_notify(None, task).await {
+                let target = core_host::host().hub.read(|s| {
+                    s.devices
+                        .iter()
+                        .find(|d| matches!(d.link, nectarlink_core::LinkState::Online { .. }))
+                        .or_else(|| s.devices.first())
+                        .map(|d| d.id)
+                });
+                if let Err(e) = node.task_notify(target, task).await {
                     tracing::debug!(error = %e, "task.notify wasn't delivered");
                 }
             }
@@ -272,7 +351,10 @@ fn send(device: String, paths: Vec<PathBuf>) {
             }
         };
         match node.send_files(id, outgoing).await {
-            Ok(transfer_id) => track(transfer_id, name),
+            Ok(transfer_id) => {
+                let _ = crate::bridge::app::show_offline_queued_toast(id, Some(transfer_id.clone()));
+                track(transfer_id, name);
+            }
             Err(Error::Denied) => failed(
                 &format!("Couldn't send to {name}"),
                 "Files are turned off for this device. Turn them on in Nectarlink.",
@@ -302,13 +384,30 @@ fn failed(title: &str, body: &str) {
 fn track(id: String, device_name: String) {
     let mut tracked = lock(&TRACKED);
     let map = tracked.get_or_insert_default();
-    map.insert(id.clone(), Tracked { device_name, shown: None });
+    map.insert(id.clone(), Tracked { device_name: device_name.clone(), shown: None });
     // Events before this point went to the hub only; catch up from there.
-    let now = core_host::host()
-        .hub
-        .read(|s| s.transfers.iter().find(|t| t.transfer.id == id).map(|t| t.transfer.clone()));
+    let (now, queued_title) = core_host::host().hub.read(|s| {
+        let tr = s.transfers.iter().find(|t| t.transfer.id == id).map(|t| t.transfer.clone());
+        let qt = s.send_queue.iter().find(|q| q.id == id).map(|q| q.title.clone());
+        (tr, qt)
+    });
     if let Some(transfer) = now {
         update(map, &transfer);
+    } else if let Some(title) = queued_title {
+        toast::show(Toast {
+            device: TOAST_GROUP.into(),
+            key: id,
+            title,
+            body: format!("{device_name} is offline. Will send when it's back."),
+            attribution: "Nectarlink".into(),
+            icon: None,
+            image: None,
+            actions: vec![(ACTION_CANCEL.into(), "Cancel".into())],
+            reply: None,
+            silent: true,
+            progress: None,
+            call: false,
+        });
     }
 }
 
@@ -340,12 +439,16 @@ fn update(map: &mut HashMap<String, Tracked>, transfer: &Transfer) {
         call: false,
     };
     match &transfer.state {
-        TransferState::Requested | TransferState::Waiting | TransferState::Running => {
+        TransferState::Requested
+        | TransferState::Waiting
+        | TransferState::Running
+        | TransferState::Paused => {
             let progress = Progress {
-                status: if matches!(transfer.state, TransferState::Requested | TransferState::Waiting) {
-                    format!("Waiting for {device}…")
-                } else {
-                    format!("Sending to {device}…")
+                status: match transfer.state {
+                    TransferState::Paused => "Paused".into(),
+                    TransferState::Waiting => format!("{device} is offline. Will send when it's back."),
+                    TransferState::Requested => format!("Waiting for {device}…"),
+                    _ => format!("Sending to {device}…"),
                 },
                 value: (transfer.total > 0).then(|| transfer.done as f64 / transfer.total as f64),
                 label: format!("{} of {}", size(transfer.done), size(transfer.total)),
@@ -375,6 +478,9 @@ fn update(map: &mut HashMap<String, Tracked>, transfer: &Transfer) {
                 TransferFailure::Denied => format!("{device} doesn't accept files from this PC."),
                 TransferFailure::Unreachable => format!("Couldn't reach {device}."),
                 TransferFailure::NoSpace => format!("{device} is out of space."),
+                TransferFailure::Integrity => {
+                    "File failed integrity check; partial file kept to resume.".into()
+                }
                 TransferFailure::Interrupted | TransferFailure::Other(_) => {
                     "The transfer didn't go through.".into()
                 }

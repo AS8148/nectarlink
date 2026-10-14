@@ -47,7 +47,11 @@ internal class PhoneSms(context: Context, private val onChange: () -> Unit) {
                 handler.removeCallbacks(notify)
                 handler.postDelayed(notify, SETTLE_MS)
             }
-        }.also { resolver.registerContentObserver(Uri.parse("content://mms-sms/"), true, it) }
+        }.also { observer ->
+            // Which of these the messages store announces a change on differs
+            // between Android versions and SMS apps, so watch all three.
+            for (uri in WATCHED_URIS) resolver.registerContentObserver(Uri.parse(uri), true, observer)
+        }
     }
 
     fun stop() {
@@ -299,6 +303,7 @@ internal class PhoneSms(context: Context, private val onChange: () -> Unit) {
     companion object {
         private const val TAG = "PhoneSms"
         private const val SETTLE_MS = 1000L
+        private val WATCHED_URIS = listOf("content://mms-sms/", "content://sms", "content://mms")
         private const val MAX_PART_BYTES = 900 * 1024
         private const val MAX_PHOTO_BYTES = 16 * 1024
         private const val MMS_CACHE_DIR = "mms"
@@ -486,6 +491,141 @@ internal class PhoneSms(context: Context, private val onChange: () -> Unit) {
                 out.write(chunks[i] or 0x80)
             }
             out.write(chunks[0])
+        }
+
+        /**
+         * Decodes a WAP WSP `uintvar` starting at [offset]. Returns `(value, nextOffset)`
+         * or `null` if truncated or if the variable-length integer exceeds 5 octets / 31 bits.
+         */
+        internal fun readUintvar(pdu: ByteArray, offset: Int): Pair<Int, Int>? {
+            if (offset < 0 || offset >= pdu.size) return null
+            var result = 0L
+            var pos = offset
+            for (step in 0 until 5) {
+                if (pos >= pdu.size) return null
+                val b = pdu[pos++].toInt() and 0xFF
+                result = (result shl 7) or (b and 0x7F).toLong()
+                if (result > Int.MAX_VALUE) return null
+                if ((b and 0x80) == 0) {
+                    return result.toInt() to pos
+                }
+            }
+            return null
+        }
+
+        internal data class ParsedMmsPdu(
+            val messageType: Int,
+            val transactionId: String?,
+            val recipients: List<String>,
+            val textParts: List<String>,
+            val attachments: List<SmsAttachment>,
+        )
+
+        /**
+         * Bounds-checked parser for MMS `m-send-req` (`0x80`) and `m-retrieve-conf` (`0x84`)
+         * PDUs. Returns `null` on truncated or malformed headers instead of throwing.
+         */
+        internal fun parseMmsPdu(pdu: ByteArray): ParsedMmsPdu? {
+            if (pdu.size < 4) return null
+            var pos = 0
+            var messageType = -1
+            var transactionId: String? = null
+            val recipients = mutableListOf<String>()
+            var sawMultipart = false
+
+            while (pos < pdu.size) {
+                val header = pdu[pos++].toInt() and 0xFF
+                when (header) {
+                    0x8C -> { // X-Mms-Message-Type
+                        if (pos >= pdu.size) return null
+                        messageType = pdu[pos++].toInt() and 0xFF
+                    }
+                    0x98 -> { // X-Mms-Transaction-Id (NUL-terminated text-string)
+                        val nul = pdu.indexOfByte(0, pos)
+                        if (nul < 0) return null
+                        transactionId = String(pdu, pos, nul - pos, Charsets.UTF_8)
+                        pos = nul + 1
+                    }
+                    0x8D -> { // X-Mms-MMS-Version (short-integer)
+                        if (pos >= pdu.size) return null
+                        pos++
+                    }
+                    0x89 -> { // From (value-length + address or insert-address-token)
+                        if (pos >= pdu.size) return null
+                        val len = pdu[pos++].toInt() and 0xFF
+                        if (len > 30) return null
+                        if (pos + len > pdu.size) return null
+                        pos += len
+                    }
+                    0x97 -> { // To (NUL-terminated encoded-string)
+                        val nul = pdu.indexOfByte(0, pos)
+                        if (nul < 0) return null
+                        recipients += String(pdu, pos, nul - pos, Charsets.UTF_8)
+                            .removeSuffix("/TYPE=PLMN")
+                        pos = nul + 1
+                    }
+                    0x84 -> { // Content-Type
+                        if (pos >= pdu.size) return null
+                        val ct = pdu[pos++].toInt() and 0xFF
+                        if (ct != 0xA3 && ct != 0xB3) return null
+                        sawMultipart = true
+                        break
+                    }
+                    else -> return null
+                }
+            }
+
+            if (!sawMultipart || (messageType != 0x80 && messageType != 0x84)) return null
+            val (partCount, afterCount) = readUintvar(pdu, pos) ?: return null
+            if (partCount < 0 || partCount > 64) return null
+            pos = afterCount
+
+            val textParts = mutableListOf<String>()
+            val attachments = mutableListOf<SmsAttachment>()
+            for (i in 0 until partCount) {
+                val (headersLen, afterHeadersLen) = readUintvar(pdu, pos) ?: return null
+                val (dataLen, afterDataLen) = readUintvar(pdu, afterHeadersLen) ?: return null
+                pos = afterDataLen
+                if (headersLen <= 0 || dataLen < 0) return null
+                if (pos.toLong() + headersLen.toLong() + dataLen.toLong() > pdu.size.toLong()) return null
+
+                val headerStart = pos
+                val headerEnd = pos + headersLen
+                val dataStart = headerEnd
+                val dataEnd = dataStart + dataLen
+                pos = dataEnd
+
+                val firstHeaderByte = pdu[headerStart].toInt() and 0xFF
+                if (firstHeaderByte == 0x83) {
+                    textParts += String(pdu, dataStart, dataLen, Charsets.UTF_8)
+                } else {
+                    val nul = pdu.indexOfByte(0, headerStart, headerEnd)
+                    val mime = if (nul > headerStart) {
+                        String(pdu, headerStart, nul - headerStart, Charsets.US_ASCII)
+                    } else {
+                        "application/octet-stream"
+                    }
+                    attachments += SmsAttachment(
+                        mime = mime,
+                        data = pdu.copyOfRange(dataStart, dataEnd),
+                    )
+                }
+            }
+
+            return ParsedMmsPdu(
+                messageType = messageType,
+                transactionId = transactionId,
+                recipients = recipients,
+                textParts = textParts,
+                attachments = attachments,
+            )
+        }
+
+        private fun ByteArray.indexOfByte(target: Byte, from: Int, to: Int = size): Int {
+            for (i in from until minOf(to, size)) {
+                if (this[i] == target) return i
+            }
+            return -1
         }
     }
 }

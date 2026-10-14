@@ -16,7 +16,7 @@ import java.io.File
  * Files from a PC land in the app's cache first (the core writes them
  * there); this puts them where the user finds them: Download/Nectarlink.
  */
-internal object ReceivedFiles {
+object ReceivedFiles {
     /** A received file where the user can open it. */
     data class Published(val uri: Uri, val name: String, val mime: String)
 
@@ -32,7 +32,9 @@ internal object ReceivedFiles {
     fun publish(context: Context, item: File): List<Published> =
         if (item.isDirectory) {
             item.walkTopDown().filter { it.isFile }.mapNotNull { file ->
-                val folder = file.parentFile!!.relativeTo(item.parentFile!!).invariantSeparatorsPath
+                val fileParent = file.parentFile ?: return@mapNotNull null
+                val itemParent = item.parentFile ?: return@mapNotNull null
+                val folder = fileParent.relativeTo(itemParent).invariantSeparatorsPath
                 publishFile(context, file, folder)
             }.toList().also {
                 item.walkBottomUp().filter { it.isDirectory }.forEach { dir ->
@@ -43,23 +45,42 @@ internal object ReceivedFiles {
             listOfNotNull(publishFile(context, item, folder = null))
         }
 
+    /**
+     * Saves a downloaded or temporary [file] into `Download/Nectarlink` under [fileName]
+     * and returns its content [Uri], or `null` if saving failed.
+     */
+    fun saveToDownloads(
+        context: Context,
+        file: File,
+        fileName: String = file.name,
+        folder: String? = null,
+    ): Uri? = runCatching {
+        val cleanName = fileName.substringAfterLast('/').substringAfterLast('\\').ifBlank { file.name }
+        val mime = mimeOf(cleanName)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            toMediaStore(context, file, cleanName, mime, folder)
+        } else {
+            toAppDownloads(context, file, cleanName, folder)
+        }
+    }.getOrNull()
+
     /** `folder`: where it goes in Download/Nectarlink (`Trip/Day 1`). */
     private fun publishFile(context: Context, file: File, folder: String?): Published? = runCatching {
         val mime = mimeOf(file.name)
         val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            toMediaStore(context, file, mime, folder)
+            toMediaStore(context, file, file.name, mime, folder)
         } else {
-            toAppDownloads(context, file, folder)
+            toAppDownloads(context, file, file.name, folder)
         }
         file.delete()
         Published(uri, file.name, mime)
     }.getOrNull()
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun toMediaStore(context: Context, file: File, mime: String, folder: String?): Uri {
+    private fun toMediaStore(context: Context, file: File, displayName: String, mime: String, folder: String?): Uri {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, mime)
             put(MediaStore.MediaColumns.RELATIVE_PATH, listOfNotNull(Environment.DIRECTORY_DOWNLOADS, "Nectarlink", folder).joinToString("/"))
             put(MediaStore.MediaColumns.IS_PENDING, 1)
@@ -76,13 +97,17 @@ internal object ReceivedFiles {
     }
 
     /** Android 8–9: the app's own Downloads folder, shared through a FileProvider. */
-    private fun toAppDownloads(context: Context, file: File, folder: String?): Uri {
+    private fun toAppDownloads(context: Context, file: File, displayName: String, folder: String?): Uri {
         val base = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "Nectarlink")
         val dir = (if (folder == null) base else File(base, folder)).apply { mkdirs() }
-        var target = File(dir, file.name)
+        val baseFile = File(displayName)
+        var target = File(dir, baseFile.name)
         var n = 2
         while (target.exists()) {
-            target = File(dir, "${file.nameWithoutExtension} ($n)${file.extension.let { if (it.isEmpty()) "" else ".$it" }}")
+            target = File(
+                dir,
+                "${baseFile.nameWithoutExtension} ($n)${baseFile.extension.let { if (it.isEmpty()) "" else ".$it" }}",
+            )
             n++
         }
         file.copyTo(target)

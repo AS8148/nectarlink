@@ -3,12 +3,12 @@
 > Status: **draft.** Builds on [protocol v0](v0.md); breaking changes are
 > allowed until v1. License: CC BY 4.0.
 
-Copied text and images move between paired devices: a PC sends what the
-user copies (automatically, unless turned off), and a phone sends its
-clipboard when the user asks (Android only lets the app in front read the
-clipboard; reading it in the background needs the Elevated power level).
+Copied text (plain and rich HTML/RTF) and images move between paired
+devices: a PC sends what the user copies (automatically, unless turned
+off), and a phone sends its clipboard when the user asks or automatically
+in the background when Elevated is running.
 
-Rich text and files on the clipboard are not part of this version.
+Files on the clipboard are not part of this version.
 
 ## 1. Capabilities
 
@@ -24,13 +24,15 @@ A PC always accepts `clip.set` from a phone the user allows.
 ## 2. Messages
 
 ```
-t = "clip.set"   id = n   b = { text: text }
+t = "clip.set"   id = n   b = { text: text, ?html: text, ?rtf: text }
 t = "ok"         re = n
 ```
 
-**`clip.set`** puts `text` on the receiver's clipboard, replacing what's
-there. `text` is plain text of 1 byte to 512 KiB (UTF-8); senders **MUST NOT**
-send larger text and receivers reply `BAD_MESSAGE` to it.
+**`clip.set`** puts `text` (and optional `html` / `rtf` rich text) on the
+receiver's clipboard, replacing what's there. `text` is plain text of 1
+byte to 512 KiB (UTF-8), always present alongside any rich text; the
+combined UTF-8 byte length of `text`, `html` and `rtf` **MUST NOT** exceed
+512 KiB, and receivers reply `BAD_MESSAGE` when it does.
 
 Errors: `DENIED` when the user turned the clipboard off for the sending
 device (the `clipboard` device toggle), `INTERNAL` when the clipboard

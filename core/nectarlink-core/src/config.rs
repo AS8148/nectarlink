@@ -37,6 +37,13 @@ pub struct NodeConfig {
     /// TCP/UDP port for LocalSend v2.1 interop (defaults to 53317, or
     /// `NECTARLINK_LOCALSEND_PORT` when set).
     pub localsend_port: u16,
+    /// Loopback TCP port on a phone (`127.0.0.1:<port>`) for the USB tunnel
+    /// (`adb forward tcp:0 tcp:<usb_port>`). Typically `Some(53319)` on
+    /// phones and `None` on PCs.
+    pub usb_port: Option<u16>,
+    /// ADB server address on a PC (`127.0.0.1:5037`) for automatic USB
+    /// detection, port forwarding, and USB auto-pairing.
+    pub adb_server: Option<std::net::SocketAddr>,
 }
 
 impl NodeConfig {
@@ -57,6 +64,8 @@ impl NodeConfig {
             downloads_dir: None,
             capabilities: vec![nectarlink_protocol::messages::continuity_camera::RECEIVE.into()],
             localsend_port,
+            usb_port: None,
+            adb_server: None,
         }
     }
 }
@@ -72,6 +81,8 @@ impl fmt::Debug for NodeConfig {
             .field("lan_discovery", &self.lan_discovery)
             .field("port", &self.port)
             .field("localsend_port", &self.localsend_port)
+            .field("usb_port", &self.usb_port)
+            .field("adb_server", &self.adb_server)
             .field("downloads_dir", &self.downloads_dir)
             .finish_non_exhaustive()
     }
@@ -106,6 +117,12 @@ pub trait Platform: Send + Sync + 'static {
     /// `Err` holds a reason for logs, never the text.
     fn set_clipboard(&self, _text: &str) -> Result<(), String> {
         Err("this device has no clipboard".into())
+    }
+
+    /// Put text (with optional HTML and RTF rich text) on this device's
+    /// clipboard. Defaults to calling [`Platform::set_clipboard`].
+    fn set_clipboard_rich(&self, text: &str, _html: Option<&str>, _rtf: Option<&str>) -> Result<(), String> {
+        self.set_clipboard(text)
     }
 
     /// Put an image on this device's clipboard (a paired device sent it).
@@ -247,12 +264,12 @@ pub trait Platform: Send + Sync + 'static {
         Err("this device has no messages".into())
     }
 
-    /// Send a text (checked: 1–20 recipients, not empty).
+    /// Send a text (checked: 1-20 recipients, not empty).
     fn sms_send(&self, _to: &[String], _body: &str) -> Result<(), String> {
         Err("this device doesn't send texts".into())
     }
 
-    /// Send a text or MMS with optional image attachments (checked: 1–20
+    /// Send a text or MMS with optional image attachments (checked: 1-20
     /// recipients, body or attachments non-empty, attachment MIME and sizes
     /// within limits).
     fn send_sms_with_attachments(

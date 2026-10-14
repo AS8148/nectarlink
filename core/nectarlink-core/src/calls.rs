@@ -32,7 +32,7 @@ pub enum CallCommand {
     Speaker(bool),
     /// Puts the call on hold (true) or takes it off.
     Hold(bool),
-    /// A keypad tone: `0`–`9`, `*` or `#`.
+    /// A keypad tone: `0`-`9`, `*` or `#`.
     Dtmf(char),
     /// The call's volume up (true) or down.
     Volume(bool),

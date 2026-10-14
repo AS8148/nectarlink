@@ -1,15 +1,39 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
-# JNA and the UniFFI bindings are reached through reflection and native code.
+# Preserve annotations (required by JNA @Structure.FieldOrder on UniFFI structs),
+# generic signatures, inner classes ($ByValue / $ByReference), and line numbers.
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,SourceFile,LineNumberTable
+
+# UniFFI + JNA: JNA looks up Structure fields, Callback methods, and Library interfaces
+# reflectively by name at runtime, and libjnidispatch.so reflects on JNA internals & Buffer.
 -keep class com.sun.jna.** { *; }
--keep class * implements com.sun.jna.** { *; }
+-keep interface com.sun.jna.** { *; }
+-keep class * extends com.sun.jna.Structure {
+    public <init>(...);
+    <fields>;
+    <methods>;
+}
+-keep class * implements com.sun.jna.Structure$ByValue { *; }
+-keep class * implements com.sun.jna.Structure$ByReference { *; }
+-keep class * implements com.sun.jna.Callback { *; }
+-keep class * implements com.sun.jna.Library { *; }
+-keepclassmembers class java.nio.Buffer {
+    long address;
+    int capacity;
+}
+-dontwarn com.sun.jna.**
 -dontwarn java.awt.**
+
+# UniFFI generated bindings & callback interfaces (Platform, EventHandler, etc.)
+-keep class uniffi.** { *; }
+-keep interface uniffi.** { *; }
 -keep class app.nectarlink.core.** { *; }
-# Elevated: the input helper is started by name through app_process.
--keep class app.nectarlink.android.elevated.InputServer { public static void main(java.lang.String[]); }
-# Conscrypt (TLS for wireless debugging): its native code finds classes by
-# name, and its adapters for Android 4.x name classes that later Android
-# doesn't have.
+-keep interface app.nectarlink.core.** { *; }
+
+# InputServer is invoked via app_process from adb/root shell (`app.nectarlink.android.elevated.InputServer`)
+-keep class app.nectarlink.android.elevated.InputServer {
+    public static void main(java.lang.String[]);
+}
+-keep class app.nectarlink.android.elevated.SurfaceControl { *; }
+
+# Conscrypt (used by Elevated wireless ADB TLS handshake)
 -keep class org.conscrypt.** { *; }
--dontwarn com.android.org.conscrypt.SSLParametersImpl
--dontwarn org.apache.harmony.xnet.provider.jsse.SSLParametersImpl
--keep class io.github.muntashirakon.** { *; }
+-dontwarn org.conscrypt.**

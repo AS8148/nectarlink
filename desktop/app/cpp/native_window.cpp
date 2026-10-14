@@ -23,6 +23,7 @@ constexpr DWORD kCaptionColor = 35;          // DWMWA_CAPTION_COLOR
 constexpr DWORD kSystemBackdropType = 38;    // DWMWA_SYSTEMBACKDROP_TYPE
 constexpr int kBackdropNone = 1;             // DWMSBT_NONE
 constexpr int kBackdropMica = 2;             // DWMSBT_MAINWINDOW
+constexpr int kBackdropAcrylic = 3;          // DWMSBT_TRANSIENTWINDOW (Desktop Acrylic blur)
 constexpr COLORREF kColorNone = 0xFFFFFFFE;  // DWMWA_COLOR_NONE
 
 HWND hwndOf(const QWindow *window)
@@ -41,13 +42,6 @@ void trimD3DResources(QQuickWindow *window)
         rif->getResource(window, QSGRendererInterface::DeviceResource));
     if (!device)
         return;
-    ID3D11DeviceContext *ctx = nullptr;
-    device->GetImmediateContext(&ctx);
-    if (ctx) {
-        ctx->ClearState();
-        ctx->Flush();
-        ctx->Release();
-    }
     IDXGIDevice3 *dxgi3 = nullptr;
     if (SUCCEEDED(device->QueryInterface(__uuidof(IDXGIDevice3), reinterpret_cast<void **>(&dxgi3))) && dxgi3) {
         dxgi3->Trim();
@@ -76,6 +70,15 @@ void NativeWindow::setBackdrop(bool on)
     m_backdrop = on;
     applyFrame();
     emit backdropChanged();
+}
+
+void NativeWindow::setAcrylic(bool on)
+{
+    if (m_acrylic == on)
+        return;
+    m_acrylic = on;
+    applyFrame();
+    emit acrylicChanged();
 }
 
 void NativeWindow::setDarkFrame(bool dark)
@@ -192,14 +195,14 @@ void NativeWindow::applyFrame()
     if (!handle())
         return;
     const HWND hwnd = hwndOf(this);
-    // No frame extension: Mica still shows behind transparent pixels (the
+    // No frame extension: Mica/Acrylic still shows behind transparent pixels (the
     // swap chain is composited with DirectComposition), and DWM doesn't draw
     // its own caption buttons over the app's.
     const MARGINS margins { 0, 0, 0, 0 };
     DwmExtendFrameIntoClientArea(hwnd, &margins);
     const BOOL dark = m_darkFrame;
     DwmSetWindowAttribute(hwnd, kUseImmersiveDarkMode, &dark, sizeof(dark));
-    const int backdrop = m_backdrop ? kBackdropMica : kBackdropNone;
+    const int backdrop = m_backdrop ? (m_acrylic ? kBackdropAcrylic : kBackdropMica) : kBackdropNone;
     DwmSetWindowAttribute(hwnd, kSystemBackdropType, &backdrop, sizeof(backdrop));
     const COLORREF none = kColorNone;
     DwmSetWindowAttribute(hwnd, kCaptionColor, &none, sizeof(none));
@@ -219,7 +222,8 @@ long NativeWindow::hitTest(int screenX, int screenY) const
     ScreenToClient(hwnd, &pt);
 
     // The system title bar is gone, and with it the top resize border.
-    if (!IsZoomed(hwnd)) {
+    // A window of fixed size has none.
+    if (!IsZoomed(hwnd) && minimumSize() != maximumSize()) {
         const UINT dpi = GetDpiForWindow(hwnd);
         const int border = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
         if (pt.y < border) {
@@ -264,7 +268,9 @@ bool NativeWindow::nativeEvent(const QByteArray &eventType, void *message, qintp
     // The maximize button reports HTMAXBUTTON, so its input arrives as
     // non-client messages. Handle them here and keep DefWindowProc from
     // drawing and tracking a classic button.
-    case WM_NCMOUSEMOVE:
+    case WM_NCMOUSEMOVE: {
+        QEvent leaveEvent(QEvent::Leave);
+        QCoreApplication::sendEvent(this, &leaveEvent);
         if (msg->wParam == HTMAXBUTTON) {
             if (!m_maximizeHovered) {
                 TRACKMOUSEEVENT track { sizeof(track), TME_LEAVE | TME_NONCLIENT, msg->hwnd, 0 };
@@ -276,6 +282,7 @@ bool NativeWindow::nativeEvent(const QByteArray &eventType, void *message, qintp
         }
         setMaximizeState(false, false);
         break;
+    }
     case WM_NCMOUSELEAVE:
     case WM_MOUSEMOVE:
         setMaximizeState(false, false);

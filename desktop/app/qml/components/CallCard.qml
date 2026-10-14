@@ -206,7 +206,36 @@ Card {
             role: "caption"
             muted: true
             wrapMode: Text.WordWrap
-            text: qsTr("Mute, the speaker and the keypad work from here once Wireless debugging is set up in Nectarlink on the phone (Android 12 or later).")
+            text: qsTr("Mute, speaker and keypad need Elevated on the phone (Android 12 or later).")
+        }
+
+        // ---- Bluetooth HFP / PC call audio ----
+        Row {
+            width: parent.width
+            spacing: 10
+            Txt {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - (hfpAction.visible ? hfpAction.width + parent.spacing : 0)
+                role: "caption"
+                muted: !PhoneCall.hfpConnected
+                color: PhoneCall.hfpConnected ? Theme.primary : Theme.surfaceContentVariant
+                wrapMode: Text.WordWrap
+                text: PhoneCall.hfpDetail
+            }
+            Button {
+                id: hfpAction
+                anchors.verticalCenter: parent.verticalCenter
+                visible: !PhoneCall.hfpConnected
+                variant: "tonal"
+                size: "sm"
+                text: PhoneCall.hfpAvailable ? qsTr("Connect PC audio") : qsTr("Bluetooth settings")
+                onClicked: {
+                    if (PhoneCall.hfpAvailable)
+                        PhoneCall.connectPcAudio()
+                    else
+                        PhoneCall.openBluetoothSettings()
+                }
+            }
         }
 
         // ---- Volume and hanging up ----

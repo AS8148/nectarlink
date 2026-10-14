@@ -6,7 +6,7 @@
 use std::pin::Pin;
 
 use cxx_qt::Threading;
-use cxx_qt_lib::QString;
+use cxx_qt_lib::{QList, QString, QUrl, QVariant};
 use nectarlink_core::{FeatureState, MIRROR_SCREEN, MirrorInput};
 
 use crate::{
@@ -19,6 +19,8 @@ pub mod qobject {
     unsafe extern "C++" {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
+        include!("cxx-qt-lib/qlist.h");
+        type QList_QVariant = cxx_qt_lib::QList<cxx_qt_lib::QVariant>;
     }
 
     unsafe extern "RustQt" {
@@ -135,6 +137,26 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "keyboardPaste"]
         fn keyboard_paste(self: &Mirror, device: &QString);
+        /// Sends files dropped onto a mirror window to the mirrored phone.
+        #[qinvokable]
+        #[cxx_name = "dropFiles"]
+        fn drop_files(self: &Mirror, urls: &QList_QVariant);
+        /// Synchronizes the clipboard between PC and phone when a mirror window gains focus.
+        #[qinvokable]
+        #[cxx_name = "syncClipboardOnFocus"]
+        fn sync_clipboard_on_focus(self: &Mirror, key: &QString);
+        /// Requests remote input control from the phone for a mirror window.
+        #[qinvokable]
+        #[cxx_name = "requestControl"]
+        fn request_control(self: &Mirror, key: &QString);
+        /// Notifies PC-to-phone cursor/keyboard Flow when the mouse enters a mirror window.
+        #[qinvokable]
+        #[cxx_name = "enterWindow"]
+        fn enter_window(self: &Mirror, key: &QString);
+        /// Notifies PC-to-phone cursor/keyboard Flow when the mouse leaves a mirror window.
+        #[qinvokable]
+        #[cxx_name = "leaveWindow"]
+        fn leave_window(self: &Mirror);
     }
 }
 
@@ -264,8 +286,14 @@ impl qobject::Mirror {
                 })
             })
             .collect();
-        self.as_mut().set_recent_apps(QString::from(&serde_json::Value::Array(recent).to_string()));
-        self.as_mut().set_apps(QString::from(&serde_json::Value::Array(apps).to_string()));
+        let recent_qstr = QString::from(&serde_json::Value::Array(recent).to_string());
+        if *self.recent_apps() != recent_qstr {
+            self.as_mut().set_recent_apps(recent_qstr);
+        }
+        let apps_qstr = QString::from(&serde_json::Value::Array(apps).to_string());
+        if *self.apps() != apps_qstr {
+            self.as_mut().set_apps(apps_qstr);
+        }
         self.as_mut().set_apps_error(QString::from(&error));
         self.as_mut().set_apps_state(QString::from(state));
     }
@@ -356,7 +384,7 @@ impl qobject::Mirror {
     }
 
     pub fn paste(&self, key: &QString) {
-        if let crate::win::clipboard::Clip::Text(text) = crate::win::clipboard::read() {
+        if let crate::win::clipboard::Clip::Text { text, .. } = crate::win::clipboard::read() {
             // Long text goes in pieces, each a whole number of characters.
             let mut piece = String::new();
             for c in text.chars() {
@@ -431,6 +459,40 @@ impl qobject::Mirror {
         if let Some(device) = super::parse_device(device) {
             mirror::keyboard_paste(device);
         }
+    }
+
+    pub fn drop_files(&self, urls: &QList<QVariant>) {
+        let mut raw_urls: Vec<String> = Vec::with_capacity(urls.len().max(0) as usize);
+        for v in urls.iter() {
+            let raw = v
+                .value::<QString>()
+                .map(|qs| String::from(&qs))
+                .or_else(|| v.value::<QUrl>().map(|qu| String::from(&qu.to_qstring())))
+                .unwrap_or_default();
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                raw_urls.push(trimmed.to_owned());
+            }
+        }
+        mirror::drop_files(&raw_urls);
+    }
+
+    pub fn sync_clipboard_on_focus(&self, key: &QString) {
+        if let Some(window) = Window::parse(&String::from(key)) {
+            mirror::sync_clipboard_on_focus(window);
+        }
+    }
+
+    pub fn request_control(&self, key: &QString) {
+        mirror::request_control(&String::from(key));
+    }
+
+    pub fn enter_window(&self, key: &QString) {
+        mirror::enter_window(&String::from(key));
+    }
+
+    pub fn leave_window(&self) {
+        mirror::leave_window();
     }
 }
 

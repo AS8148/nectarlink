@@ -32,6 +32,17 @@ pub struct Check {
     pub fix: Option<&'static str>,
 }
 
+/// One paired device's connection state and discovery diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceFact {
+    pub name: String,
+    pub model: Option<String>,
+    pub os: String,
+    pub link: LinkState,
+    pub mdns_seen_ago_secs: Option<u64>,
+    pub dial_failures: u32,
+}
+
 /// What Windows said, gathered first so the wording can be tested.
 #[derive(Debug, Clone, Default)]
 pub struct Facts {
@@ -41,8 +52,8 @@ pub struct Facts {
     pub networks: Vec<(String, bool)>,
     /// `None` when the firewall couldn't be read.
     pub firewall: Option<windows_checks::Firewall>,
-    /// Paired devices: name and link.
-    pub devices: Vec<(String, LinkState)>,
+    /// Paired devices: link and discovery diagnostics.
+    pub devices: Vec<DeviceFact>,
 }
 
 /// Asks Windows and the core (blocking; call on a worker thread).
@@ -52,9 +63,23 @@ pub fn gather() -> Facts {
         .map(|list| list.into_iter().map(|n| (network_name(&n.name), n.trusted)).collect())
         .unwrap_or_default();
     let firewall = std::env::current_exe().ok().and_then(|exe| windows_checks::firewall(&exe).ok());
-    let devices = core_host::host()
-        .hub
-        .read(|s| s.devices.iter().map(|d| (d.info.name.clone(), d.link.clone())).collect());
+    let node = core_host::node();
+    let devices = core_host::host().hub.read(|s| {
+        s.devices
+            .iter()
+            .map(|d| {
+                let diag = node.as_ref().map(|n| n.peer_diagnostics(&d.id)).unwrap_or_default();
+                DeviceFact {
+                    name: d.info.name.clone(),
+                    model: d.info.model.clone(),
+                    os: d.info.os.clone(),
+                    link: d.link.clone(),
+                    mdns_seen_ago_secs: diag.mdns_seen_ago_secs,
+                    dial_failures: diag.dial_failures,
+                }
+            })
+            .collect()
+    });
     Facts { local_address: adapters.local_address, vpn: adapters.vpn, networks, firewall, devices }
 }
 
@@ -78,6 +103,60 @@ fn check(
     fix: Option<&'static str>,
 ) -> Check {
     Check { id: id.into(), outcome, title: title.into(), detail: detail.into(), fix }
+}
+
+fn match_oem(raw: &str) -> Option<(&'static str, &'static str)> {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("samsung") || lower.contains("galaxy") || lower.contains("sm-") {
+        Some((
+            "Samsung",
+            "On Samsung: open Settings → Apps → Nectarlink → Battery and choose Unrestricted, then in \
+             Device care → Battery → Background usage limits make sure Nectarlink is never put to sleep.",
+        ))
+    } else if lower.contains("xiaomi") || lower.contains("redmi") || lower.contains("poco") {
+        Some((
+            "Xiaomi",
+            "On Xiaomi / HyperOS / MIUI: open Settings → Apps → Manage apps → Nectarlink, turn on \
+             Autostart, and set Battery saver to No restrictions.",
+        ))
+    } else if lower.contains("oneplus") {
+        Some((
+            "OnePlus",
+            "On OnePlus / OxygenOS: open Settings → Apps → App management → Nectarlink → Battery usage and \
+             turn on Allow background activity and Allow auto-launch.",
+        ))
+    } else if lower.contains("oppo") || lower.contains("realme") || lower.contains("rmx") {
+        Some((
+            "Oppo / Realme",
+            "On Oppo / Realme: open Settings → Apps → App management → Nectarlink → Battery usage and turn \
+             on Allow background activity and Allow auto-launch.",
+        ))
+    } else if lower.contains("vivo") || lower.contains("iqoo") {
+        Some((
+            "Vivo",
+            "On Vivo / OriginOS / Funtouch: open Settings → Battery → Background power consumption \
+             management → Nectarlink and choose Unrestricted, and allow Autostart.",
+        ))
+    } else if lower.contains("huawei") || lower.contains("honor") {
+        Some((
+            "Huawei",
+            "On Huawei / Honor: open Settings → Battery → App launch, turn off Manage automatically for \
+             Nectarlink, and keep Auto-launch, Secondary launch, and Run in background on.",
+        ))
+    } else if lower.contains("pixel") || lower.contains("google") {
+        Some((
+            "Pixel",
+            "On Pixel: open Settings → Apps → See all apps → Nectarlink → App battery usage, tap Allow \
+             background usage, and choose Unrestricted.",
+        ))
+    } else {
+        None
+    }
+}
+
+/// Returns the `(oem_label, guide_text)` for a phone's manufacturer when recognized.
+pub fn oem_battery_guide(model: Option<&str>, name: &str) -> Option<(&'static str, &'static str)> {
+    model.and_then(match_oem).or_else(|| match_oem(name))
 }
 
 /// The findings, most important first.
@@ -148,13 +227,37 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
     }
 
     // Each phone.
-    for (i, (name, link)) in facts.devices.iter().enumerate() {
+    for (i, d) in facts.devices.iter().enumerate() {
+        let name = &d.name;
+        let ap_isolated = (!matches!(d.link, LinkState::Online { .. })
+            || matches!(d.link, LinkState::Online { path: ConnectionPath::Relay, .. }))
+            && d.mdns_seen_ago_secs.is_some_and(|s| s <= 120)
+            && d.dial_failures >= 1;
+        if ap_isolated {
+            let ap_id = if i == 0 { "ap-isolation".to_owned() } else { format!("ap-isolation-{i}") };
+            let outcome =
+                if matches!(d.link, LinkState::Online { .. }) { Outcome::Warn } else { Outcome::Fail };
+            checks.push(check(
+                &ap_id,
+                outcome,
+                format!("{name} is on this Wi-Fi, but the router blocks direct connections (AP isolation)"),
+                format!(
+                    "This PC can see {name} announce itself on the network, but the router is blocking \
+                     devices from talking directly to each other (often called AP Isolation, Client \
+                     Isolation, or Guest Wi-Fi). Move both devices off any Guest Wi-Fi network, turn off AP \
+                     / Client Isolation in your router's Wi-Fi settings, or connect with a USB cable."
+                ),
+                Some("reconnect"),
+            ));
+        }
+
         let id = format!("device{i}");
-        let finding = match link {
+        let finding = match &d.link {
             LinkState::Online { path, rtt_ms } => {
                 let how = match path {
                     ConnectionPath::Lan => "On this network",
-                    _ => "While away",
+                    ConnectionPath::Usb => "On USB",
+                    ConnectionPath::Relay => "While away",
                 };
                 check(&id, Outcome::Ok, format!("{name} is connected"), format!("{how} · {rtt_ms} ms"), None)
             }
@@ -183,6 +286,19 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
             }
         };
         checks.push(finding);
+
+        if matches!(d.link, LinkState::Offline { .. })
+            && (d.os.eq_ignore_ascii_case("android") || d.os.is_empty())
+            && let Some((oem, guide)) = oem_battery_guide(d.model.as_deref(), name)
+        {
+            checks.push(check(
+                &format!("oem-battery-{i}"),
+                Outcome::Warn,
+                format!("Keep {name} reachable in the background ({oem})"),
+                guide,
+                None,
+            ));
+        }
     }
 
     // Failures first, then warnings, then what's fine (stable within each).
@@ -211,15 +327,23 @@ fn ago(seconds: i64) -> String {
 pub fn fix(id: &str) -> bool {
     match id {
         "firewall" => {
-            let Ok(exe) = std::env::current_exe() else { return false };
-            match windows_checks::fix_firewall(&exe) {
-                Ok(done) => done,
+            let Ok(exe) = std::env::current_exe() else {
+                return windows_checks::open_firewall_settings();
+            };
+            let fixed = match windows_checks::fix_firewall(&exe) {
+                Ok(true) => windows_checks::firewall(&exe).map(|f| f.allowed && !f.blocked).unwrap_or(true),
+                Ok(false) => false,
                 Err(e) => {
                     tracing::warn!(error = %e, "can't change the firewall");
                     false
                 }
+            };
+            if !fixed {
+                let _ = windows_checks::open_firewall_settings();
             }
+            true
         }
+        "firewall-settings" => windows_checks::open_firewall_settings(),
         "network-settings" => crate::win::shell::open_url("ms-settings:network-status").is_ok(),
         "reconnect" => {
             if let Some(node) = core_host::node() {
@@ -235,13 +359,24 @@ pub fn fix(id: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn device_fact(name: &str, link: LinkState) -> DeviceFact {
+        DeviceFact {
+            name: name.into(),
+            model: None,
+            os: "android".into(),
+            link,
+            mdns_seen_ago_secs: None,
+            dial_failures: 0,
+        }
+    }
+
     fn facts() -> Facts {
         Facts {
             local_address: true,
             vpn: false,
             networks: vec![("Home".into(), true)],
             firewall: Some(windows_checks::Firewall { on: true, allowed: true, blocked: false }),
-            devices: vec![("Pixel".into(), LinkState::Online { path: ConnectionPath::Lan, rtt_ms: 4 })],
+            devices: vec![device_fact("Pixel", LinkState::Online { path: ConnectionPath::Lan, rtt_ms: 4 })],
         }
     }
 
@@ -263,7 +398,7 @@ mod tests {
         f.networks = vec![("Cafe".into(), false)];
         f.firewall = Some(windows_checks::Firewall { on: true, allowed: true, blocked: true });
         f.vpn = true;
-        f.devices = vec![("Pixel".into(), LinkState::Offline { last_seen: Some(1_000) })];
+        f.devices = vec![device_fact("Phone", LinkState::Offline { last_seen: Some(1_000) })];
         let checks = diagnose(&f, 1_000 + 3 * 3600);
         assert_eq!(
             outcomes(&checks),
@@ -279,6 +414,72 @@ mod tests {
         assert_eq!(checks[1].fix, Some("network-settings"));
         assert!(checks[3].detail.starts_with("Last seen 3 hours ago."), "{}", checks[3].detail);
         assert_eq!(checks[3].fix, Some("reconnect"));
+    }
+
+    #[test]
+    fn ap_isolation_detected_when_mdns_seen_and_direct_dial_fails() {
+        let mut f = facts();
+        f.devices = vec![DeviceFact {
+            name: "Galaxy S24".into(),
+            model: Some("SM-S921B".into()),
+            os: "android".into(),
+            link: LinkState::Offline { last_seen: Some(900) },
+            mdns_seen_ago_secs: Some(15),
+            dial_failures: 2,
+        }];
+        let checks = diagnose(&f, 1_000);
+        let ap = checks.iter().find(|c| c.id == "ap-isolation").expect("ap-isolation check present");
+        assert_eq!(ap.outcome, Outcome::Fail);
+        assert!(ap.title.contains("AP isolation"), "{}", ap.title);
+        assert!(ap.detail.contains("Guest Wi-Fi"), "{}", ap.detail);
+        assert_eq!(ap.fix, Some("reconnect"));
+
+        // Relay-connected with recent mDNS and failed direct dial warns about AP isolation.
+        f.devices[0].link = LinkState::Online { path: ConnectionPath::Relay, rtt_ms: 48 };
+        let checks_relay = diagnose(&f, 1_000);
+        let ap_relay =
+            checks_relay.iter().find(|c| c.id == "ap-isolation").expect("ap-isolation warn on relay");
+        assert_eq!(ap_relay.outcome, Outcome::Warn);
+
+        // Stale mDNS (> 120s) does not trigger AP isolation.
+        f.devices[0].mdns_seen_ago_secs = Some(121);
+        let checks_stale = diagnose(&f, 1_000);
+        assert!(!checks_stale.iter().any(|c| c.id == "ap-isolation"));
+    }
+
+    #[test]
+    fn oem_battery_guides_match_all_seven_manufacturers_individually() {
+        let cases = [
+            (Some("SM-S928B"), "Phone", "Samsung", "Device care"),
+            (Some("23127PN0CC"), "Xiaomi 14", "Xiaomi", "HyperOS / MIUI"),
+            (Some("CPH2581"), "OnePlus 12", "OnePlus", "OxygenOS"),
+            (Some("RMX3888"), "My Phone", "Oppo / Realme", "On Oppo / Realme:"),
+            (Some("V2307A"), "vivo X100", "Vivo", "OriginOS / Funtouch"),
+            (Some("ALN-AL00"), "Huawei Mate 60", "Huawei", "On Huawei / Honor:"),
+            (Some("Pixel 9 Pro"), "Phone", "Pixel", "On Pixel:"),
+        ];
+        for (model, name, expected_oem, expected_snippet) in cases {
+            let (oem, guide) = oem_battery_guide(model, name)
+                .unwrap_or_else(|| panic!("expected guide for {model:?} / {name}"));
+            assert_eq!(oem, expected_oem);
+            assert!(guide.contains(expected_snippet), "{oem}: {guide}");
+
+            let mut f = facts();
+            f.devices = vec![DeviceFact {
+                name: name.into(),
+                model: model.map(str::to_owned),
+                os: "android".into(),
+                link: LinkState::Offline { last_seen: Some(500) },
+                mdns_seen_ago_secs: None,
+                dial_failures: 0,
+            }];
+            let checks = diagnose(&f, 600);
+            let oem_checks: Vec<_> = checks.iter().filter(|c| c.id.starts_with("oem-battery-")).collect();
+            assert_eq!(oem_checks.len(), 1, "only the matching OEM's guide is shown");
+            assert_eq!(oem_checks[0].outcome, Outcome::Warn);
+            assert!(oem_checks[0].title.contains(expected_oem), "{}", oem_checks[0].title);
+            assert!(oem_checks[0].detail.contains(expected_snippet), "{}", oem_checks[0].detail);
+        }
     }
 
     #[test]

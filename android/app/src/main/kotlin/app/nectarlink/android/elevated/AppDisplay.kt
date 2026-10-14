@@ -30,6 +30,7 @@ class AppDisplay(
     private val dpi: Int,
     private val bitrate: Int,
     private val fps: Int,
+    private val codecName: String = "h264",
 ) {
     @Volatile private var running = true
     @Volatile private var nextSize: Triple<Int, Int, Int>? = null
@@ -39,8 +40,9 @@ class AppDisplay(
     var displayId: Int = -1
         private set
 
-    /** Streams until [stop] or until [out] fails; starts [pkg] on the display first. */
+    /** Streams until [stop] or until [out] fails; starts [pkg] on the display first (or mirrors the main screen when `pkg == "-"`). */
     fun run(pkg: String, out: OutputStream) {
+        val fullScreen = pkg == "-"
         var curW = width
         var curH = height
         var curDpi = dpi
@@ -51,27 +53,36 @@ class AppDisplay(
             val (firstCodec, firstSurface) = createEncoder(curW, curH)
             codec = firstCodec
             surface = firstSurface
-            val made = createDisplay(curW, curH, curDpi, firstSurface)
+            val made = if (fullScreen) {
+                createMirrorDisplay(curW, curH, curDpi, firstSurface)
+            } else {
+                createDisplay(curW, curH, curDpi, firstSurface)
+            }
             display = made
-            displayId = made.display.displayId
-            hideIme(displayId)
+            displayId = if (fullScreen) 0 else made.display.displayId
+            if (!fullScreen) {
+                hideIme(displayId)
+            }
             firstCodec.start()
             codecForKeyframes = firstCodec
             write(data, KIND_CONFIG, 0, ByteArray(12).also {
                 java.nio.ByteBuffer.wrap(it).putInt(curW).putInt(curH).putInt(displayId)
             })
             data.flush()
-            launch(pkg, displayId)
-            watchActivities(displayId)
+            if (!fullScreen) {
+                launch(pkg, displayId)
+                watchActivities(displayId)
+            }
             while (running) {
-                drain(codec!!, data)
+                val activeCodec = codec ?: break
+                drain(activeCodec, data)
                 if (!running) break
                 val (newW, newH, newDpi) = nextSize ?: continue
                 nextSize = null
                 if (newW == curW && newH == curH && newDpi == curDpi) continue
                 codecForKeyframes = null
-                runCatching { codec.stop() }
-                runCatching { codec.release() }
+                runCatching { activeCodec.stop() }
+                runCatching { activeCodec.release() }
                 codec = null
                 runCatching { surface?.release() }
                 surface = null
@@ -119,8 +130,14 @@ class AppDisplay(
         }
     }
 
-    private fun createEncoder(w: Int, h: Int): Pair<MediaCodec, Surface> {
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
+    private fun mimeForCodec(name: String): String = when (name.lowercase()) {
+        "h265", "hevc" -> MediaFormat.MIMETYPE_VIDEO_HEVC
+        "av1" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) "video/av01" else MediaFormat.MIMETYPE_VIDEO_AVC
+        else -> MediaFormat.MIMETYPE_VIDEO_AVC
+    }
+
+    private fun createEncoderForMime(mime: String, w: Int, h: Int): Pair<MediaCodec, Surface> {
+        val format = MediaFormat.createVideoFormat(mime, w, h).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
@@ -131,14 +148,24 @@ class AppDisplay(
             setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
             setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
             setInteger(MediaFormat.KEY_PRIORITY, 0)
-            setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 setInteger(MediaFormat.KEY_LATENCY, 1)
             }
         }
-        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        val codec = MediaCodec.createEncoderByType(mime)
         codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         return codec to codec.createInputSurface()
+    }
+
+    private fun createEncoder(w: Int, h: Int): Pair<MediaCodec, Surface> {
+        val preferredMime = mimeForCodec(codecName)
+        if (preferredMime != MediaFormat.MIMETYPE_VIDEO_AVC) {
+            runCatching { return createEncoderForMime(preferredMime, w, h) }
+        }
+        return createEncoderForMime(MediaFormat.MIMETYPE_VIDEO_AVC, w, h)
     }
 
     private fun drain(codec: MediaCodec, out: DataOutputStream) {
@@ -176,6 +203,46 @@ class AppDisplay(
         out.write(bytes)
     }
 
+    private fun createMirrorDisplay(w: Int, h: Int, d: Int, surface: Surface): VirtualDisplay {
+        // 1. Android 11+ hidden static helper DisplayManager.createVirtualDisplay(name, width, height, displayIdToMirror, surface)
+        runCatching {
+            val m = DisplayManager::class.java.getMethod(
+                "createVirtualDisplay",
+                String::class.java,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                Surface::class.java,
+            )
+            val vd = m.invoke(null, "NectarlinkScreen", w, h, 0, surface) as? VirtualDisplay
+            if (vd != null) return vd
+        }
+        // 2. Shell DisplayManager instance with VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
+        val constructor = DisplayManager::class.java.getDeclaredConstructor(Context::class.java)
+        constructor.isAccessible = true
+        val manager = constructor.newInstance(ShellContext.get())
+        @SuppressLint("WrongConstant")
+        return runCatching {
+            manager.createVirtualDisplay(
+                "NectarlinkScreen",
+                w,
+                h,
+                d,
+                surface,
+                PUBLIC or DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION,
+            )
+        }.getOrElse {
+            manager.createVirtualDisplay(
+                "NectarlinkScreen",
+                w,
+                h,
+                d,
+                surface,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            )
+        }
+    }
+
     private fun createDisplay(w: Int, h: Int, d: Int, surface: Surface): VirtualDisplay {
         var flags = PUBLIC or OWN_CONTENT_ONLY or SUPPORTS_TOUCH or ROTATES_WITH_CONTENT or DESTROY_CONTENT_ON_REMOVAL
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -211,13 +278,32 @@ class AppDisplay(
     }
 
     private fun launch(pkg: String, display: Int) {
-        val command = arrayOf(
-            "am", "start", "--display", display.toString(), "--windowingMode", "1",
-            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-p", pkg,
-            "-f", (FLAG_NEW_TASK or FLAG_MULTIPLE_TASK).toString(),
-        )
-        Runtime.getRuntime().exec(command).waitFor()
+        // By its launcher activity's name: a package-only launcher intent isn't resolved on some
+        // phones (Samsung's One UI answers "intent not resolved"), and nothing would open.
+        val target = launcherActivity(pkg)?.let { arrayOf("-n", it) }
+            ?: arrayOf("-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-p", pkg)
+        val command = arrayOf("am", "start", "--display", display.toString(), "--windowingMode", "1") + target +
+            arrayOf("-f", (FLAG_NEW_TASK or FLAG_MULTIPLE_TASK).toString())
+        val process = Runtime.getRuntime().exec(command)
+        val said = process.inputStream.bufferedReader().readText() + process.errorStream.bufferedReader().readText()
+        process.waitFor()
+        if (said.contains("Error", ignoreCase = true) || said.contains("Warning", ignoreCase = true)) {
+            System.err.println("launching $pkg: ${said.trim().lines().joinToString(" | ")}")
+        }
     }
+
+    /** `pkg/.Activity` for the package's launcher activity, or null. */
+    private fun launcherActivity(pkg: String): String? = runCatching {
+        val process = Runtime.getRuntime().exec(
+            arrayOf(
+                "cmd", "package", "resolve-activity", "--brief", "--user", "0",
+                "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", pkg,
+            ),
+        )
+        val last = process.inputStream.bufferedReader().readLines().lastOrNull { it.isNotBlank() }?.trim()
+        process.waitFor()
+        last?.takeIf { it.startsWith("$pkg/") }
+    }.getOrNull()
 
     /** Stops the stream when the app on [display] finishes its last activity. */
     private fun watchActivities(display: Int) {
@@ -257,13 +343,15 @@ class AppDisplay(
      */
     @SuppressLint("PrivateApi", "DiscouragedPrivateApi")
     private fun hasActivityOnDisplay(display: Int): Boolean = runCatching {
-        val service = Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null)!!
+        val service = Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null)
+            ?: return@runCatching true
         val tasks = service.javaClass
             .getMethod("getAllRootTaskInfosOnDisplay", Int::class.javaPrimitiveType)
             .invoke(service, display) as List<*>
         tasks.any { task ->
-            val visible = runCatching { task!!.javaClass.getField("visible").getBoolean(task) }.getOrDefault(true)
-            val children = runCatching { (task!!.javaClass.getField("childTaskIds").get(task) as IntArray).size }.getOrDefault(1)
+            if (task == null) return@any false
+            val visible = runCatching { task.javaClass.getField("visible").getBoolean(task) }.getOrDefault(true)
+            val children = runCatching { (task.javaClass.getField("childTaskIds").get(task) as IntArray).size }.getOrDefault(1)
             visible && children > 0
         }
     }.getOrDefault(true)
@@ -299,7 +387,7 @@ class AppDisplay(
  * of its own: the system context, speaking as the shell package (scrcpy
  * does the same).
  */
-@SuppressLint("PrivateApi", "DiscouragedPrivateApi", "SoonBlockedPrivateApi")
+@SuppressLint("PrivateApi", "DiscouragedPrivateApi", "SoonBlockedPrivateApi", "BlockedPrivateApi")
 internal class ShellContext private constructor(base: Context) : ContextWrapper(base) {
     override fun getPackageName(): String = SHELL
     override fun getOpPackageName(): String = SHELL
@@ -327,7 +415,29 @@ internal class ShellContext private constructor(base: Context) : ContextWrapper(
             type.getDeclaredField("sCurrentActivityThread").apply { isAccessible = true }.set(null, thread)
             // Hidden-API rules are for apps; this runs in the shell's own process.
             runCatching { type.getDeclaredField("mSystemThread").apply { isAccessible = true }.setBoolean(thread, true) }
+            fillConfigurationController(type, thread)
             return type.getDeclaredMethod("getSystemContext").invoke(thread) as Context
+        }
+
+        /**
+         * A bare ActivityThread has no configuration controller (Android 13+). Samsung's
+         * display sandboxing asks the thread for its configuration while the system context is
+         * made, which then fails. Gives it a controller holding the default configuration.
+         */
+        private fun fillConfigurationController(type: Class<*>, thread: Any) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+            runCatching {
+                val controllerType = Class.forName("android.app.ConfigurationController")
+                val internal = Class.forName("android.app.ActivityThreadInternal")
+                val controller = controllerType.getDeclaredConstructor(internal)
+                    .apply { isAccessible = true }
+                    .newInstance(thread)
+                runCatching {
+                    controllerType.getDeclaredField("mConfiguration").apply { isAccessible = true }
+                        .set(controller, android.content.res.Configuration().apply { setToDefaults() })
+                }
+                type.getDeclaredField("mConfigurationController").apply { isAccessible = true }.set(thread, controller)
+            }.onFailure { System.err.println("no configuration controller: $it") }
         }
     }
 }

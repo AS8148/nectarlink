@@ -237,7 +237,7 @@ fn on_copy(clip: Clip) {
 
 /// What goes to a phone.
 enum Content {
-    Text(String),
+    Text { text: String, html: Option<String>, rtf: Option<String> },
     Png(Vec<u8>),
 }
 
@@ -245,7 +245,7 @@ impl Content {
     /// Text as is, an image as PNG (converted off the async threads).
     async fn from_clip(clip: Clip) -> Option<Content> {
         match clip {
-            Clip::Text(text) => Some(Content::Text(text)),
+            Clip::Text { text, html, rtf } => Some(Content::Text { text, html, rtf }),
             Clip::Image(image) => match tokio::task::spawn_blocking(move || image.to_png()).await {
                 Ok(Ok(png)) => Some(Content::Png(png)),
                 Ok(Err(reason)) => {
@@ -260,7 +260,9 @@ impl Content {
 
     async fn send(&self, node: &Node, device: DeviceId) -> Result<(), Error> {
         match self {
-            Content::Text(text) => node.send_clipboard(device, text.clone()).await,
+            Content::Text { text, html, rtf } => {
+                node.send_clipboard_rich(device, text.clone(), html.clone(), rtf.clone()).await
+            }
             Content::Png(png) if png.len() as u64 > CLIP_MAX_IMAGE_BYTES => Err(Error::TooLarge),
             Content::Png(png) => node.send_clipboard_image(device, "image/png".into(), png.clone()).await,
         }
@@ -270,22 +272,39 @@ impl Content {
 /// "Send clipboard": sends what's copied to one device, and says how it went.
 pub fn send_now(device: DeviceId) {
     let Some(node) = core_host::node() else { return };
-    let name = core_host::host().hub.read(|s| s.name_of(&device)).unwrap_or_else(|| "the phone".into());
+    let (name, is_online) = core_host::host().hub.read(|s| {
+        let name = s.name_of(&device).unwrap_or_else(|| "the phone".into());
+        let online = s.device(&device).is_some_and(|d| matches!(d.link, LinkState::Online { .. }));
+        (name, online)
+    });
     let clip = clipboard::read();
     let image = matches!(clip, Clip::Image(_));
     match clip {
         Clip::Private => {
             return show_message("What you copied is marked private by its app, so it wasn't sent.");
         }
-        Clip::Empty => return show_message("There's no text or image on the clipboard."),
-        Clip::Text(_) | Clip::Image(_) => {}
+        Clip::Empty => {
+            if let Some(files) = clipboard::read_files() {
+                crate::transfers::send(device, files);
+                if is_online {
+                    show_message(format!("Sending copied files to {name}…"));
+                }
+                return;
+            }
+            return show_message("There's no text, image, or file on the clipboard.");
+        }
+        Clip::Text { .. } | Clip::Image(_) => {}
     }
     core_host::spawn(async move {
         let Some(content) = Content::from_clip(clip).await else {
             return show_message("That image can't be read.");
         };
         match content.send(&node, device).await {
-            Ok(()) => show_message(format!("Sent to {name}.")),
+            Ok(()) => {
+                if !crate::bridge::app::show_offline_queued_toast(device, None) {
+                    show_message(format!("Sent to {name}."));
+                }
+            }
             Err(Error::TooLarge) if image => show_message("That image is too large to send."),
             Err(Error::TooLarge) => show_message("That's too much text to send at once."),
             Err(Error::Unsupported) if image => {
@@ -295,6 +314,34 @@ pub fn send_now(device: DeviceId) {
             Err(e) => show_message(describe(&e)),
         }
     });
+}
+
+/// Sends a saved clipboard history item to `device`, queueing if offline.
+pub fn send_history_item(device: DeviceId, id: &str) {
+    let Some(node) = core_host::node() else { return };
+    let id = id.to_owned();
+    let name = core_host::host().hub.read(|s| s.name_of(&device)).unwrap_or_else(|| "the phone".into());
+    core_host::spawn(async move {
+        match node.resend_clipboard_history(device, &id).await {
+            Ok(()) => {
+                if !crate::bridge::app::show_offline_queued_toast(device, None) {
+                    show_message(format!("Sent to {name}."));
+                }
+            }
+            Err(Error::NotFound) => show_message("That clip is no longer in clipboard history."),
+            Err(e) => show_message(describe(&e)),
+        }
+    });
+}
+
+/// Places received file paths onto the Windows clipboard (`CF_HDROP`) when
+/// `clipboard_auto_copy_received_files` is enabled, so the user can immediately
+/// press `Ctrl+V` in File Explorer or any desktop app to paste them.
+pub fn copy_received_files_to_clipboard(paths: &[std::path::PathBuf]) -> bool {
+    if paths.is_empty() || !crate::settings::clipboard_auto_copy_received_files() {
+        return false;
+    }
+    clipboard::write_files(paths)
 }
 
 /// Feedback for clipboard events.

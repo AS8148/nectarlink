@@ -553,6 +553,10 @@ fn photos_cache_root() -> PathBuf {
     core_host::host().data_dir.join("cache").join("photos-thumbs")
 }
 
+fn photos_drag_dir() -> PathBuf {
+    core_host::host().data_dir.join("cache").join("photos").join("drag")
+}
+
 fn thumbs_dir(device: DeviceId) -> PathBuf {
     photos_cache_root().join(device.to_string())
 }
@@ -640,6 +644,7 @@ pub fn prune_cache() {
 /// and resets in-memory thumbnail state.
 pub fn clear_cache() {
     let _ = std::fs::remove_dir_all(photos_cache_root());
+    let _ = std::fs::remove_dir_all(photos_drag_dir());
     if let Ok(entries) = std::fs::read_dir(crate::notifications::images_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -1346,12 +1351,113 @@ fn show_photo_error(error: &Error) {
     }
 }
 
+/// Sanitizes a photo's display name into a safe Windows filename for drag-and-drop.
+pub(crate) fn sanitize_drag_filename(raw_name: &str, fallback_ext: &str) -> String {
+    let leaf = raw_name.rsplit(['/', '\\']).next().unwrap_or(raw_name);
+    let cleaned: String =
+        leaf.chars().map(|c| if c.is_control() || r#"<>:"/\|?*"#.contains(c) { '_' } else { c }).collect();
+    let mut name = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    name = name.trim_matches(['.', ' ']).chars().take(120).collect();
+    let stem = name.split('.').next().unwrap_or_default().to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit());
+    if name.is_empty() {
+        name = "photo".into();
+    } else if reserved {
+        name = format!("_{name}");
+    }
+    let ext = fallback_ext.trim_start_matches('.');
+    let ext = if ext.is_empty() { "jpg" } else { ext };
+    if Path::new(&name).extension().is_none() { format!("{name}.{ext}") } else { name }
+}
+
+fn stage_for_drag_in(id: &str, drag_dir: &Path) -> Option<PathBuf> {
+    if id.is_empty() {
+        return None;
+    }
+    let (device, name, is_video, full_now) = gallery_state(|s| {
+        let item = s.items.iter().find(|i| i.id == id);
+        let name = item
+            .map(|i| i.name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| format!("photo-{:016x}.jpg", fingerprint(id)));
+        let is_video = id.starts_with("video:") || item.is_some_and(|i| i.duration.is_some());
+        let mut full = s.full_files.get(id).filter(|p| p.exists()).cloned();
+        if full.is_none()
+            && let Some(dev) = s.device
+        {
+            let dir = thumbs_dir(dev);
+            for ext in ["jpg", "jpeg", "png", "webp", "heic"] {
+                let candidate = dir.join(format!("full-{:016x}.{ext}", fingerprint(id)));
+                if candidate.exists() {
+                    s.full_files.insert(id.to_owned(), candidate.clone());
+                    full = Some(candidate);
+                    break;
+                }
+            }
+        }
+        (s.device, name, is_video, full)
+    });
+
+    let mut source = full_now;
+    if source.is_none() && !is_video && device.is_some() {
+        ensure_full(id.to_owned());
+        let deadline = Instant::now() + Duration::from_millis(2500);
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+            if let Some(full) = gallery_state(|s| s.full_files.get(id).filter(|p| p.exists()).cloned()) {
+                source = Some(full);
+                break;
+            }
+        }
+    }
+
+    if source.is_none() {
+        source = gallery_state(|s| {
+            s.thumbs.get(id).filter(|p| p.exists()).cloned().or_else(|| {
+                let dev = s.device.or(device)?;
+                let path = thumb_path(dev, id);
+                path.exists().then_some(path)
+            })
+        });
+    }
+
+    let src = source?;
+    if !src.exists() {
+        return None;
+    }
+    let fallback_ext = src.extension().and_then(|e| e.to_str()).unwrap_or("jpg");
+    let file_name = sanitize_drag_filename(&name, fallback_ext);
+    std::fs::create_dir_all(drag_dir).ok()?;
+    let dst = drag_dir.join(file_name);
+    if dst != src {
+        let _ = std::fs::remove_file(&dst);
+        if std::fs::hard_link(&src, &dst).is_err() {
+            std::fs::copy(&src, &dst).ok()?;
+        }
+    }
+    Some(dst)
+}
+
+/// Stages a gallery photo on disk under `<data_dir>/cache/photos/drag/<name>`
+/// so dragging a tile out to the Desktop or File Explorer drops the photo with
+/// its real filename. Prefers the full-resolution image (waiting up to ~2.5s
+/// if it is still arriving), falling back to the cached thumbnail.
+pub fn stage_for_drag(id: &str) -> Option<PathBuf> {
+    stage_for_drag_in(id, &photos_drag_dir())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn gallery_view_formats_rows_and_prev_dates() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         gallery_state(|s| {
             *s = GalleryState {
                 status: Status::Ready,
@@ -1401,6 +1507,7 @@ mod tests {
         assert_eq!(v.rows[1].prev_date, 1_710_000_000_000);
         assert!(v.rows[1].is_video);
         assert_eq!(v.rows[1].duration, 14_500);
+        gallery_state(|s| *s = GalleryState::default());
     }
 
     #[test]
@@ -1412,5 +1519,147 @@ mod tests {
 
         let second = free_path(dir.path(), "IMG_1.jpg");
         assert_eq!(second, dir.path().join("IMG_1 (2).jpg"));
+    }
+
+    #[test]
+    fn drag_staging_uses_real_sanitized_filename() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(sanitize_drag_filename("IMG_20261009.jpg", "jpg"), "IMG_20261009.jpg");
+        assert_eq!(sanitize_drag_filename("DCIM/Camera/shot:1?.png", "jpg"), "shot_1_.png");
+        assert_eq!(sanitize_drag_filename("CON", "jpg"), "_CON.jpg");
+        assert_eq!(sanitize_drag_filename("   ", "png"), "photo.png");
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("full-deadbeef.jpg");
+        std::fs::write(&src, b"full-res-bytes").unwrap();
+        let thumb = dir.path().join("thumb-deadbeef.jpg");
+        std::fs::write(&thumb, b"thumb-bytes").unwrap();
+
+        gallery_state(|s| {
+            *s = GalleryState {
+                items: vec![
+                    PhotoItem {
+                        id: "media:10".into(),
+                        name: "IMG_20261009_1422.jpg".into(),
+                        date: 1_710_000_000_000,
+                        size: 14,
+                        width: 4000,
+                        height: 3000,
+                        duration: None,
+                        album: None,
+                    },
+                    PhotoItem {
+                        id: "media:11".into(),
+                        name: "IMG_20261009_1423.jpg".into(),
+                        date: 1_710_000_000_000,
+                        size: 11,
+                        width: 4000,
+                        height: 3000,
+                        duration: None,
+                        album: None,
+                    },
+                ],
+                ..GalleryState::default()
+            };
+            s.full_files.insert("media:10".into(), src.clone());
+            s.thumbs.insert("media:11".into(), thumb.clone());
+        });
+
+        let drag_dir = dir.path().join("drag");
+        let staged_full = stage_for_drag_in("media:10", &drag_dir).expect("staged full");
+        assert_eq!(staged_full.file_name().unwrap().to_str().unwrap(), "IMG_20261009_1422.jpg");
+        assert_eq!(std::fs::read(&staged_full).unwrap(), b"full-res-bytes");
+
+        let staged_thumb = stage_for_drag_in("media:11", &drag_dir).expect("staged thumb fallback");
+        assert_eq!(staged_thumb.file_name().unwrap().to_str().unwrap(), "IMG_20261009_1423.jpg");
+        assert_eq!(std::fs::read(&staged_thumb).unwrap(), b"thumb-bytes");
+
+        gallery_state(|s| *s = GalleryState::default());
+    }
+
+    #[test]
+    fn scale_10000_photos_in_gallery_sorts_and_queries_smoothly() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let total = 10_000usize;
+        let base_date = 1_728_000_000_000i64;
+        let albums = vec![
+            PhotoAlbum {
+                id: "bucket:camera".into(),
+                name: "Camera".into(),
+                count: 5_000,
+                cover: Some("media:0".into()),
+            },
+            PhotoAlbum {
+                id: "bucket:screenshots".into(),
+                name: "Screenshots".into(),
+                count: 3_000,
+                cover: Some("media:1".into()),
+            },
+            PhotoAlbum {
+                id: "bucket:downloads".into(),
+                name: "Downloads".into(),
+                count: 2_000,
+                cover: Some("media:2".into()),
+            },
+        ];
+
+        let items: Vec<PhotoItem> = (0..total)
+            .map(|i| {
+                let day_offset = (i as i64 / 50) * 86_400_000;
+                let within_day = (i as i64 % 50) * 60_000;
+                let date = base_date - day_offset - within_day;
+                let is_video = i % 20 == 0;
+                let album_id = match i % 10 {
+                    0..=4 => "bucket:camera",
+                    5..=7 => "bucket:screenshots",
+                    _ => "bucket:downloads",
+                };
+                PhotoItem {
+                    id: if is_video { format!("video:{i}") } else { format!("media:{i}") },
+                    name: if is_video { format!("VID_{i:05}.mp4") } else { format!("IMG_{i:05}.jpg") },
+                    date,
+                    size: 2_500_000 + (i as u64 * 128),
+                    width: 4032,
+                    height: 3024,
+                    duration: is_video.then_some(15_000),
+                    album: Some(album_id.into()),
+                }
+            })
+            .collect();
+
+        let start = Instant::now();
+        gallery_state(|s| {
+            *s = GalleryState {
+                status: Status::Ready,
+                album: String::new(),
+                albums,
+                items,
+                more: false,
+                ..GalleryState::default()
+            };
+        });
+
+        let v = view();
+        let camera_count = v.rows.iter().filter(|r| r.album == "bucket:camera").count();
+        let video_count = v.rows.iter().filter(|r| r.is_video).count();
+        let day_boundaries = v
+            .rows
+            .iter()
+            .filter(|r| r.prev_date == 0 || (r.prev_date / 86_400_000) != (r.date / 86_400_000))
+            .count();
+        let elapsed = start.elapsed();
+
+        assert_eq!(v.rows.len(), total);
+        assert_eq!(camera_count, 5_000);
+        assert_eq!(video_count, 500);
+        assert!(day_boundaries >= 200, "expected >= 200 day groups, got {day_boundaries}");
+        assert!(
+            elapsed < Duration::from_millis(150),
+            "10,000-photo gallery view and query took {:?}, expected < 150ms",
+            elapsed
+        );
+
+        // Clean up the static gallery state so tests stay bounded in memory.
+        gallery_state(|s| *s = GalleryState::default());
     }
 }

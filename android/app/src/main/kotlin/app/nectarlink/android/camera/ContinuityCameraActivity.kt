@@ -473,8 +473,9 @@ private fun ContinuityCameraScreen(
                     }
                 }
             } else {
-                val displayBitmap = if (mode == "scan" && showRectifiedPreview && rectifiedBitmap != null) {
-                    rectifiedBitmap!!
+                val rectBmp = rectifiedBitmap
+                val displayBitmap = if (mode == "scan" && showRectifiedPreview && rectBmp != null) {
+                    rectBmp
                 } else {
                     currentCaptured
                 }

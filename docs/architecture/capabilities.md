@@ -131,12 +131,12 @@ Available. Everything else in the matrix is identical on both devices.
 
 | Feature | Requires | Partial | State |
 |---|---|---|---|
-| `clipboard.pc_to_phone` | phone `clip.write`, toggle `clipboard` | – | Available |
+| `clipboard.pc_to_phone` | phone `clip.write`, toggle `clipboard` | None | Available |
 | `clipboard.auto_phone_to_pc` | phone `clip.read.auto` (Elevated), toggle | phone `clip.share` → "Manual: tap to send" | Partial, upgrade → Elevated · ~2 min |
-| `notifications.sensitive` | phone `notify.sensitive` (Elevated), toggle | – | Locked → Elevated · ~2 min |
-| `mirroring.control` | phone `mirror.capture`, `mirror.input` (Assist) | – | Locked → Assist · ~1 min |
-| `mirroring.app_windows` | phone `mirror.virtual_display` (Elevated), Elevated, Android ≥ 11 | – | Locked → Elevated |
-| `camera.webcam` | phone `camera.stream` (camera permission), desktop `camera.virtual`, desktop `addon.vcam`, Windows build ≥ 22000, toggle `webcam` | – | Locked → install virtual camera · ~1 min |
+| `notifications.sensitive` | phone `notify.sensitive` (Elevated), toggle | None | Locked → Elevated · ~2 min |
+| `mirroring.control` | phone `mirror.capture`, `mirror.input` (Assist) | None | Locked → Assist · ~1 min |
+| `mirroring.app_windows` | phone `mirror.virtual_display` (Elevated), Elevated, Android ≥ 11 | None | Locked → Elevated |
+| `camera.webcam` | phone `camera.stream` (camera permission), desktop `camera.virtual`, desktop `addon.vcam`, Windows build ≥ 22000, toggle `webcam` | None | Locked → install virtual camera · ~1 min |
 
 The full registry is `FEATURES` in `core/nectarlink-core/src/features.rs`.
 

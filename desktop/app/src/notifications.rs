@@ -155,8 +155,8 @@ pub(crate) fn images_dir() -> std::path::PathBuf {
 }
 
 /// Saves the pictures an event's notifications carry; returns where each
-/// went, by device and key.
-fn save_images(event: &NodeEvent) -> Vec<((DeviceId, String), std::path::PathBuf)> {
+/// went by device and key, or `None` for a notification without one.
+fn save_images(event: &NodeEvent) -> Vec<((DeviceId, String), Option<std::path::PathBuf>)> {
     let (device, items): (DeviceId, Vec<&Notification>) = match event {
         NodeEvent::NotificationsReset { device, items } => (*device, items.iter().collect()),
         NodeEvent::NotificationPosted { device, notification } => (*device, vec![notification]),
@@ -166,7 +166,9 @@ fn save_images(event: &NodeEvent) -> Vec<((DeviceId, String), std::path::PathBuf
     items
         .into_iter()
         .filter_map(|n| {
-            let image = n.image.as_ref()?;
+            let Some(image) = n.image.as_ref() else {
+                return Some(((device, n.key.clone()), None));
+            };
             // Named after the notification and the picture: an update with a
             // new picture gets a new file (the UI caches by name).
             let name = format!(
@@ -177,7 +179,7 @@ fn save_images(event: &NodeEvent) -> Vec<((DeviceId, String), std::path::PathBuf
             let saved = std::fs::create_dir_all(&dir)
                 .and_then(|()| if path.exists() { Ok(()) } else { std::fs::write(&path, image) });
             match saved {
-                Ok(()) => Some(((device, n.key.clone()), path)),
+                Ok(()) => Some(((device, n.key.clone()), Some(path))),
                 Err(e) => {
                     tracing::debug!(error = %e, "can't save a notification picture");
                     None
@@ -274,10 +276,7 @@ pub fn apply(event: &NodeEvent) {
         for (app, path) in icons {
             changes |= s.set_app_icon(&app, path);
         }
-        changes |= s.apply(event);
-        for (key, path) in images {
-            changes |= s.set_notification_image(key, path);
-        }
+        changes |= s.apply_with_images(event, images);
         changes
     });
 }

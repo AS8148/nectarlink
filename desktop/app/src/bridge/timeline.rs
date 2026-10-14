@@ -213,6 +213,7 @@ impl cxx_qt::Initialize for qobject::TimelineModel {
         self.as_mut().on_search_query_changed(Self::reset_and_refresh).release();
         self.as_mut().on_kind_filter_changed(Self::reset_and_refresh).release();
         self.as_mut().on_device_filter_changed(Self::reset_and_refresh).release();
+        self.as_mut().refresh();
         super::subscribe(
             self.qt_thread(),
             Changes::TIMELINE | Changes::DEVICES | Changes::CLIPBOARD | Changes::STATUS,
@@ -352,8 +353,14 @@ impl qobject::TimelineModel {
             }
             TimelineKind::Link => {
                 let url = if row.entry.target.is_empty() { &row.entry.title } else { &row.entry.target };
-                if let Err(e) = crate::links::open_here(url) {
-                    show_message(e);
+                // Entries come from other devices: open web and map links only.
+                match crate::links::as_link(url) {
+                    Some(url) => {
+                        if let Err(e) = crate::links::open_here(url) {
+                            show_message(e);
+                        }
+                    }
+                    None => show_message("That isn't a web link."),
                 }
             }
             TimelineKind::Clip | TimelineKind::Session => {}
@@ -413,10 +420,13 @@ impl qobject::TimelineModel {
         let Some(row) = self.find_row(entry_id) else { return };
         let target_device = resolve_target_device(device, Some(row.entry.device_id));
         let Some(target_device) = target_device else {
-            return show_message("No paired phone is connected right now.");
+            return show_message("No phone is paired yet.");
         };
-        let device_name =
-            core_host::host().hub.read(|s| s.name_of(&target_device)).unwrap_or_else(|| "your phone".into());
+        let (device_name, is_online) = core_host::host().hub.read(|s| {
+            let name = s.name_of(&target_device).unwrap_or_else(|| "your phone".into());
+            let online = s.device(&target_device).is_some_and(|d| matches!(d.link, LinkState::Online { .. }));
+            (name, online)
+        });
 
         match row.entry.kind {
             TimelineKind::File | TimelineKind::Photo | TimelineKind::Recording => {
@@ -425,14 +435,20 @@ impl qobject::TimelineModel {
                     return show_message("That file was moved or deleted.");
                 }
                 crate::transfers::send(target_device, paths);
-                show_message(format!("Sending to {device_name}…"));
+                if is_online {
+                    show_message(format!("Sending to {device_name}…"));
+                }
             }
             TimelineKind::Clip => {
                 let Some(clip_id) = row.entry.ref_id.clone() else { return };
                 let Some(node) = core_host::node() else { return };
                 core_host::spawn(async move {
                     match node.resend_clipboard_history(target_device, &clip_id).await {
-                        Ok(()) => show_message(format!("Sent clip to {device_name}.")),
+                        Ok(()) => {
+                            if !crate::bridge::app::show_offline_queued_toast(target_device, None) {
+                                show_message(format!("Sent clip to {device_name}."));
+                            }
+                        }
                         Err(Error::NotFound) => show_message("That clip is no longer in clipboard history."),
                         Err(e) => show_message(describe(&e)),
                     }
@@ -454,14 +470,16 @@ impl qobject::TimelineModel {
 
     pub fn remove_entry(self: Pin<&mut Self>, entry_id: &QString) {
         let Ok(id) = String::from(entry_id).parse::<i64>() else { return };
-        if let Some(node) = core_host::node() {
-            let _ = node.delete_timeline_entry(id);
+        if let Some(Err(e)) = core_host::node().map(|node| node.delete_timeline_entry(id)) {
+            tracing::warn!(error = %e, "can't remove a Timeline entry");
+            show_message("That entry couldn't be removed. Try again.");
         }
     }
 
     pub fn clear_all(self: Pin<&mut Self>) {
-        if let Some(node) = core_host::node() {
-            let _ = node.clear_timeline();
+        if let Some(Err(e)) = core_host::node().map(|node| node.clear_timeline()) {
+            tracing::warn!(error = %e, "can't clear the Timeline");
+            show_message("The Timeline couldn't be cleared. Try again.");
         }
     }
 
@@ -502,7 +520,12 @@ fn resolve_target_device(requested: &QString, fallback: Option<DeviceId>) -> Opt
         {
             return Some(id);
         }
-        s.devices.iter().find(|d| matches!(d.link, LinkState::Online { .. })).map(|d| d.id).or(fallback)
+        s.devices
+            .iter()
+            .find(|d| matches!(d.link, LinkState::Online { .. }))
+            .map(|d| d.id)
+            .or_else(|| fallback.filter(|id| s.devices.iter().any(|d| d.id == *id)))
+            .or_else(|| s.devices.first().map(|d| d.id))
     })
 }
 
@@ -634,8 +657,11 @@ fn describe_entry(
                 .or_else(|| entry.image_data_url.clone())
                 .unwrap_or_default();
             let available = entry.clip_available;
+            let mut raw_detail: Option<String> = None;
             let title = if !entry.title.is_empty() && entry.title != "Image clip" {
-                entry.title.lines().next().unwrap_or(&entry.title).trim().to_owned()
+                let (friendly, detail) = nectarlink_core::format_clip_display(&entry.title);
+                raw_detail = detail;
+                friendly
             } else if !clip_thumb.is_empty() || entry.detail == "image" {
                 "Copied image".into()
             } else {
@@ -645,6 +671,9 @@ fn describe_entry(
             if entry.size_bytes > 0 {
                 parts.push(format_bytes(entry.size_bytes));
             }
+            if let Some(detail) = raw_detail {
+                parts.push(detail);
+            }
             (title, parts.join(" · "), clip_thumb, String::new(), 1, false, false, available, available)
         }
         TimelineKind::Link => {
@@ -653,8 +682,12 @@ fn describe_entry(
             let mut parts = vec![who];
             if !entry.detail.is_empty() {
                 parts.push(entry.detail.clone());
+            } else if !url.is_empty() && url != title {
+                parts.push(url.clone());
             }
-            let valid = url.starts_with("http://") || url.starts_with("https://");
+            let lower = url.get(..8).map(str::to_ascii_lowercase).unwrap_or_default();
+            let valid =
+                lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("geo:");
             (title, parts.join(" · "), String::new(), String::new(), 1, valid, false, !url.is_empty(), valid)
         }
         TimelineKind::Session => {

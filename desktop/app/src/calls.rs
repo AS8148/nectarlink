@@ -24,7 +24,10 @@ use crate::{
     core_host,
     messages::{Status, digits},
     state::Changes,
-    win::toast::{self, CALL_ANSWER, CALL_DECLINE, CALL_END, Toast},
+    win::{
+        bt_hfp,
+        toast::{self, CALL_ANSWER, CALL_DECLINE, CALL_END, Toast},
+    },
 };
 
 /// Whether PC media playback is automatically paused during phone calls.
@@ -54,6 +57,8 @@ fn note_call_ended(device: DeviceId) {
     let all_done = ongoing_calls(|c| c.remove(&device) && c.is_empty());
     if all_done {
         crate::win::media_sessions::resume_after_call();
+        bt_hfp::disconnect_audio();
+        refresh_hfp_cache(None);
     }
 }
 
@@ -99,6 +104,23 @@ pub fn active(device: DeviceId) -> Option<CallState> {
     in_progress(|c| c.get(&device).cloned())
 }
 
+/// Returns `(device, call, is_ringing)` for `preferred` if it has a ringing or active call,
+/// or falls back to any paired device with a ringing or active call.
+pub fn active_or_ringing(preferred: Option<DeviceId>) -> Option<(DeviceId, CallState, bool)> {
+    if let Some((dev, call)) = ringing(|r| {
+        preferred
+            .and_then(|d| r.get(&d).cloned().map(|c| (d, c)))
+            .or_else(|| r.iter().next().map(|(d, c)| (*d, c.clone())))
+    }) {
+        return Some((dev, call, true));
+    }
+    in_progress(|c| {
+        preferred
+            .and_then(|d| c.get(&d).cloned().map(|call| (d, call, false)))
+            .or_else(|| c.iter().next().map(|(d, call)| (*d, call.clone(), false)))
+    })
+}
+
 /// Whether the PC can answer and end a phone's calls.
 pub fn can_control(device: DeviceId) -> bool {
     core_host::host().hub.read(|s| {
@@ -136,10 +158,10 @@ pub fn on_event(event: &NodeEvent) {
             load_contacts();
         }
         NodeEvent::LinkChanged { device, link: LinkState::Online { .. } } if Some(*device) == page_device => {
-            if page_state(|s| s.log_status != Status::Ready) {
+            if page_state(|s| !matches!(s.log_status, Status::Ready | Status::Loading)) {
                 load_call_log(None);
             }
-            if page_state(|s| s.contacts_status != Status::Ready) {
+            if page_state(|s| !matches!(s.contacts_status, Status::Ready | Status::Loading)) {
                 load_contacts();
             }
         }
@@ -150,8 +172,16 @@ pub fn on_event(event: &NodeEvent) {
             note_call_ended(*device);
             if Some(*device) == page_device {
                 page_state(|s| {
-                    s.log_status = Status::Offline;
-                    s.contacts_status = Status::Offline;
+                    if s.log.is_empty() {
+                        s.log_status = Status::Offline;
+                    } else if s.log_status == Status::Loading {
+                        s.log_status = Status::Ready;
+                    }
+                    if s.contacts.is_empty() {
+                        s.contacts_status = Status::Offline;
+                    } else if s.contacts_status == Status::Loading {
+                        s.contacts_status = Status::Ready;
+                    }
                 });
                 core_host::host().hub.changed(Changes::CALLS);
             }
@@ -217,6 +247,7 @@ fn changed(device: DeviceId, call: &CallState) {
                 toast::remove(TOAST_GROUP, &key(device, &previous.id));
             }
             show_ringing(device, call, false);
+            core_host::host().hub.changed(Changes::CALLS);
         }
         "ended" if call.missed => {
             stop_ringing(device);
@@ -239,6 +270,7 @@ fn finish(device: DeviceId) {
 fn stop_ringing(device: DeviceId) {
     if let Some(call) = ringing(|r| r.remove(&device)) {
         toast::remove(TOAST_GROUP, &key(device, &call.id));
+        core_host::host().hub.changed(Changes::CALLS);
     }
 }
 
@@ -571,6 +603,7 @@ pub fn open_device(device: DeviceId) {
         }
         same
     });
+    refresh_hfp_cache(Some(device));
     if !same {
         page_changed();
     }
@@ -595,6 +628,8 @@ pub fn ensure_contacts(device: DeviceId) {
 }
 
 pub fn reload() {
+    let dev = page_state(|s| s.device);
+    refresh_hfp_cache(dev);
     load_call_log(None);
     load_contacts();
 }
@@ -655,7 +690,7 @@ fn load_call_log(before: Option<i64>) {
                 }
                 Err(e) => {
                     tracing::debug!(error = %e, "can't read call log");
-                    s.log_status = Status::of(&e);
+                    s.log_status = if s.log.is_empty() { Status::of(&e) } else { Status::Ready };
                 }
             }
         });
@@ -708,7 +743,7 @@ fn load_contacts() {
                 }
                 Some(e) => {
                     tracing::debug!(error = %e, "can't list contacts");
-                    s.contacts_status = Status::of(&e);
+                    s.contacts_status = if s.contacts.is_empty() { Status::of(&e) } else { Status::Ready };
                 }
             }
         });
@@ -851,6 +886,54 @@ pub fn palette_contacts(device: DeviceId) -> Vec<(String, String)> {
 /// Places a call from the Command Palette on `device`.
 pub fn dial_from_palette(device: DeviceId, number: &str) {
     dial(device, number.to_owned());
+}
+
+static HFP_CACHE: Mutex<Option<(Option<DeviceId>, bt_hfp::HfpStatus)>> = Mutex::new(None);
+
+fn refresh_hfp_cache(device: Option<DeviceId>) -> bt_hfp::HfpStatus {
+    let target = device.or_else(|| page_state(|s| s.device));
+    let name = target.map(phone_name);
+    let status = bt_hfp::probe_status(name.as_deref());
+    if let Ok(mut guard) = HFP_CACHE.lock() {
+        *guard = Some((target, status.clone()));
+    }
+    status
+}
+
+/// Returns the current Bluetooth HFP / PC audio status for `device`.
+pub fn hfp_status(device: Option<DeviceId>) -> bt_hfp::HfpStatus {
+    let target = device.or_else(|| page_state(|s| s.device));
+    if let Ok(guard) = HFP_CACHE.lock()
+        && let Some((cached_dev, status)) = guard.as_ref()
+        && *cached_dev == target
+    {
+        return status.clone();
+    }
+    refresh_hfp_cache(target)
+}
+
+/// Opens a Bluetooth connection to route call audio through this PC.
+pub fn connect_pc_audio(device: Option<DeviceId>) {
+    let target = device.or_else(|| page_state(|s| s.device));
+    let name = target.map(phone_name);
+    match bt_hfp::connect_audio(name.as_deref()) {
+        Ok(status) => {
+            if let Ok(mut guard) = HFP_CACHE.lock() {
+                *guard = Some((target, status));
+            }
+            page_changed();
+        }
+        Err(err) => {
+            refresh_hfp_cache(target);
+            page_changed();
+            show_message(err);
+        }
+    }
+}
+
+/// Opens Windows Bluetooth & devices settings (`ms-settings:bluetooth`).
+pub fn open_bluetooth_settings() {
+    bt_hfp::open_bluetooth_settings();
 }
 
 #[cfg(test)]

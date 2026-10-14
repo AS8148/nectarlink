@@ -24,10 +24,17 @@ Item {
     required property string replies
     required property string otpCode
     required property string live
+    required property int groupCount
+    required property int groupIndex
+    required property bool groupExpanded
+    required property string groupSummary
     // Bumped by the feed every minute, so relative times stay right.
     property int clock: 0
     property int chronoTick: 0
 
+    readonly property bool isGrouped: groupCount > 1
+    readonly property bool isGroupLead: isGrouped && groupIndex === 0
+    readonly property bool isGroupChild: isGrouped && groupIndex > 0
     readonly property var buttons: { try { return JSON.parse(actions) } catch (e) { return [] } }
     readonly property var sent: { try { return JSON.parse(replies) } catch (e) { return [] } }
     readonly property var liveData: {
@@ -64,8 +71,10 @@ Item {
     property bool canOpenApp: false
     signal optionsRequested
     signal openAppRequested
+    signal imageClicked(string url)
 
-    implicitHeight: content.height + 24
+    implicitHeight: content.implicitHeight + 24
+    height: implicitHeight
     activeFocusOnTab: item.canOpenApp && !item.replying
     Accessible.role: item.canOpenApp ? Accessible.Button : Accessible.Grouping
     Accessible.name: [item.appName, item.title, item.text].filter(s => s.length > 0).join(", ")
@@ -79,15 +88,17 @@ Item {
         }
     }
 
+    readonly property bool windowVisible: Window.window
+        && Window.window.visibility !== Window.Hidden
+        && Window.window.visibility !== Window.Minimized
+
     // Ticks once per second only for visible chronometer notifications while the window is shown.
     Timer {
         id: chronoTimer
         interval: 1000
         repeat: true
         running: item.isLive && Boolean(item.liveData.chronometer)
-                 && item.visible && Window.window
-                 && Window.window.visibility !== Window.Hidden
-                 && Window.window.visibility !== Window.Minimized
+                 && item.visible && item.windowVisible
         onTriggered: item.chronoTick++
     }
 
@@ -145,26 +156,54 @@ Item {
         hoverEnabled: true
         acceptedButtons: item.canOpenApp && !item.replying ? Qt.LeftButton : Qt.NoButton
         cursorShape: item.canOpenApp && !item.replying ? Qt.PointingHandCursor : Qt.ArrowCursor
-        readonly property bool hovered: containsMouse
         onClicked: if (item.canOpenApp && !item.replying) item.openAppRequested()
     }
 
-    // A light wash of the text color, or a calm highlighted container for Live Updates.
+    // Stacked card visual depth behind collapsed notification groups.
+    Rectangle {
+        visible: item.isGroupLead && !item.groupExpanded && item.groupCount > 2
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: 16
+        anchors.rightMargin: 16
+        anchors.bottomMargin: -5
+        height: 10
+        radius: Theme.radiusMd
+        color: Theme.surfaceContainer
+        border.width: 1
+        border.color: Theme.outlineVariant
+        opacity: 0.45
+    }
+    Rectangle {
+        visible: item.isGroupLead && !item.groupExpanded
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: 8
+        anchors.rightMargin: 8
+        anchors.bottomMargin: -2
+        height: 8
+        radius: Theme.radiusMd
+        color: Theme.surfaceContainerHigh
+        border.width: 1
+        border.color: Theme.outlineVariant
+        opacity: 0.65
+    }
+
+    // A calm highlighted container for Live Updates.
     Rectangle {
         anchors.fill: parent
         radius: Theme.radiusMd
-        color: item.isLive
-            ? (Theme.graphite
-               ? Qt.rgba(Theme.surfaceContent.r, Theme.surfaceContent.g, Theme.surfaceContent.b, hover.hovered ? 0.065 : 0.03)
-               : Qt.rgba(Theme.primaryContainer.r, Theme.primaryContainer.g, Theme.primaryContainer.b,
-                         hover.hovered ? (Theme.dark ? 0.36 : 0.52) : (Theme.dark ? 0.24 : 0.36)))
-            : Theme.surfaceContent
-        opacity: item.isLive ? 1 : (hover.hovered ? 0.045 : 0)
+        visible: item.isLive
+        color: Theme.graphite
+            ? Qt.rgba(Theme.surfaceContent.r, Theme.surfaceContent.g, Theme.surfaceContent.b, 0.03)
+            : Qt.rgba(Theme.primaryContainer.r, Theme.primaryContainer.g, Theme.primaryContainer.b,
+                      Theme.dark ? 0.24 : 0.36)
         border.width: item.isLive ? 1 : 0
         border.color: Theme.graphite
             ? Theme.outlineVariant
             : Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, Theme.dark ? 0.34 : 0.24)
-        Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
     }
 
     Rectangle {
@@ -176,11 +215,23 @@ Item {
         visible: Theme.focusVisible(item)
     }
 
+    // Subtle vertical thread bar connecting expanded notifications in the same app group.
+    Rectangle {
+        visible: item.isGroupChild
+        x: 27
+        y: 0
+        width: 2
+        height: parent.height
+        radius: 1
+        color: Theme.outlineVariant
+        opacity: 0.45
+    }
+
     // App icon, or its initial when the phone didn't send one.
     Item {
         id: icon
-        x: 12; y: 12
-        width: 32; height: 32
+        x: item.isGroupChild ? 20 : 12; y: 12
+        width: item.isGroupChild ? 24 : 32; height: item.isGroupChild ? 24 : 32
         Image {
             id: image
             anchors.fill: parent
@@ -250,9 +301,32 @@ Item {
                     }
                 }
 
+                // Calm count badge for grouped app notifications.
+                Rectangle {
+                    id: groupCountBadge
+                    visible: item.isGroupLead
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 18
+                    width: groupCountLabel.width + 12
+                    radius: Theme.graphite ? Theme.radiusSm : 9
+                    color: Theme.graphite ? "transparent" : Theme.surfaceContainerHighest
+                    border.width: Theme.graphite ? 1 : 0
+                    border.color: Theme.outlineVariant
+                    Txt {
+                        id: groupCountLabel
+                        anchors.centerIn: parent
+                        role: "mono"
+                        size: 10
+                        weight: Font.DemiBold
+                        color: Theme.surfaceContentVariant
+                        text: String(item.groupCount)
+                    }
+                }
+
                 Txt {
                     anchors.verticalCenter: parent.verticalCenter
                     width: Math.max(40, content.width - (livePill.visible ? livePill.width + 6 : 0)
+                                        - (groupCountBadge.visible ? groupCountBadge.width + 6 : 0)
                                         - (liveReadout.visible ? liveReadout.width + 8 : 0))
                     role: "caption"
                     muted: true
@@ -402,6 +476,13 @@ Item {
             visible: item.imageUrl.length > 0 && status === Image.Ready
             source: item.imageUrl
             sourceSize.width: 640
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
+            TapHandler {
+                onTapped: {
+                    if (item.imageUrl.length > 0)
+                        item.imageClicked(item.imageUrl)
+                }
+            }
         }
 
         // Replies sent from this PC.
@@ -509,6 +590,35 @@ Item {
                 onClicked: item.send()
             }
         }
+
+        // Collapsible group bar for apps with 2+ notifications.
+        Row {
+            id: groupBar
+            visible: item.isGroupLead
+            width: parent.width
+            spacing: 8
+            topPadding: 2
+
+            Button {
+                id: toggleGroupBtn
+                variant: "tonal"
+                size: "sm"
+                iconPath: item.groupExpanded ? Icons.chevronUp : Icons.chevronDown
+                text: item.groupExpanded
+                      ? qsTr("Show less")
+                      : qsTr("+%1 more").arg(item.groupCount - 1)
+                onClicked: NotificationList.toggleGroup(item.app)
+            }
+
+            Button {
+                id: clearGroupBtn
+                variant: "text"
+                size: "sm"
+                iconPath: Icons.close
+                text: qsTr("Clear %1").arg(item.groupCount)
+                onClicked: NotificationList.dismissGroup(item.deviceId, item.app)
+            }
+        }
     }
 
     IconButton {
@@ -518,7 +628,7 @@ Item {
         label: qsTr("Options for %1").arg(item.appName)
         // Like Dismiss: always there (for keyboards and screen readers),
         // quiet until hovered.
-        opacity: hover.hovered || activeFocus ? 1 : 0.55
+        opacity: hover.containsMouse || activeFocus ? 1 : 0.55
         Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
         onClicked: item.optionsRequested()
     }
@@ -528,10 +638,17 @@ Item {
         anchors.rightMargin: 8
         y: 8
         iconPath: Icons.close
-        label: qsTr("Dismiss")
+        label: item.isGroupLead && !item.groupExpanded
+               ? qsTr("Dismiss %1 notifications from %2").arg(item.groupCount).arg(item.appName)
+               : qsTr("Dismiss")
         // Always there (for keyboards and screen readers), quiet until hovered.
-        opacity: hover.hovered || activeFocus ? 1 : 0.55
+        opacity: hover.containsMouse || activeFocus ? 1 : 0.55
         Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
-        onClicked: NotificationList.dismiss(item.deviceId, item.key)
+        onClicked: {
+            if (item.isGroupLead && !item.groupExpanded)
+                NotificationList.dismissGroup(item.deviceId, item.app)
+            else
+                NotificationList.dismiss(item.deviceId, item.key)
+        }
     }
 }

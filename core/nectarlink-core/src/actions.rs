@@ -79,12 +79,12 @@ pub(crate) struct CurrentWakeInfo(Mutex<Option<PcWakeInfo>>);
 impl CurrentWakeInfo {
     pub(crate) fn set(&self, info: PcWakeInfo) -> PcWakeInfo {
         let clean = info.sanitized();
-        *self.0.lock().unwrap() = Some(clean.clone());
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(clean.clone());
         clean
     }
 
     pub(crate) fn get(&self) -> Option<PcWakeInfo> {
-        self.0.lock().unwrap().clone()
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
@@ -220,35 +220,88 @@ pub(crate) async fn pc_power(shared: &Arc<Shared>, session: &Session, action: Po
     Ok(())
 }
 
-fn link_detail(url: &str) -> String {
-    if let Some(h) = crate::handoff::extract_handoff_link(url) {
-        return h.label;
-    }
-    url.split("://").nth(1).unwrap_or(url).split(['/', '?', '#']).next().unwrap_or("").to_owned()
+pub(crate) fn is_transient_send_error(err: &Error) -> bool {
+    matches!(err, Error::Offline | Error::Network(_) | Error::Timeout)
 }
 
-pub(crate) async fn open_link(shared: &Arc<Shared>, session: &Session, url: String) -> Result<()> {
+pub(crate) async fn open_link_on_session(
+    shared: &Arc<Shared>,
+    session: &Session,
+    url: String,
+    title_override: Option<String>,
+) -> Result<()> {
     if !valid_link(&url) {
         return Err(Error::Internal("not a web or map link".into()));
     }
     if !shared.offers(&session.peer, LINKS)? {
         return Err(Error::Unsupported);
     }
-    let env = Envelope::new(types::LINK_OPEN, &LinkOpen { url: url.clone() })?;
+    let media_title = title_override.or_else(|| {
+        let is_video = crate::handoff::extract_handoff_link(&url)
+            .is_some_and(|h| h.kind == crate::handoff::HandoffKind::VideoLink);
+        if is_video { shared.players.active_title() } else { None }
+    });
+    let env = Envelope::new(types::LINK_OPEN, &LinkOpen { url: url.clone(), title: media_title.clone() })?;
     session.request(env, crate::session::REQUEST_TIMEOUT).await?.expect(types::OK)?;
+    let (title, detail) = crate::handoff::timeline_link_title_and_detail(&url, media_title.as_deref());
     let _ = shared.record_timeline(crate::timeline::NewTimelineEntry {
         kind: crate::TimelineKind::Link,
         device_id: session.peer,
         device_name: shared.peer_name(&session.peer),
         incoming: false,
         timestamp: crate::now_unix(),
-        title: url.clone(),
-        detail: link_detail(&url),
+        title,
+        detail,
         target: url,
         size_bytes: 0,
         duration_secs: 0,
         ref_id: None,
     });
+    Ok(())
+}
+
+pub(crate) async fn open_link(shared: &Arc<Shared>, peer: DeviceId, url: String) -> Result<()> {
+    if !valid_link(&url) {
+        return Err(Error::Internal("not a web or map link".into()));
+    }
+    if !shared.store.is_paired(&peer)? {
+        return Err(Error::NotPaired);
+    }
+    if !shared.offers(&peer, LINKS)? {
+        return Err(Error::Unsupported);
+    }
+    let is_video = crate::handoff::extract_handoff_link(&url)
+        .is_some_and(|h| h.kind == crate::handoff::HandoffKind::VideoLink);
+    let media_title = if is_video { shared.players.active_title() } else { None };
+
+    if !shared.store.has_active_queue_for_peer(&peer).unwrap_or(false)
+        && let Some(session) = shared.session(&peer)
+    {
+        match open_link_on_session(shared, &session, url.clone(), media_title.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(e) if !is_transient_send_error(&e) => return Err(e),
+            Err(_) => {}
+        }
+    }
+
+    let id = crate::transfer::new_id();
+    let payload = crate::QueuePayload::Link { url, title: media_title };
+    shared.store.enqueue_send_item(&id, &peer, &payload, None, crate::now_unix_ms())?;
+    shared.emit(crate::NodeEvent::QueueChanged);
+    shared.queue_notify.notify_waiters();
+    Ok(())
+}
+
+pub(crate) async fn task_notify_on_session(
+    shared: &Arc<Shared>,
+    session: &Session,
+    clean: &TaskNotify,
+) -> Result<()> {
+    if !shared.offers(&session.peer, TASK_NOTIFY)? {
+        return Err(Error::Unsupported);
+    }
+    let env = Envelope::new(types::TASK_NOTIFY, clean)?;
+    session.request(env, crate::session::REQUEST_TIMEOUT).await?.expect(types::OK)?;
     Ok(())
 }
 
@@ -266,14 +319,25 @@ pub(crate) async fn task_notify(
         if shared.store.get_peer(&id)?.is_none() {
             return Err(Error::NotPaired);
         }
-        let Some(session) = shared.session(&id) else {
-            return if clean.active { Ok(()) } else { Err(Error::Offline) };
-        };
-        if !shared.offers(&session.peer, TASK_NOTIFY)? {
+        if !shared.offers(&id, TASK_NOTIFY)? {
             return Err(Error::Unsupported);
         }
-        let env = Envelope::new(types::TASK_NOTIFY, &clean)?;
-        session.request(env, crate::session::REQUEST_TIMEOUT).await?.expect(types::OK)?;
+        let has_queue = shared.store.has_active_queue_for_peer(&id).unwrap_or(false);
+        if !has_queue && let Some(session) = shared.session(&id) {
+            match task_notify_on_session(shared, &session, &clean).await {
+                Ok(()) => return Ok(()),
+                Err(e) if !is_transient_send_error(&e) => return Err(e),
+                Err(_) => {}
+            }
+        }
+        if clean.active && !has_queue {
+            return Ok(());
+        }
+        let qid = crate::transfer::new_id();
+        let payload = crate::QueuePayload::TaskNotify { task: clean };
+        shared.store.enqueue_send_item(&qid, &id, &payload, None, crate::now_unix_ms())?;
+        shared.emit(crate::NodeEvent::QueueChanged);
+        shared.queue_notify.notify_waiters();
         return Ok(());
     }
 
@@ -282,23 +346,54 @@ pub(crate) async fn task_notify(
         .into_iter()
         .filter(|s| shared.offers(&s.peer, TASK_NOTIFY).unwrap_or(false))
         .collect();
-    if targets.is_empty() {
-        return if clean.active { Ok(()) } else { Err(Error::Offline) };
-    }
-    let mut last_err = None;
-    let mut any_ok = false;
-    for session in targets {
-        let env = Envelope::new(types::TASK_NOTIFY, &clean)?;
-        match session
-            .request(env, crate::session::REQUEST_TIMEOUT)
-            .await
-            .and_then(|r| Ok(r.expect(types::OK)?))
+    if !targets.is_empty() {
+        let mut last_err = None;
+        let mut any_ok = false;
+        for session in targets {
+            if shared.store.has_active_queue_for_peer(&session.peer).unwrap_or(false) {
+                let qid = crate::transfer::new_id();
+                let payload = crate::QueuePayload::TaskNotify { task: clean.clone() };
+                let _ =
+                    shared.store.enqueue_send_item(&qid, &session.peer, &payload, None, crate::now_unix_ms());
+                shared.emit(crate::NodeEvent::QueueChanged);
+                shared.queue_notify.notify_waiters();
+                any_ok = true;
+                continue;
+            }
+            match task_notify_on_session(shared, &session, &clean).await {
+                Ok(()) => any_ok = true,
+                Err(e) => last_err = Some(e),
+            }
+        }
+        if any_ok {
+            return Ok(());
+        }
+        if let Some(e) = last_err
+            && !is_transient_send_error(&e)
         {
-            Ok(()) => any_ok = true,
-            Err(e) => last_err = Some(e),
+            return Err(e);
         }
     }
-    if any_ok { Ok(()) } else { Err(last_err.unwrap_or(Error::Offline)) }
+    if clean.active {
+        return Ok(());
+    }
+    let peers = shared.store.list_peers()?;
+    let mut enqueued_any = false;
+    for p in peers {
+        if p.caps.contains(TASK_NOTIFY) {
+            let qid = crate::transfer::new_id();
+            let payload = crate::QueuePayload::TaskNotify { task: clean.clone() };
+            shared.store.enqueue_send_item(&qid, &p.id, &payload, None, crate::now_unix_ms())?;
+            enqueued_any = true;
+        }
+    }
+    if enqueued_any {
+        shared.emit(crate::NodeEvent::QueueChanged);
+        shared.queue_notify.notify_waiters();
+        Ok(())
+    } else {
+        Err(Error::Offline)
+    }
 }
 
 /// Handles `pc.power`, `pc.wake_info`, `link.open`, and `task.notify`. Returns false for other types.
@@ -352,7 +447,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
             }
         }
         types::LINK_OPEN => {
-            let LinkOpen { url } = env.body()?;
+            let LinkOpen { url, title: sender_title } = env.body()?;
             if !valid_link(&url) {
                 Envelope::error(ErrorCode::BadMessage, "not a web link")
             } else {
@@ -363,14 +458,16 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
                     .unwrap_or_else(|e| Err(e.to_string()))
                 {
                     Ok(()) => {
+                        let (title, detail) =
+                            crate::handoff::timeline_link_title_and_detail(&url, sender_title.as_deref());
                         let _ = shared.record_timeline(crate::timeline::NewTimelineEntry {
                             kind: crate::TimelineKind::Link,
                             device_id: peer,
                             device_name: shared.peer_name(&peer),
                             incoming: true,
                             timestamp: crate::now_unix(),
-                            title: url.clone(),
-                            detail: link_detail(&url),
+                            title,
+                            detail,
                             target: url,
                             size_bytes: 0,
                             duration_secs: 0,

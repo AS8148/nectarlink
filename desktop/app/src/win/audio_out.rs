@@ -123,8 +123,15 @@ impl Jitter {
         let mut n = 0;
         if !self.waiting {
             n = out.len().min(self.bytes.len()) / self.frame * self.frame;
-            for (o, b) in out[..n].iter_mut().zip(self.bytes.drain(..n)) {
-                *o = b;
+            if n > 0 {
+                let (s1, s2) = self.bytes.as_slices();
+                let first = s1.len().min(n);
+                out[..first].copy_from_slice(&s1[..first]);
+                if first < n {
+                    let second = n - first;
+                    out[first..n].copy_from_slice(&s2[..second]);
+                }
+                self.bytes.drain(..n);
             }
             if n < out.len() {
                 // Ran dry: gather again before playing on.

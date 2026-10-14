@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+@androidx.compose.runtime.Immutable
 data class WebcamSession(
     val active: Boolean = false,
     val connecting: Boolean = false,

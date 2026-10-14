@@ -29,6 +29,8 @@
     <string name="home_title">Home</string>
     <string name="link_online">Connected</string>
     <string name="link_online_rtt">Connected · %1$d ms</string>
+    <string name="link_usb">On USB</string>
+    <string name="link_usb_rtt">On USB · %1$d ms</string>
     <string name="link_away">Connected while away</string>
     <string name="link_connecting">Connecting…</string>
     <string name="link_offline_seen">Offline · seen %1$s</string>
@@ -68,11 +70,11 @@
     <string name="action_send_files">Send files</string>
     <string name="action_send_folder">Send a folder</string>
     <string name="input_service_label">Nectarlink: control from your PC</string>
-    <string name="input_service_description">Lets you use your PC\'s mouse and keyboard on this phone while its screen is shown on the PC: clicks become taps, drags swipes, and typing goes into the text field you\'re in. Nectarlink uses it only while you share your screen with a paired PC, and reads nothing else.</string>
+    <string name="input_service_description">Lets your PC\'s mouse and keyboard tap, swipe and type on this phone while you share its screen with a paired PC. It reads nothing else.</string>
     <string name="settings_control">Control from your PC</string>
     <string name="control_title">Use your PC\'s mouse and keyboard</string>
     <string name="control_on">On: while your screen is shown on your PC, you can tap, swipe and type from there.</string>
-    <string name="control_off">While your screen is shown on your PC, tap, swipe and type from there. Turn on Nectarlink in Accessibility.</string>
+    <string name="control_off">Tap, swipe and type from your PC while it shows this screen. Turn on Nectarlink in Accessibility.</string>
     <string name="dnd_access_title">Do Not Disturb and silent mode</string>
     <string name="dnd_access_on">On: your PC can turn Do Not Disturb on or off and set the ringer to silent.</string>
     <string name="dnd_access_off">Let your PC turn Do Not Disturb on or off and set the ringer to silent.</string>
@@ -83,8 +85,8 @@
     <string name="local_network_text">Android asks before an app talks to devices on your network. Nectarlink needs it to reach your PC.</string>
     <string name="channel_elevated">Wireless debugging setup</string>
     <string name="elevated_title">Real touch and keys (Wireless debugging)</string>
-    <string name="elevated_not_set_up">Drag in real time, use every key, and mute, hold or use the keypad on calls from a PC. Uses the phone\'s own Wireless debugging; nothing else to install.</string>
-    <string name="elevated_waiting">Set up. Waiting for Wireless debugging: turn it on in Developer options (Nectarlink turns it on by itself after the first time).</string>
+    <string name="elevated_not_set_up">Real-time touch, every key, and mute, hold and keypad on calls from your PC. Uses Android\'s own Wireless debugging.</string>
+    <string name="elevated_waiting">Waiting for Wireless debugging. Turn it on in Developer options.</string>
     <string name="elevated_starting">Starting…</string>
     <string name="elevated_running">On: your PC\'s mouse and keyboard work like a real touchscreen and keyboard.</string>
     <string name="elevated_failed">Couldn\'t start it. Check that Wireless debugging is on, then try again.</string>
@@ -93,7 +95,7 @@
     <string name="elevated_turn_off">Turn off</string>
     <string name="elevated_try_again">Try again</string>
     <string name="elevated_steps_title">Set up Wireless debugging</string>
-    <string name="elevated_steps">1. Turn on Developer options: in Settings › About phone, tap Build number 7 times.\n2. In Developer options, turn on Wireless debugging (on Wi-Fi), open it and tap Pair device with pairing code.\n3. Type the 6-digit code into Nectarlink\'s notification, without closing the code.</string>
+    <string name="elevated_steps">One-time codes in notifications Android hides as sensitive also reach your PC.\n\n1. Turn on Developer options: in Settings › About phone, tap Build number 7 times.\n2. In Developer options, turn on Wireless debugging (on Wi-Fi), open it and tap Pair device with pairing code.\n3. Type the 6-digit code into Nectarlink\'s notification, without closing the code.</string>
     <string name="elevated_open_developer">Open Developer options</string>
     <string name="elevated_pair_title">Pair Nectarlink with Wireless debugging</string>
     <string name="elevated_pair_text">In Wireless debugging, tap Pair device with pairing code, then type the code here.</string>
@@ -117,30 +119,34 @@
     <string name="settings_calls_and_contacts">Calls, contacts and messages</string>
     <string name="sms_title">Text from your PC</string>
     <string name="sms_on">On. Conversations appear on your PC, where you can read and send texts.</string>
-    <string name="sms_off">Read your conversations and send texts from your PC. Nectarlink needs access to your messages and contacts for that.</string>
+    <string name="sms_off">Read and send texts from your PC. Needs access to messages and contacts.</string>
     <string name="calls_title">Calls on your PC</string>
-    <string name="calls_on">On. Recent calls and incoming calls appear on your PC, and you can start or answer calls from there.</string>
-    <string name="calls_off">See who’s calling, browse recent calls, and start or answer calls from your PC. The call itself stays on your phone. Nectarlink needs access to calls, call history, and contacts for that.</string>
+    <string name="calls_on">On. Your PC shows incoming and recent calls, and can start or answer calls.</string>
+    <string name="calls_off">See who\'s calling and start or answer calls from your PC. Audio stays on the phone. Needs access to calls, call history and contacts.</string>
     <string name="contacts_title">Contacts on your PC</string>
     <string name="contacts_on">On. Your contacts are available in Calls and Messages on your PC.</string>
-    <string name="contacts_off">Search your contacts and start a call or text from your PC. Nectarlink needs access to your contacts for that.</string>
+    <string name="contacts_off">Search contacts and call or text from your PC. Needs access to contacts.</string>
     <string name="settings_photos">Photos and videos</string>
     <string name="photos_title">Photos and videos on your PC</string>
     <string name="photos_on">On. Your photos, screenshots and videos are available on your PC.</string>
-    <string name="photos_partial">Some of your photos and videos aren\'t available on your PC. Allow all of them to browse your whole gallery there.</string>
-    <string name="photos_off">Browse your photos, screenshots and videos on your PC, and get new screenshots right away. Nectarlink needs access to your photos and videos for that.</string>
+    <string name="photos_partial">Only some photos are shared. Allow all to browse your whole gallery on your PC.</string>
+    <string name="photos_off">Browse photos and videos on your PC and get new screenshots right away. Needs access to photos and videos.</string>
     <string name="action_select_photos">Allow all</string>
     <string name="transfer_too_many">That folder has too many files to send at once.</string>
     <string name="transfers_title">Transfers</string>
     <string name="transfer_sending">Sending to %1$s</string>
     <string name="transfer_receiving">Receiving from %1$s</string>
     <string name="transfer_waiting">Waiting for %1$s</string>
+    <string name="transfer_pause">Pause</string>
+    <string name="transfer_resume">Resume</string>
+    <string name="transfer_paused_progress">Paused · %1$s / %2$s</string>
     <string name="transfer_received_from">From %1$s · in Download/Nectarlink</string>
     <string name="transfer_sent_to">Sent to %1$s</string>
     <string name="transfer_cancelled">Cancelled</string>
     <string name="transfer_denied">%1$s doesn’t accept files from this phone.</string>
     <string name="transfer_unreachable">Couldn’t reach %1$s.</string>
     <string name="transfer_no_space">There isn’t enough space.</string>
+    <string name="transfer_failed_integrity">File failed integrity check; partial file kept to resume</string>
     <string name="transfer_failed">The transfer didn’t go through.</string>
     <string name="transfer_nothing">Those files can’t be opened.</string>
     <string name="transfer_off_for">Files are turned off for %1$s.</string>
@@ -160,7 +166,7 @@
     <string name="clipboard_history_title">Clipboard history</string>
     <string name="clipboard_history_subtitle">Your last 50 clips with your PCs, kept encrypted on this phone.</string>
     <string name="clipboard_history_just_now">just now</string>
-    <string name="clipboard_history_empty">Nothing here yet. Text and images copied between this phone and your PCs show up here.</string>
+    <string name="clipboard_history_empty">Nothing yet. Clips shared with your PCs appear here.</string>
     <string name="clipboard_history_search">Search clipboard history</string>
     <string name="clipboard_history_no_match">Nothing matches “%1$s”.</string>
     <string name="clipboard_history_from">From %1$s</string>
@@ -176,9 +182,9 @@
     <string name="clipboard_history_done">Done</string>
     <string name="settings_clipboard_title">Clipboard</string>
     <string name="settings_clipboard_suggestions">Suggest actions for copied text</string>
-    <string name="settings_clipboard_suggestions_hint">Offer to open links, look up addresses in Maps, call numbers, track parcels, or compose emails when text arrives from your PC.</string>
+    <string name="settings_clipboard_suggestions_hint">Suggest actions for text from your PC: open links, maps, calls, parcels and email.</string>
     <string name="settings_clipboard_history">Keep clipboard history</string>
-    <string name="settings_clipboard_history_hint">Keep the last 50 text and image clips shared with your PCs, encrypted on this phone. Passwords and one-time codes are never saved.</string>
+    <string name="settings_clipboard_history_hint">Keeps the last 50 clips, encrypted on this phone. Passwords and one-time codes are never saved.</string>
     <string name="clip_received_from">Copied from %1$s</string>
     <string name="clip_action_open">Open</string>
     <string name="clip_action_maps">Open in Maps</string>
@@ -186,7 +192,17 @@
     <string name="clip_action_track">Track</string>
     <string name="clip_action_email">Email</string>
     <string name="background_title">Stay reachable in the background</string>
-    <string name="background_text">Your phone pauses Nectarlink to save battery, so your PC can’t reach it, and replies and dismissals from the PC time out. Let it run in the background.</string>
+    <string name="background_text">Android is pausing Nectarlink to save battery, so your PC can\'t reach it. Let it run in the background.</string>
+    <string name="background_on">Allowed to stay connected in the background</string>
+    <string name="settings_background_title">Background &amp; battery</string>
+    <string name="battery_open_oem_settings">Battery settings</string>
+    <string name="battery_guide_samsung">On Samsung: open App info › Battery › select Unrestricted, and in Device care › Battery › Background usage limits make sure Nectarlink is never put to sleep.</string>
+    <string name="battery_guide_xiaomi">On Xiaomi / HyperOS / MIUI: turn on Autostart for Nectarlink, and in App info › Battery saver select No restrictions.</string>
+    <string name="battery_guide_oneplus">On OnePlus / OxygenOS: open App info › Battery usage › turn on Allow background activity and Allow auto-launch.</string>
+    <string name="battery_guide_oppo_realme">On Oppo / Realme: open App info › Battery usage › turn on Allow background activity and Allow auto-launch.</string>
+    <string name="battery_guide_vivo">On Vivo / Funtouch / OriginOS: open App info › Battery › select Unrestricted (High background power usage) and allow Autostart.</string>
+    <string name="battery_guide_huawei">On Huawei / Honor: open App launch (Phone Manager) › turn off Manage automatically for Nectarlink and keep Auto-launch, Secondary launch, and Run in background on.</string>
+    <string name="battery_guide_pixel">On Pixel: open App info › App battery usage › tap Allow background usage and select Unrestricted.</string>
     <string name="action_manage">Manage</string>
     <string name="action_app_info">App info</string>
     <string name="theme_bloom">Bloom</string>
@@ -277,7 +293,7 @@
     <string name="remote_mode_presentation">Presentation</string>
     <string name="remote_touchpad_hint">Drag to move · Tap to click · Two fingers to right-click or scroll · Double-tap and hold to drag</string>
     <string name="remote_air_hold">Hold to aim at %1$s</string>
-    <string name="remote_air_active">Moving on %1$s — tilt phone or tap to click</string>
+    <string name="remote_air_active">Moving on %1$s · tilt phone or tap to click</string>
     <string name="remote_air_hint">Hold the pad and tilt your phone to move the pointer · Tap the pad to click · Release to stop</string>
     <string name="remote_air_no_gyro_title">No gyroscope on this phone</string>
     <string name="remote_air_no_gyro_text">Air mouse uses a gyroscope to follow how you tilt the phone. Use Touchpad mode instead.</string>
@@ -306,10 +322,24 @@
     <string name="remote_slide_stop">End show</string>
     <string name="remote_slide_black">Black screen</string>
     <string name="remote_laser_hold">Hold for laser pointer</string>
-    <string name="remote_laser_active">Laser on %1$s — tilt phone or drag here</string>
+    <string name="remote_laser_active">Laser on %1$s · tilt phone or drag here</string>
     <string name="remote_volume_hint">Volume buttons also change slides while this screen is open.</string>
+    <string name="remote_mode_screen">Screen</string>
+    <string name="pc_mirror_connecting">Connecting to %1$s…</string>
+    <string name="pc_mirror_fullscreen">Full screen</string>
+    <string name="pc_mirror_exit_fullscreen">Exit full screen</string>
+    <string name="pc_mirror_right_click">Right click</string>
+    <string name="pc_mirror_task_view">Task View</string>
+    <string name="pc_mirror_keyboard">Keyboard</string>
+    <string name="pc_mirror_hide_keyboard">Hide keys</string>
+    <string name="pc_mirror_send_text">Send</string>
+    <string name="pc_mirror_backspace">Backspace</string>
+    <string name="pc_mirror_quality_720p">720p</string>
+    <string name="pc_mirror_quality_1080p">1080p</string>
+    <string name="pc_mirror_quality_desc">Stream quality: %1$s</string>
+    <string name="pc_mirror_viewport_desc">%1$s screen</string>
 
-    <!-- Voice recorder -> PC -->
+    <!-- Voice recorder to PC -->
     <string name="action_record_pc">Record</string>
     <string name="channel_recorder">Voice recorder</string>
     <string name="recorder_notification_recording">Recording for %1$s</string>
@@ -337,8 +367,9 @@
         <item quantity="other">%1$d markers</item>
     </plurals>
 
-    <!-- Deck (macro pad -> PC) -->
+    <!-- Deck (macro pad to PC) -->
     <string name="action_deck_pc">Deck</string>
+    <string name="action_desk_pc">Desk clock</string>
     <string name="deck_title">Deck</string>
     <string name="deck_fullscreen">Full screen</string>
     <string name="deck_exit_fullscreen">Exit full screen</string>
@@ -361,23 +392,26 @@
     <string name="pc_audio_outputs_title">Audio outputs on %1$s</string>
     <string name="pc_audio_default_badge">Default</string>
     <string name="pc_audio_outputs_hint">Active playback devices on %1$s.</string>
+    <string name="pc_audio_use_phone_speaker">Use phone as speaker</string>
+    <string name="pc_audio_use_phone_speaker_sub">Play PC audio on this phone</string>
+    <string name="pc_audio_use_phone_speaker_on">Streaming PC audio to this phone</string>
 
     <!-- Phone storage in File Explorer -->
     <string name="settings_storage">Storage in File Explorer</string>
     <string name="storage_all_files_title">All files access</string>
-    <string name="storage_all_files_on">On. Paired PCs you allow can browse this phone’s shared storage in File Explorer, open files on demand, and copy files in or out.</string>
-    <string name="storage_all_files_off">Browse this phone’s folders in File Explorer on your PC, open files on demand, and copy files in or out. Because Google Play restricts full storage access, Nectarlink is distributed directly and asks for All files access only when you turn this on — or you can pick specific folders below instead.</string>
+    <string name="storage_all_files_on">On. PCs you allow can browse, open and copy this phone\'s files in File Explorer.</string>
+    <string name="storage_all_files_off">Browse this phone\'s folders in File Explorer on your PC. Needs All files access, or pick specific folders below.</string>
     <string name="storage_saf_title">Selected folders only</string>
-    <string name="storage_saf_hint">Share only folders you pick with Android’s folder picker instead of your whole storage.</string>
+    <string name="storage_saf_hint">Share only the folders you pick.</string>
     <string name="storage_add_folder">Add folder</string>
     <string name="storage_remove_folder">Remove</string>
     <string name="storage_pc_toggle">Browse this phone’s storage in File Explorer</string>
-    <string name="storage_pc_toggle_hint">Off by default. Lets this PC list, open, upload, rename and delete files in your shared storage.</string>
+    <string name="storage_pc_toggle_hint">Off by default. Lets this PC list, open, upload, rename and delete your shared files.</string>
     <string name="storage_request_title">%1$s wants to browse this phone’s storage</string>
     <string name="storage_request_text">Allow %1$s to browse your shared storage (or selected folders) in File Explorer?</string>
     <string name="action_not_now">Not now</string>
 
-    <!-- Phone as webcam -> PC -->
+    <!-- Phone as webcam to PC -->
     <string name="action_webcam_pc">Webcam</string>
     <string name="channel_webcam">Webcam</string>
     <string name="channel_webcam_requests">Webcam requests</string>
@@ -405,7 +439,7 @@
 
     <!-- Timeline -->
     <string name="timeline_title">Timeline</string>
-    <string name="timeline_subtitle">Local history of files, clips, links, photos, recordings and sessions shared with your PCs.</string>
+    <string name="timeline_subtitle">Files, clips, links, photos and sessions shared with your PCs.</string>
     <string name="timeline_search">Search timeline</string>
     <string name="timeline_empty">Nothing in your timeline yet.</string>
     <string name="timeline_no_match">Nothing matches “%1$s”.</string>
@@ -452,16 +486,16 @@
     <string name="data_photos_subtitle">Photos are read directly from MediaStore on demand; temporary Continuity Camera captures are kept for up to 24 hours</string>
     <string name="data_received_files_title">Received-file history</string>
     <string name="data_received_files_subtitle">Transfer log kept with Timeline (saved files in Downloads are never deleted)</string>
-    <string name="data_clear_everything_hint">Deletes all clipboard history, Timeline, transfer records and temporary caches on this phone. Paired PCs and settings are kept.</string>
+    <string name="data_clear_everything_hint">Deletes clipboard history, Timeline, transfer records and caches. Paired PCs and settings are kept.</string>
     <string name="data_clear_everything_button">Clear everything…</string>
     <string name="data_clear_everything_dialog_title">Clear all local data?</string>
-    <string name="data_clear_everything_dialog_body">This deletes clipboard history, Timeline activity, received-file records, and temporary caches on this phone. Your paired PCs and settings will not be touched.</string>
+    <string name="data_clear_everything_dialog_body">Deletes clipboard history, Timeline, received-file records and caches on this phone. Paired PCs and settings are kept.</string>
     <string name="data_clear_everything_confirm">Clear everything</string>
     <string name="data_cleared_everything_toast">Cleared all local data on this phone.</string>
 
     <!-- LocalSend -->
     <string name="settings_localsend_title">LocalSend</string>
-    <string name="settings_localsend_subtitle">Send files to and receive files from nearby LocalSend devices on your Wi-Fi network. Off by default; incoming files always ask before saving.</string>
+    <string name="settings_localsend_subtitle">Send and receive files with nearby LocalSend devices. Off by default. Incoming files always ask first.</string>
     <string name="localsend_card_title">LocalSend nearby</string>
     <string name="localsend_card_empty">No LocalSend devices found on this Wi-Fi network yet.</string>
     <string name="localsend_nearby_device">Nearby device</string>
@@ -516,6 +550,9 @@
     <string name="settings_seed_lavender">Lavender</string>
     <string name="settings_seed_ocean">Ocean</string>
     <string name="settings_seed_sage">Sage</string>
+    <string name="settings_seed_black">Black</string>
+    <string name="settings_amoled">Pure black (AMOLED)</string>
+    <string name="settings_amoled_hint">True #000000 dark surfaces for OLED screens.</string>
 
     <!-- Deck defaults & accessibility -->
     <string name="deck_tile_with_badge">%1$s, %2$s</string>
@@ -594,5 +631,627 @@
     <string name="widget_pc_lock">Lock PC</string>
     <string name="widget_pc_ringing_toast">Ringing %1$s…</string>
     <string name="widget_pc_waking_toast">Waking %1$s…</string>
+
+    <!-- Companion Device Manager proximity wake -->
+    <string name="companion_wake_title">Wake when PC is nearby (Companion Device)</string>
+    <string name="companion_wake_on">Associated · Android wakes Nectarlink when your PC is nearby</string>
+    <string name="companion_wake_off">Associate your PC so Android wakes Nectarlink when its BLE beacon is in range</string>
+    <string name="companion_wake_associate">Associate</string>
+
+    <!-- Flick to Send sheet -->
+    <string name="flick_send_title">Send to %1$s</string>
+    <string name="flick_send_hint">Flick up to send to %1$s</string>
+    <string name="flick_send_sending">Sending to %1$s…</string>
+    <string name="flick_send_now">Send now</string>
+    <string name="flick_send_undo">Undo</string>
+    <string name="flick_send_files_count">%1$d files ready to send</string>
+    <string name="flick_send_single_file">1 file ready to send</string>
+
+    <!-- PC notifications & Browse PC files -->
+    <string name="channel_pc_notifications">PC notifications</string>
+    <string name="action_browse_pc_files">Browse PC files</string>
+    <string name="pc_files_title">Files on %1$s</string>
+    <string name="pc_files_root">Home</string>
+    <string name="pc_files_up">Up</string>
+    <string name="pc_files_empty">This folder is empty.</string>
+    <string name="pc_files_loading">Loading files…</string>
+    <string name="pc_files_downloading">Downloading %1$s…</string>
+    <string name="pc_files_saved">Saved %1$s to Downloads</string>
+    <string name="pc_files_failed">Couldn’t download %1$s</string>
+    <string name="pc_files_folder_downloads">Downloads</string>
+    <string name="pc_files_folder_documents">Documents</string>
+    <string name="pc_files_folder_desktop">Desktop</string>
+    <string name="pc_files_folder_pictures">Pictures</string>
+
+    <!-- Live streaming banners, remote input setup, collapsible permissions & clipboard privacy -->
+    <string name="mirror_banner_subtitle_control_on">Tap, swipe and type from your PC</string>
+    <string name="mirror_banner_subtitle_audio">Screen and audio · tap Stop anytime</string>
+    <string name="mirror_banner_subtitle">Live screen stream · tap Stop anytime</string>
+    <string name="mirror_allow_pc_control">Allow PC mouse control</string>
+    <string name="action_open_controls">Controls</string>
+    <string name="remote_input_requested_title">Your PC tried to control this phone</string>
+    <string name="remote_input_requested_text">Turn on “Nectarlink: control from your PC” in Accessibility to use your PC\'s mouse and keyboard on this phone.</string>
+    <string name="permissions_setup_title">Permissions &amp; setup (%1$d remaining)</string>
+    <string name="permissions_setup_subtitle">Notifications, calls, texts, photos and background access</string>
+    <string name="clipboard_preview_hidden">••••••••••••</string>
+    <string name="clipboard_preview_reveal">Show</string>
+    <string name="clipboard_preview_hide">Hide</string>
+
+    <!-- Send queue -->
+    <string name="send_queue_title_count">Waiting to send · %1$d</string>
+    <string name="send_queue_cancel_all">Cancel all</string>
+    <string name="send_queue_clear">Clear</string>
+    <string name="send_queue_waiting_for">Waiting for %1$s</string>
+    <string name="send_queue_sending_progress">Sending · %1$d%%</string>
+    <string name="send_queue_sending">Sending…</string>
+    <string name="send_queue_failed_reason">Failed · %1$s</string>
+    <string name="send_queue_expired_reason">Expired · %1$s</string>
+    <string name="send_queue_retry">Retry</string>
+    <string name="send_queue_dismiss">Dismiss</string>
+    <string name="send_queue_offline_toast">%1$s is offline. Will send when it\'s back.</string>
+    <string name="send_queue_undo">Undo</string>
+    <string name="send_queue_full">Send queue is full. Clear or wait for pending items to finish.</string>
+    <string name="send_queue_dropped_unpair">Dropped %1$d queued item(s) for %2$s (device unpaired).</string>
+
+    <!-- Setup Walkthrough -->
+    <string name="walkthrough_step_progress">Step %1$d of %2$d</string>
+    <string name="walkthrough_stage_desc">Honeycomb setup stage, step %1$d of %2$d</string>
+    <string name="walkthrough_action_skip">Skip setup</string>
+    <string name="walkthrough_action_back">Back</string>
+    <string name="walkthrough_action_get_started">Get started</string>
+    <string name="walkthrough_action_continue">Continue</string>
+    <string name="walkthrough_action_pair_later">Pair later</string>
+    <string name="walkthrough_action_done">Done</string>
+    <string name="walkthrough_action_open_guide">Open features guide</string>
+
+    <string name="walkthrough_welcome_title">Link your phone and PC</string>
+    <string name="walkthrough_welcome_subtitle">Notifications, calls, messages, files, clipboard, camera and screen, shared with your Windows 11 PC.</string>
+    <string name="walkthrough_welcome_card_heading">Private by design</string>
+    <string name="walkthrough_welcome_tls_title">End-to-end encrypted (TLS 1.3)</string>
+    <string name="walkthrough_welcome_tls_body">Every connection uses mutually verified device certificates.</string>
+    <string name="walkthrough_welcome_lan_title">Direct over Wi-Fi, Ethernet, or USB</string>
+    <string name="walkthrough_welcome_lan_body">Traffic stays on your network. A relay is used only when Connect over mobile data is on.</string>
+    <string name="walkthrough_welcome_local_title">No account or cloud storage</string>
+    <string name="walkthrough_welcome_local_body">Device keys are protected by Windows DPAPI and the Android Keystore.</string>
+
+    <string name="walkthrough_permissions_title">Permissions</string>
+    <string name="walkthrough_permissions_subtitle">Grant only what you use. Change any permission later in Settings.</string>
+    <string name="walkthrough_permissions_granted_badge">%1$d of %2$d granted</string>
+    <string name="walkthrough_perm_counter">Permission %1$d of %2$d</string>
+    <string name="walkthrough_perm_counter_optional">Permission %1$d of %2$d · Optional</string>
+    <string name="walkthrough_perm_status_granted">Granted</string>
+    <string name="walkthrough_perm_status_not_granted">Not granted</string>
+    <string name="walkthrough_perm_action_grant">Grant</string>
+    <string name="walkthrough_perm_action_manage">Manage</string>
+    <string name="walkthrough_perm_action_next">Next</string>
+    <string name="walkthrough_perm_dot_desc">%1$s, %2$s</string>
+    <string name="walkthrough_perm_pill_number" translatable="false">%1$d</string>
+
+    <string name="walkthrough_perm_notif_title">Notifications</string>
+    <string name="walkthrough_perm_notif_does">See, dismiss, and reply to phone notifications and control media on your PC.</string>
+    <string name="walkthrough_perm_notif_requires">Android requires Notification Access and notification permission.</string>
+    <string name="walkthrough_perm_notif_restricted">On Android 13+, if Notification Access is grayed out, open App info › menu › Allow restricted settings.</string>
+
+    <string name="walkthrough_perm_battery_title">Unrestricted battery</string>
+    <string name="walkthrough_perm_battery_does">Keep your phone reachable when the screen is off.</string>
+    <string name="walkthrough_perm_battery_requires">Keeps the link to your PC active while the phone is locked.</string>
+
+    <string name="walkthrough_perm_calls_title">Calls</string>
+    <string name="walkthrough_perm_calls_does">See incoming calls on your PC and answer, reject, or dial from your desktop.</string>
+    <string name="walkthrough_perm_calls_requires">Android requires Phone and Call log permissions.</string>
+
+    <string name="walkthrough_perm_sms_title">Messages</string>
+    <string name="walkthrough_perm_sms_does">Read and send SMS and MMS messages from your PC with contact names.</string>
+    <string name="walkthrough_perm_sms_requires">Android requires SMS and Contacts permissions.</string>
+
+    <string name="walkthrough_perm_photos_title">Photos</string>
+    <string name="walkthrough_perm_photos_does">Browse recent phone photos on your PC and save originals.</string>
+    <string name="walkthrough_perm_photos_requires">Android requires Photos and videos access.</string>
+
+    <string name="walkthrough_perm_storage_title">Storage in File Explorer</string>
+    <string name="walkthrough_perm_storage_does">Browse your phone folders from your PC in File Explorer.</string>
+    <string name="walkthrough_perm_storage_requires">Android requires All files access or selected folders.</string>
+
+    <string name="walkthrough_perm_access_title">Assist</string>
+    <string name="walkthrough_perm_access_does">Control your mirrored phone screen from your PC with mouse and keyboard.</string>
+    <string name="walkthrough_perm_access_requires">Android requires the Nectarlink Accessibility service or Elevated.</string>
+
+    <string name="walkthrough_pair_title">Pair with your PC</string>
+    <string name="walkthrough_pair_subtitle">Open Nectarlink on your Windows 11 PC. Scan its QR code or pick your PC below.</string>
+    <string name="walkthrough_pair_ready_title">Paired PC</string>
+    <string name="walkthrough_pair_badge_paired">Paired</string>
+    <string name="walkthrough_pair_device_online">%1$s · Connected</string>
+    <string name="walkthrough_pair_device_offline">%1$s · Offline</string>
+    <string name="walkthrough_pair_scan_qr">Scan QR code</string>
+    <string name="walkthrough_pair_hide_qr">Hide QR scanner</string>
+    <string name="walkthrough_pair_nearby_heading">Nearby PCs</string>
+    <string name="walkthrough_pair_nearby_tap">Tap to pair on your local network</string>
+    <string name="walkthrough_pair_usb_title">USB auto-pairing</string>
+    <string name="walkthrough_pair_usb_hint">Connect a USB cable with USB debugging enabled to pair automatically.</string>
+
+    <string name="walkthrough_power_title">Choose your power level</string>
+    <string name="walkthrough_power_subtitle">Pick how much control your Windows 11 PC has over this phone.</string>
+    <string name="walkthrough_power_current_badge">Current: %1$s</string>
+    <string name="walkthrough_power_badge_active">Active</string>
+    <string name="walkthrough_power_badge_available">Available</string>
+    <string name="walkthrough_power_badge_optional">Optional</string>
+    <string name="walkthrough_power_standard_title">Standard</string>
+    <string name="walkthrough_power_standard_sub">Default install</string>
+    <string name="walkthrough_power_standard_desc">Notifications, calls, messages, photos, files, the Send clipboard tile and view-only mirroring.</string>
+    <string name="walkthrough_power_assist_title">Assist</string>
+    <string name="walkthrough_power_assist_sub">Accessibility service</string>
+    <string name="walkthrough_power_assist_desc">Adds mouse and keyboard control from your PC during screen mirroring.</string>
+    <string name="walkthrough_power_assist_manage">Manage</string>
+    <string name="walkthrough_power_assist_open">Turn on</string>
+    <string name="walkthrough_power_elevated_title">Elevated</string>
+    <string name="walkthrough_power_elevated_sub">Wireless debugging</string>
+    <string name="walkthrough_power_elevated_desc">Background clipboard sync, apps in their own PC windows, and low-latency input.</string>
+    <string name="walkthrough_power_elevated_reconnect">Reconnect</string>
+    <string name="walkthrough_power_elevated_enable">Set up</string>
+    <string name="walkthrough_power_elevated_hide_steps">Hide steps</string>
+    <string name="walkthrough_power_elevated_show_steps">Show steps</string>
+    <string name="walkthrough_power_elevated_steps_heading">Wireless debugging setup</string>
+    <string name="walkthrough_power_elevated_step1">1. In Settings › About phone, tap Build number 7 times to turn on Developer options.</string>
+    <string name="walkthrough_power_elevated_step2">2. Tap Set up to open Developer options.</string>
+    <string name="walkthrough_power_elevated_step3">3. Turn on Wireless debugging, tap Pair device with pairing code, and enter the 6-digit code in the notification.</string>
+
+    <string name="walkthrough_done_title">Setup complete</string>
+    <string name="walkthrough_done_subtitle">Nectarlink is ready. Reopen this walkthrough anytime from Settings › About.</string>
+    <string name="walkthrough_done_summary_heading">Your setup</string>
+    <string name="walkthrough_done_paired_label">Paired PC</string>
+    <string name="walkthrough_done_no_pc">None yet · pair anytime on Home</string>
+    <string name="walkthrough_done_power_label">Power level</string>
+    <string name="walkthrough_done_power_elevated">Elevated (Wireless debugging)</string>
+    <string name="walkthrough_done_power_assist">Assist (Accessibility service)</string>
+    <string name="walkthrough_done_power_standard">Standard</string>
+    <string name="walkthrough_done_permissions_label">Permissions</string>
+    <string name="walkthrough_done_no_permissions">None granted yet</string>
+    <string name="walkthrough_done_try_heading">Try first</string>
+    <string name="walkthrough_done_try_1">1. Copy text and tap the Send clipboard tile to paste on your PC.</string>
+    <string name="walkthrough_done_try_2">2. Share any file or link to Nectarlink from Android Share.</string>
+
+    <!-- Features Guide Chrome -->
+    <string name="guide_back">Back</string>
+    <string name="guide_open_walkthrough">Setup walkthrough</string>
+    <string name="guide_title">Features guide</string>
+    <string name="guide_subtitle">Check feature readiness on this phone or jump straight to its controls.</string>
+    <string name="guide_search_placeholder">Search features or permissions</string>
+    <string name="guide_search_desc">Search features</string>
+    <string name="guide_connect_pc_banner">Connect your PC to see which features are ready</string>
+    <string name="guide_empty_title">No matching features</string>
+    <string name="guide_empty_body">Try another keyword or select All.</string>
+    <string name="guide_where_prefix">Where: %1$s</string>
+    <string name="guide_needs_prefix">Needs: %1$s</string>
+    <string name="guide_external_heading">Open from Android</string>
+    <string name="guide_action_show_me">Show me</string>
+    <string name="guide_action_learn_more">Learn more</string>
+    <string name="guide_action_done">Done</string>
+    <string name="guide_sheet_where">Where to find it</string>
+    <string name="guide_sheet_needs">What you need</string>
+    <string name="guide_sheet_steps_phone">On your phone</string>
+    <string name="guide_sheet_steps_pc">On your PC</string>
+    <string name="guide_sheet_options">Options</string>
+    <string name="guide_sheet_privacy">Data and privacy</string>
+    <string name="guide_sheet_limits">Limits</string>
+    <string name="guide_numbered_step">%1$d. %2$s</string>
+
+    <string name="guide_area_all">All</string>
+    <string name="guide_area_notifications_calls">Notifications &amp; Calls</string>
+    <string name="guide_area_messages">Messages</string>
+    <string name="guide_area_clipboard_files">Clipboard &amp; Files</string>
+    <string name="guide_area_mirroring_camera">Mirroring &amp; Camera</string>
+    <string name="guide_area_input_control">Input &amp; Control</string>
+    <string name="guide_area_power_network">Power &amp; Network</string>
+
+    <string name="guide_badge_available">Ready</string>
+    <string name="guide_badge_needs_permission">Needs %1$s</string>
+    <string name="guide_badge_needs_power">Needs %1$s</string>
+    <string name="guide_badge_connect_pc">Connect your PC to check</string>
+
+    <string name="guide_req_notification_access">Notification access</string>
+    <string name="guide_req_unrestricted_battery">Unrestricted battery</string>
+    <string name="guide_req_calls">Phone and Call log</string>
+    <string name="guide_req_sms_contacts">SMS and Contacts</string>
+    <string name="guide_req_photos">Photos</string>
+    <string name="guide_req_storage">All files access</string>
+    <string name="guide_req_dnd">Do Not Disturb access</string>
+    <string name="guide_req_write_settings">Modify system settings</string>
+    <string name="guide_req_elevated">Elevated</string>
+    <string name="guide_req_assist_or_elevated">Assist or Elevated</string>
+
+    <string name="guide_fix_grant">Grant</string>
+    <string name="guide_fix_allow">Allow</string>
+    <string name="guide_fix_enable">Enable</string>
+    <string name="guide_fix_pair">Pair</string>
+
+    <!-- Features Guide Entries -->
+    <!-- 1. Notifications -->
+    <string name="guide_notif_title">Notifications</string>
+    <string name="guide_notif_summary">See phone notifications on your PC, dismiss them, or reply inline.</string>
+    <string name="guide_notif_where">Settings › Permissions › Notifications</string>
+    <string name="guide_notif_needs">Notification access, Notifications toggle on for the PC</string>
+    <string name="guide_notif_need_1">Android Notification Access enabled for Nectarlink.</string>
+    <string name="guide_notif_need_2">On Android 13+, Allow restricted settings enabled in App info if sideloaded.</string>
+    <string name="guide_notif_need_3">Windows 11 PC paired and online.</string>
+    <string name="guide_notif_phone_1">Open Settings › Permissions › Notifications and tap Allow.</string>
+    <string name="guide_notif_phone_2">Turn on Nectarlink in Android Notification Access.</string>
+    <string name="guide_notif_pc_1">View phone notifications in the PC notification center or Nectarlink window.</string>
+    <string name="guide_notif_pc_2">Type a reply on the card and press Send, or dismiss to clear on both devices.</string>
+    <string name="guide_notif_opt_1">Allow / Manage: Opens Android Notification Access settings.</string>
+    <string name="guide_notif_opt_2">Per-PC Notifications toggle: Controls whether a paired PC receives notifications.</string>
+    <string name="guide_notif_privacy">Notifications stream over TLS 1.3 and stay in memory on this phone.</string>
+    <string name="guide_notif_limits">Ongoing system notifications cannot be dismissed remotely.</string>
+
+    <!-- 2. Calls -->
+    <string name="guide_calls_title">Calls</string>
+    <string name="guide_calls_summary">See incoming calls on your PC, answer or reject, and dial numbers from your desktop.</string>
+    <string name="guide_calls_where">Settings › Permissions › Calls, contacts and messages</string>
+    <string name="guide_calls_needs">Phone, Call log, and Contacts permissions</string>
+    <string name="guide_calls_need_1">Phone and Call log permissions granted on Android.</string>
+    <string name="guide_calls_need_2">Contacts permission granted for caller names and photos.</string>
+    <string name="guide_calls_phone_1">Open Settings › Permissions › Calls, contacts and messages and tap Allow.</string>
+    <string name="guide_calls_phone_2">Use the active call notification for Mute, Speaker, and Hang up controls.</string>
+    <string name="guide_calls_pc_1">Answer, reject, or reply with SMS from the incoming call banner on your PC.</string>
+    <string name="guide_calls_pc_2">Open Calls on your PC to browse call history or dial a number.</string>
+    <string name="guide_calls_opt_1">Answer / Reject: Accepts or declines the incoming call on your phone.</string>
+    <string name="guide_calls_opt_2">Mute / Speaker: Toggles phone mic mute or speakerphone during a call.</string>
+    <string name="guide_calls_privacy">Call history is read from Android when your PC connects and never leaves your paired devices.</string>
+    <string name="guide_calls_limits">Call audio stays on your phone or headset. In-call mute and hold from PC require Elevated on Android 12+.</string>
+
+    <!-- 3. Now playing -->
+    <string name="guide_media_title">Now playing</string>
+    <string name="guide_media_summary">Control phone and PC media playback, adjust PC volume, or stream PC audio to your phone speaker.</string>
+    <string name="guide_media_where">Home › Paired PC card › PC audio</string>
+    <string name="guide_media_needs">Notification access for phone media, online paired PC for PC audio</string>
+    <string name="guide_media_need_1">Notification Access on Android to read active media sessions.</string>
+    <string name="guide_media_need_2">Online paired Windows 11 PC.</string>
+    <string name="guide_media_phone_1">On Home, expand PC audio on your paired PC card.</string>
+    <string name="guide_media_phone_2">Adjust the PC volume slider or turn on Use phone as speaker.</string>
+    <string name="guide_media_pc_1">Control phone playback with Play, Pause, Next, and Previous on your PC.</string>
+    <string name="guide_media_opt_1">Use phone as speaker: Streams audio from your PC to your phone with low latency.</string>
+    <string name="guide_media_opt_2">Volume and Mute: Controls the default playback device on your PC.</string>
+    <string name="guide_media_privacy">Media metadata and artwork come from the local media session over TLS 1.3.</string>
+    <string name="guide_media_limits">Live PC audio streaming requires a stable Wi-Fi or USB connection.</string>
+
+    <!-- 4. Messages -->
+    <string name="guide_sms_title">Messages</string>
+    <string name="guide_sms_summary">Read conversation threads, view MMS attachments, and send texts from your PC.</string>
+    <string name="guide_sms_where">Settings › Permissions › Calls, contacts and messages</string>
+    <string name="guide_sms_needs">SMS and Contacts permissions</string>
+    <string name="guide_sms_need_1">SMS permission granted on Android.</string>
+    <string name="guide_sms_need_2">Contacts permission granted for contact names and avatars.</string>
+    <string name="guide_sms_phone_1">Open Settings › Permissions › Calls, contacts and messages and allow Text from your PC and Contacts.</string>
+    <string name="guide_sms_pc_1">Open Messages on your PC to read threads or send SMS and MMS replies.</string>
+    <string name="guide_sms_opt_1">Allow / Manage: Opens Android permission settings for SMS and Contacts.</string>
+    <string name="guide_sms_opt_2">Message cache: Clear staged MMS files in Settings › Features &amp; Data › Data &amp; storage.</string>
+    <string name="guide_sms_privacy">Messages are read from Android telephony on demand.</string>
+    <string name="guide_sms_limits">Sending uses your phone SIM card and carrier plan.</string>
+
+    <!-- 5. Clipboard -->
+    <string name="guide_clip_title">Clipboard</string>
+    <string name="guide_clip_summary">Share copied text and images between phone and PC, and browse the last 50 clips in Clipboard history.</string>
+    <string name="guide_clip_where">Home › Clipboard history (or Settings › Features &amp; Data › Clipboard)</string>
+    <string name="guide_clip_needs">Paired PC; Elevated for automatic background phone-to-PC sync</string>
+    <string name="guide_clip_need_1">PC-to-phone clipboard sync and the Send clipboard tile work out of the box.</string>
+    <string name="guide_clip_need_2">Elevated adds automatic phone-to-PC clipboard sync.</string>
+    <string name="guide_clip_phone_1">Copy text or an image on your phone, then open Nectarlink or tap the Send clipboard tile.</string>
+    <string name="guide_clip_phone_2">Tap Clipboard history on Home to view, pin, copy, or delete recent clips.</string>
+    <string name="guide_clip_pc_1">Copy text or an image on your PC to send it to your phone clipboard.</string>
+    <string name="guide_clip_opt_1">Show / Hide: Masks or reveals the latest clip preview on Home.</string>
+    <string name="guide_clip_opt_2">Pin: Keeps a clip at the top of the 50-item history.</string>
+    <string name="guide_clip_opt_3">Suggest actions for copied text: Offers to open links, maps, or numbers from your PC.</string>
+    <string name="guide_clip_privacy">Clipboard history is encrypted on disk and excludes clips marked sensitive by password managers.</string>
+    <string name="guide_clip_limits">Android 10+ blocks background clipboard reads without Elevated or tapping Send clipboard.</string>
+
+    <!-- 6. Send clipboard -->
+    <string name="guide_tile_title">Send clipboard</string>
+    <string name="guide_tile_summary">Send your phone clipboard to your PC from any app using the Quick Settings tile.</string>
+    <string name="guide_tile_where">Android Quick Settings shade › Send clipboard</string>
+    <string name="guide_tile_needs">Paired PC</string>
+    <string name="guide_tile_ext_1">1. Swipe down twice from the top of your screen to open Quick Settings.</string>
+    <string name="guide_tile_ext_2">2. Tap Edit and drag Send clipboard into your active tiles.</string>
+    <string name="guide_tile_ext_3">3. Copy text in any app, swipe down, and tap Send clipboard.</string>
+    <string name="guide_tile_need_1">At least one paired PC.</string>
+    <string name="guide_tile_phone_1">Add the Send clipboard tile to Quick Settings once, then tap it after copying.</string>
+    <string name="guide_tile_pc_1">Paste on your PC with Ctrl+V.</string>
+    <string name="guide_tile_opt_1">Send clipboard tile: Reads the current phone clipboard once on tap and sends or queues it.</string>
+    <string name="guide_tile_privacy">Reads the clipboard only when tapped. Offline clips queue for up to 24 hours.</string>
+    <string name="guide_tile_limits">Used when Elevated background clipboard sync is not active.</string>
+
+    <!-- 7. Send files -->
+    <string name="guide_files_title">Send files</string>
+    <string name="guide_files_summary">Transfer files or folders between phone and PC over Wi-Fi, Ethernet, or USB with pause and resume.</string>
+    <string name="guide_files_where">Home › Paired PC card › Send files / Send a folder</string>
+    <string name="guide_files_needs">Paired PC</string>
+    <string name="guide_files_need_1">Paired Windows 11 PC (offline files wait in Send queue for up to 7 days).</string>
+    <string name="guide_files_phone_1">On Home, tap Send files or Send a folder on your paired PC card.</string>
+    <string name="guide_files_phone_2">Pause, resume, or cancel active transfers in the Transfers card on Home.</string>
+    <string name="guide_files_pc_1">Drag files onto the Nectarlink window or top-edge island on your PC.</string>
+    <string name="guide_files_opt_1">Send files / Send a folder: Transfers individual files or full folder trees.</string>
+    <string name="guide_files_opt_2">Pause / Resume: Resumes interrupted transfers without re-sending completed bytes.</string>
+    <string name="guide_files_privacy">Files stream over QUIC TLS 1.3 with BLAKE3 integrity verification into Download/Nectarlink.</string>
+    <string name="guide_files_limits">Up to 5,000 files per batch.</string>
+
+    <!-- 8. Send queue -->
+    <string name="guide_queue_title">Send queue</string>
+    <string name="guide_queue_summary">Queue files, links, clips, and recordings while your PC is offline and deliver them when it reconnects.</string>
+    <string name="guide_queue_where">Home › Waiting to send card</string>
+    <string name="guide_queue_needs">Paired PC</string>
+    <string name="guide_queue_need_1">At least one paired PC.</string>
+    <string name="guide_queue_phone_1">Send files, clips, or links to an offline PC; they appear in Waiting to send on Home.</string>
+    <string name="guide_queue_phone_2">Queued items send automatically in order as soon as your PC reconnects.</string>
+    <string name="guide_queue_pc_1">Items queued on your PC while your phone is offline also deliver when reconnected.</string>
+    <string name="guide_queue_opt_1">Retry / Dismiss / Cancel all: Manage individual or all queued items on Home.</string>
+    <string name="guide_queue_privacy">Queued payloads stay in private app storage and are deleted upon delivery or unpairing.</string>
+    <string name="guide_queue_limits">Holds up to 200 items or 10 GiB. Files expire after 7 days; clips and links after 24 hours.</string>
+
+    <!-- 9. Send to PC -->
+    <string name="guide_share_title">Send to PC</string>
+    <string name="guide_share_summary">Share links, text, photos, or documents from any Android app to your PC via the system Share sheet.</string>
+    <string name="guide_share_where">Android Share sheet › Send to PC</string>
+    <string name="guide_share_needs">Paired PC</string>
+    <string name="guide_share_ext_1">1. Tap Share in any browser, gallery, or document app on your phone.</string>
+    <string name="guide_share_ext_2">2. Select Nectarlink (Send to PC or Open on PC).</string>
+    <string name="guide_share_need_1">At least one paired PC.</string>
+    <string name="guide_share_phone_1">Share any link or file from Android Share and pick your target PC.</string>
+    <string name="guide_share_pc_1">Links open in your default PC browser; files save to Downloads.</string>
+    <string name="guide_share_opt_1">Send to PC / Open on PC: Saves files or opens links and safe documents on arrival.</string>
+    <string name="guide_share_privacy">Executables and scripts are never auto-opened on your PC.</string>
+    <string name="guide_share_limits">Only safe document types auto-open; all other files save to Downloads.</string>
+
+    <!-- 10. Storage in File Explorer -->
+    <string name="guide_storage_title">Storage in File Explorer</string>
+    <string name="guide_storage_summary">Browse this phone\'s shared storage or selected folders in Windows File Explorer.</string>
+    <string name="guide_storage_where">Settings › Permissions › Photos and videos (and Settings › Devices)</string>
+    <string name="guide_storage_needs">All files access (or selected folders) and per-PC storage toggle</string>
+    <string name="guide_storage_need_1">All files access or selected folders in Settings › Permissions › Photos and videos.</string>
+    <string name="guide_storage_need_2">Browse this phone\'s storage in File Explorer enabled for the PC in Settings › Devices.</string>
+    <string name="guide_storage_phone_1">Grant All files access or pick folders in Settings › Permissions › Photos and videos.</string>
+    <string name="guide_storage_phone_2">Turn on the storage switch for your PC in Settings › Devices.</string>
+    <string name="guide_storage_pc_1">Open your phone storage from Nectarlink or Windows File Explorer on your PC.</string>
+    <string name="guide_storage_opt_1">All files access / Selected folders only: Share full storage or only picked SAF folders.</string>
+    <string name="guide_storage_privacy">Storage browsing is off by default for every PC until you turn it on.</string>
+    <string name="guide_storage_limits">Android blocks access to private app directories in /Android/data.</string>
+
+    <!-- 11. Browse PC files -->
+    <string name="guide_pc_files_title">Browse PC files</string>
+    <string name="guide_pc_files_summary">Browse folders shared by your PC from your phone and download files to Downloads.</string>
+    <string name="guide_pc_files_where">Home › Paired PC card › Browse PC files</string>
+    <string name="guide_pc_files_needs">Online paired PC with storage sharing enabled</string>
+    <string name="guide_pc_files_need_1">Online paired PC with storage access enabled for this phone.</string>
+    <string name="guide_pc_files_phone_1">On Home, tap Browse PC files on your paired PC card and tap any file to download.</string>
+    <string name="guide_pc_files_pc_1">Allow storage access for this phone in Nectarlink on your PC.</string>
+    <string name="guide_pc_files_opt_1">Browse PC files sheet: Navigate PC folders and download files into Downloads.</string>
+    <string name="guide_pc_files_privacy">Downloaded files save locally in your phone Downloads folder.</string>
+    <string name="guide_pc_files_limits">Requires the paired PC to be online.</string>
+
+    <!-- 12. Photos -->
+    <string name="guide_photos_title">Photos</string>
+    <string name="guide_photos_summary">Browse your phone\'s photos, screenshots, and videos on your PC and save full-resolution originals.</string>
+    <string name="guide_photos_where">Settings › Permissions › Photos and videos</string>
+    <string name="guide_photos_needs">Photos and videos permission</string>
+    <string name="guide_photos_need_1">Photos and videos permission granted on Android.</string>
+    <string name="guide_photos_phone_1">Open Settings › Permissions › Photos and videos and tap Allow.</string>
+    <string name="guide_photos_pc_1">Open Photos on your PC to browse thumbnails and copy or save originals.</string>
+    <string name="guide_photos_opt_1">Allow all: Grants full gallery access when partial photo access is active on Android 14+.</string>
+    <string name="guide_photos_privacy">Thumbnails are generated locally on your phone on demand.</string>
+    <string name="guide_photos_limits">Partial photo access on Android 14+ shows only the photos you selected.</string>
+
+    <!-- 13. Timeline -->
+    <string name="guide_timeline_title">Timeline</string>
+    <string name="guide_timeline_summary">Search a local history of files, clips, links, photos, recordings, and sessions shared with your PCs.</string>
+    <string name="guide_timeline_where">Home › Timeline (and Settings › Features &amp; Data › Data &amp; storage)</string>
+    <string name="guide_timeline_needs">No extra permissions</string>
+    <string name="guide_timeline_need_1">At least one shared item so the Timeline card appears on Home.</string>
+    <string name="guide_timeline_phone_1">Tap Timeline on Home to search, filter by type, or tap Send again on past items.</string>
+    <string name="guide_timeline_pc_1">Open Timeline on your PC to search activity history from your desktop.</string>
+    <string name="guide_timeline_opt_1">Keep timeline items (30d, 90d, 1y, All): Set retention in Settings › Features &amp; Data › Data &amp; storage.</string>
+    <string name="guide_timeline_privacy">Stored only in a local SQLite database on your device.</string>
+    <string name="guide_timeline_limits">Retains up to 5,000 entries locally.</string>
+
+    <!-- 14. LocalSend -->
+    <string name="guide_localsend_title">LocalSend</string>
+    <string name="guide_localsend_summary">Send and receive files with nearby LocalSend devices on the same Wi-Fi network without pairing.</string>
+    <string name="guide_localsend_where">Settings › Features &amp; Data › LocalSend (and Home › LocalSend nearby)</string>
+    <string name="guide_localsend_needs">LocalSend enabled in Settings › Features &amp; Data</string>
+    <string name="guide_localsend_need_1">LocalSend switch turned on in Settings › Features &amp; Data.</string>
+    <string name="guide_localsend_phone_1">Enable LocalSend in Settings › Features &amp; Data, then use the LocalSend nearby card on Home.</string>
+    <string name="guide_localsend_pc_1">Send or accept files with any LocalSend device on the same LAN.</string>
+    <string name="guide_localsend_opt_1">LocalSend switch: Controls LAN multicast discovery on port 53317.</string>
+    <string name="guide_localsend_privacy">Off by default; incoming transfers always ask before saving.</string>
+    <string name="guide_localsend_limits">Works only on the same local network.</string>
+
+    <!-- 15. Screen mirroring -->
+    <string name="guide_mirror_title">Screen mirroring</string>
+    <string name="guide_mirror_summary">Stream your phone screen and internal audio to a window on your PC, or view your PC screen on your phone.</string>
+    <string name="guide_mirror_where">Settings › Permissions › Control from your PC (or Home › Control PC)</string>
+    <string name="guide_mirror_needs">Online paired PC; Assist or Elevated for mouse and keyboard control</string>
+    <string name="guide_mirror_need_1">Online paired Windows 11 PC.</string>
+    <string name="guide_mirror_need_2">Optional: Assist (Accessibility) or Elevated for PC mouse and keyboard input.</string>
+    <string name="guide_mirror_phone_1">Tap Start now on Android\'s capture prompt when mirroring starts from your PC.</string>
+    <string name="guide_mirror_phone_2">Tap Stop on the Home banner anytime to end screen sharing.</string>
+    <string name="guide_mirror_pc_1">Start Screen mirroring on your PC to open a live window of your phone.</string>
+    <string name="guide_mirror_opt_1">Stop: Ends screen capture immediately from Home or the notification.</string>
+    <string name="guide_mirror_privacy">Requires confirmation on your phone unless started via Elevated virtual display.</string>
+    <string name="guide_mirror_limits">Apps with FLAG_SECURE appear black in standard MediaProjection streams.</string>
+
+    <!-- 16. App streams -->
+    <string name="guide_apps_title">App streams</string>
+    <string name="guide_apps_summary">Open individual Android apps in dedicated windows on your PC while your phone screen stays independent.</string>
+    <string name="guide_apps_where">Settings › Permissions › Control from your PC › Real touch and keys (Wireless debugging)</string>
+    <string name="guide_apps_needs">Elevated (Wireless debugging)</string>
+    <string name="guide_apps_need_1">Elevated, set up through Wireless debugging.</string>
+    <string name="guide_apps_need_2">Online paired Windows 11 PC.</string>
+    <string name="guide_apps_phone_1">Set up Wireless debugging in Settings › Permissions › Control from your PC.</string>
+    <string name="guide_apps_pc_1">Open App streams on your PC and click any phone app to launch it in its own window.</string>
+    <string name="guide_apps_opt_1">Close all: Closes all active virtual-display app windows from the Home banner.</string>
+    <string name="guide_apps_privacy">App windows stream over TLS 1.3 from a local virtual display on this phone.</string>
+    <string name="guide_apps_limits">Requires Elevated to create virtual displays on Android.</string>
+
+    <!-- 17. Phone as webcam -->
+    <string name="guide_webcam_title">Phone as webcam</string>
+    <string name="guide_webcam_summary">Stream your phone\'s front or back camera to your PC at up to 4K or 60 fps.</string>
+    <string name="guide_webcam_where">Home › Paired PC card › Webcam</string>
+    <string name="guide_webcam_needs">Camera permission, online paired PC</string>
+    <string name="guide_webcam_need_1">Camera permission on Android and an online paired PC.</string>
+    <string name="guide_webcam_phone_1">On Home, tap Webcam on your paired PC card, choose resolution and lens, and tap Start webcam.</string>
+    <string name="guide_webcam_pc_1">View or record the live camera stream in Nectarlink on your PC.</string>
+    <string name="guide_webcam_opt_1">Flip camera / Torch / Zoom / Resolution (720p, 1080p, 4K): Live camera controls.</string>
+    <string name="guide_webcam_privacy">Never starts silently; shows an ongoing notification while streaming.</string>
+    <string name="guide_webcam_limits">1080p 60 fps and 4K require hardware encoder support and fast Wi-Fi or USB.</string>
+
+    <!-- 18. Continuity camera -->
+    <string name="guide_continuity_title">Continuity camera</string>
+    <string name="guide_continuity_summary">Capture a photo or scan and crop a document with your phone camera directly into your PC.</string>
+    <string name="guide_continuity_where">Requested from your PC › Continuity camera prompt on phone</string>
+    <string name="guide_continuity_needs">Camera permission, online paired PC</string>
+    <string name="guide_continuity_need_1">Camera permission on Android and an online paired PC.</string>
+    <string name="guide_continuity_phone_1">Tap the request notification or banner, take a photo or adjust document corners, and tap Send.</string>
+    <string name="guide_continuity_pc_1">Trigger Take photo or Scan document from Nectarlink on your PC.</string>
+    <string name="guide_continuity_opt_1">Adjust corners / Enhance document: Perspective crop and contrast enhancement for scans.</string>
+    <string name="guide_continuity_privacy">Captures are sent only when you tap Use photo or Send scan.</string>
+    <string name="guide_continuity_limits">Camera requests expire after 2 minutes if not answered.</string>
+
+    <!-- 19. Voice recorder -->
+    <string name="guide_recorder_title">Voice recorder</string>
+    <string name="guide_recorder_summary">Record voice notes with timestamp markers to send to your PC, with automatic offline queuing.</string>
+    <string name="guide_recorder_where">Home › Paired PC card › Record</string>
+    <string name="guide_recorder_needs">Microphone permission, paired PC</string>
+    <string name="guide_recorder_need_1">Microphone permission on Android and a paired PC.</string>
+    <string name="guide_recorder_phone_1">On Home, tap Record on your paired PC card and tap Start recording.</string>
+    <string name="guide_recorder_phone_2">Tap Add marker to bookmark moments; recordings send or queue when finished.</string>
+    <string name="guide_recorder_pc_1">Completed recordings arrive in your PC Downloads folder and Timeline.</string>
+    <string name="guide_recorder_opt_1">Add marker / Send again / Delete: Manage markers and saved recordings.</string>
+    <string name="guide_recorder_privacy">Uses the microphone only while recording; saved in private storage until delivered.</string>
+    <string name="guide_recorder_limits">Offline recordings queue automatically and send when your PC reconnects.</string>
+
+    <!-- 20. Control PC -->
+    <string name="guide_remote_title">Control PC</string>
+    <string name="guide_remote_summary">Use your phone as a touchpad, keyboard, voice dictation mic, air mouse, or presentation remote for your PC.</string>
+    <string name="guide_remote_where">Home › Paired PC card › Control PC</string>
+    <string name="guide_remote_needs">Online paired PC with remote control allowed</string>
+    <string name="guide_remote_need_1">Online paired PC with control allowed for this phone.</string>
+    <string name="guide_remote_phone_1">On Home, tap Control PC on your paired PC card.</string>
+    <string name="guide_remote_phone_2">Switch between Touchpad, Air mouse, Presentation, Keyboard, and Dictate.</string>
+    <string name="guide_remote_pc_1">Approve remote control on your Windows 11 PC when prompted.</string>
+    <string name="guide_remote_opt_1">Touchpad speed: Adjust sensitivity in Settings › Features &amp; Data › Control your PC.</string>
+    <string name="guide_remote_privacy">Input events travel over encrypted QUIC streams to your paired PC.</string>
+    <string name="guide_remote_limits">Air mouse requires a hardware gyroscope on your phone.</string>
+
+    <!-- 21. Assist -->
+    <string name="guide_assist_title">Assist</string>
+    <string name="guide_assist_summary">Let your PC mouse and keyboard tap, swipe, and type on this phone using the Accessibility service.</string>
+    <string name="guide_assist_where">Settings › Permissions › Control from your PC › Use your PC\'s mouse and keyboard</string>
+    <string name="guide_assist_needs">Accessibility service enabled</string>
+    <string name="guide_assist_need_1">Nectarlink Accessibility service enabled in Android Settings.</string>
+    <string name="guide_assist_phone_1">Open Settings › Permissions › Control from your PC and tap Allow under Use your PC\'s mouse and keyboard.</string>
+    <string name="guide_assist_pc_1">Click, drag, scroll, and type inside the phone mirror window on your PC.</string>
+    <string name="guide_assist_opt_1">Stop typing: Ends remote PC keyboard typing from the Home banner.</string>
+    <string name="guide_assist_privacy">Injects gestures and text from your paired PC; reads no screen content or passwords.</string>
+    <string name="guide_assist_limits">Sideloaded APKs on Android 13+ must enable Allow restricted settings in App info first.</string>
+
+    <!-- 22. Elevated -->
+    <string name="guide_elevated_title">Elevated</string>
+    <string name="guide_elevated_summary">Real touch and keys, App streams, background clipboard sync and in-call controls, through Wireless debugging.</string>
+    <string name="guide_elevated_where">Settings › Permissions › Control from your PC › Real touch and keys (Wireless debugging)</string>
+    <string name="guide_elevated_needs">Wireless debugging</string>
+    <string name="guide_elevated_need_1">Developer options and Wireless debugging turned on.</string>
+    <string name="guide_elevated_phone_1">Open Settings › Permissions › Control from your PC and tap Set up under Real touch and keys.</string>
+    <string name="guide_elevated_phone_2">In Wireless debugging, tap Pair device with pairing code and enter the 6-digit code in the notification.</string>
+    <string name="guide_elevated_pc_1">Use App streams, background clipboard sync, and low-latency input from your PC.</string>
+    <string name="guide_elevated_opt_1">Set up / Turn off: Pairs or stops the local Wireless debugging helper.</string>
+    <string name="guide_elevated_privacy">Runs locally on this phone via loopback ADB; no external server is involved.</string>
+    <string name="guide_elevated_limits">First-time Wireless debugging pairing requires Wi-Fi.</string>
+
+    <!-- 23. Deck -->
+    <string name="guide_deck_title">Deck</string>
+    <string name="guide_deck_summary">Use your phone as a grid of shortcut tiles, media keys, volume sliders, and live PC system gauges.</string>
+    <string name="guide_deck_where">Home › Paired PC card › Deck</string>
+    <string name="guide_deck_needs">Online paired PC</string>
+    <string name="guide_deck_need_1">Online paired Windows 11 PC.</string>
+    <string name="guide_deck_phone_1">On Home, tap Deck on your paired PC card and tap any tile to trigger its action.</string>
+    <string name="guide_deck_pc_1">Customize Deck pages and tiles in Nectarlink on your PC.</string>
+    <string name="guide_deck_opt_1">Full screen: Expands the Deck grid across your phone screen.</string>
+    <string name="guide_deck_privacy">Deck layouts and system stats stay between your phone and paired PC.</string>
+    <string name="guide_deck_limits">Shell command tiles require Run Deck commands enabled for this phone on your PC.</string>
+
+    <!-- 24. Desk Mode -->
+    <string name="guide_desk_title">Desk Mode</string>
+    <string name="guide_desk_summary">Always-on OLED desk clock with live PC connection status, media controls, and quick actions.</string>
+    <string name="guide_desk_where">Home › Paired PC card › Desk clock</string>
+    <string name="guide_desk_needs">Paired PC</string>
+    <string name="guide_desk_need_1">Paired Windows 11 PC.</string>
+    <string name="guide_desk_phone_1">On Home, tap Desk clock on your paired PC card and place your phone on a stand or charger.</string>
+    <string name="guide_desk_pc_1">PC media playback and status update live on the Desk Mode display.</string>
+    <string name="guide_desk_opt_1">OLED burn-in protection: Periodically shifts layout pixels to protect OLED screens.</string>
+    <string name="guide_desk_privacy">Renders locally on your phone from live PC state.</string>
+    <string name="guide_desk_limits">Keeps the screen awake while open.</string>
+
+    <!-- 25. Wake PC -->
+    <string name="guide_wake_title">Wake PC</string>
+    <string name="guide_wake_summary">Wake a sleeping paired PC over your local network using Wake-on-LAN.</string>
+    <string name="guide_wake_where">Home › Paired PC card › Wake</string>
+    <string name="guide_wake_needs">Paired PC with Wake-on-LAN enabled in BIOS and network adapter</string>
+    <string name="guide_wake_need_1">Paired PC connected over LAN at least once so Nectarlink learns its MAC address.</string>
+    <string name="guide_wake_need_2">Wake-on-LAN enabled in Windows network adapter settings and BIOS/UEFI.</string>
+    <string name="guide_wake_phone_1">When your paired PC is offline on Home, tap Wake on its card.</string>
+    <string name="guide_wake_pc_1">Enable Wake-on-LAN packet wake in Device Manager › Network adapters › Power Management.</string>
+    <string name="guide_wake_opt_1">Wake: Sends a Wake-on-LAN packet on the local network.</string>
+    <string name="guide_wake_privacy">Uses the MAC address learned during a previous authenticated LAN session.</string>
+    <string name="guide_wake_limits">Requires Ethernet or a Wi-Fi adapter that supports Wake on Wireless LAN.</string>
+
+    <!-- 26. Quick actions -->
+    <string name="guide_quick_title">Quick actions</string>
+    <string name="guide_quick_summary">Ring, Lock, or Sleep your PC from Home or the home-screen widget, and control phone DND, flashlight, and brightness from your PC.</string>
+    <string name="guide_quick_where">Home › Paired PC card (and Settings › Permissions › Control from your PC)</string>
+    <string name="guide_quick_needs">Do Not Disturb access and Screen brightness permission for PC-to-phone toggles</string>
+    <string name="guide_quick_need_1">Ring PC, Lock PC, Sleep, and phone flashlight work without extra permissions.</string>
+    <string name="guide_quick_need_2">Do Not Disturb and silent mode require Do Not Disturb access.</string>
+    <string name="guide_quick_need_3">Phone brightness control requires Screen brightness permission or Elevated.</string>
+    <string name="guide_quick_phone_1">Use Ring PC, Lock PC, and Sleep on your paired PC card on Home or add the PC quick actions widget.</string>
+    <string name="guide_quick_pc_1">Toggle phone DND, ringer, flashlight, volume, and brightness from Nectarlink on your PC.</string>
+    <string name="guide_quick_opt_1">Do Not Disturb / Screen brightness: Grant in Settings › Permissions › Control from your PC.</string>
+    <string name="guide_quick_privacy">Commands are authenticated per device over TLS 1.3.</string>
+    <string name="guide_quick_limits">Locking and sleeping the PC can be toggled per phone in PC Settings › Devices.</string>
+
+    <!-- 27. Connect over mobile data -->
+    <string name="guide_away_title">Connect over mobile data</string>
+    <string name="guide_away_summary">Stay connected to your PC over cellular data when away from Wi-Fi, or link over a USB cable.</string>
+    <string name="guide_away_where">Settings › Devices › Connect over mobile data</string>
+    <string name="guide_away_needs">Unrestricted battery, Connect over mobile data enabled</string>
+    <string name="guide_away_need_1">Unrestricted battery in Settings › Permissions › Background &amp; battery.</string>
+    <string name="guide_away_need_2">Connect over mobile data enabled in Settings › Devices.</string>
+    <string name="guide_away_phone_1">Turn on Connect over mobile data in Settings › Devices.</string>
+    <string name="guide_away_pc_1">Your PC card shows Connected while away or On USB based on the active link.</string>
+    <string name="guide_away_opt_1">Connect over mobile data: Uses an end-to-end encrypted relay when LAN or USB is unavailable.</string>
+    <string name="guide_away_privacy">Relay traffic is encrypted end to end with your paired TLS 1.3 device keys.</string>
+    <string name="guide_away_limits">File transfers over mobile data use your cellular data plan.</string>
+
+    <!-- 28. Connection Doctor -->
+    <string name="guide_doctor_title">Connection Doctor</string>
+    <string name="guide_doctor_summary">Check background battery settings, Companion Device wake, and local network access so your phone stays reachable.</string>
+    <string name="guide_doctor_where">Settings › Permissions › Background &amp; battery</string>
+    <string name="guide_doctor_needs">Unrestricted battery</string>
+    <string name="guide_doctor_need_1">Unrestricted background battery usage enabled.</string>
+    <string name="guide_doctor_need_2">Optional: Wake when PC is nearby (Companion Device) associated.</string>
+    <string name="guide_doctor_phone_1">Open Settings › Permissions › Background &amp; battery and allow unrestricted battery usage.</string>
+    <string name="guide_doctor_phone_2">Follow the OEM battery guide if your phone vendor restricts background apps.</string>
+    <string name="guide_doctor_pc_1">Open Connection Doctor on your PC to inspect transport latency, ports, and link health.</string>
+    <string name="guide_doctor_opt_1">Wake when PC is nearby: Associates your PC so Android wakes Nectarlink when in BLE range.</string>
+    <string name="guide_doctor_privacy">Diagnostics run locally between your phone and paired PC.</string>
+    <string name="guide_doctor_limits">Some phone makers\' battery savers must be set to Unrestricted.</string>
+    <string name="pair_link_title">Pair with %1$s?</string>
+    <string name="pair_link_body">A pairing link was opened. Pair only if you just scanned or opened this PC\'s code yourself. A paired PC can receive this phone\'s notifications and messages.</string>
+    <string name="pair_link_confirm">Pair</string>
+    <string name="pair_link_cancel">Cancel</string>
+    <string name="pair_link_unknown_pc">this PC</string>
+    <string name="data_clear_failed">Some history couldn\'t be cleared. Try again.</string>
+    <string name="channel_updates">Updates</string>
+    <string name="update_ready_title">Nectarlink %1$s is ready</string>
+    <string name="update_ready_text">Tap to install the update.</string>
+    <string name="update_auto_title">Install updates automatically</string>
+    <string name="update_auto_text">New versions from GitHub install in the background.</string>
 </resources>
+
+
 

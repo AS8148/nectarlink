@@ -26,7 +26,7 @@ On the control stream.
 
 ```
 t = "photos.new"                     b = {
-  id:         text,      // The phone's ID for it: 1–64 printable ASCII characters
+  id:         text,      // The phone's ID for it: 1 to 64 printable ASCII characters
   name:       text,      // A file name, as in files.offer
   size:       uint,      // Bytes
   taken:      int,       // Unix seconds
@@ -53,7 +53,7 @@ PhotoAlbum = {
 }
 
 PhotoItem = {
-  id:        text,       // Item ID on the phone (1–64 printable ASCII characters)
+  id:        text,       // Item ID on the phone (1 to 64 printable ASCII characters)
   name:      text,       // File name, sanitized as in files.offer
   date:      int,        // When it was taken (Unix ms), or else when it was saved
   size:      uint,       // Full file size in bytes

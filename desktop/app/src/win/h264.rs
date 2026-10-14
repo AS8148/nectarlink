@@ -7,17 +7,22 @@ use std::{mem::ManuallyDrop, sync::Mutex, time::Duration};
 
 use windows::{
     Win32::{
+        Foundation::E_FAIL,
         Media::MediaFoundation::{
-            CLSID_MSH264DecoderMFT, CODECAPI_AVDecNumWorkerThreads, IMF2DBuffer, IMFMediaType, IMFSample,
-            IMFTransform, MF_E_NOTACCEPTING, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE,
-            MF_LOW_LATENCY, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_MT_VIDEO_NOMINAL_RANGE,
-            MF_MT_YUV_MATRIX, MF_VERSION, MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample,
-            MFMediaType_Video, MFNominalRange_0_255, MFSTARTUP_NOSOCKET, MFStartup,
-            MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_END_STREAMING,
-            MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
-            MFVideoFormat_H264, MFVideoFormat_NV12, MFVideoTransferMatrix_BT601,
+            CLSID_MSH264DecoderMFT, CODECAPI_AVDecNumWorkerThreads, IMF2DBuffer, IMFActivate, IMFMediaType,
+            IMFSample, IMFTransform, MF_E_NOTACCEPTING, MF_E_TRANSFORM_NEED_MORE_INPUT,
+            MF_E_TRANSFORM_STREAM_CHANGE, MF_LOW_LATENCY, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
+            MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_YUV_MATRIX, MF_VERSION, MFCreateMediaType, MFCreateMemoryBuffer,
+            MFCreateSample, MFMediaType_Video, MFNominalRange_0_255, MFSTARTUP_NOSOCKET, MFStartup,
+            MFT_CATEGORY_VIDEO_DECODER, MFT_ENUM_FLAG_LOCALMFT, MFT_ENUM_FLAG_SORTANDFILTER,
+            MFT_ENUM_FLAG_SYNCMFT, MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
+            MFT_MESSAGE_NOTIFY_END_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
+            MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFT_REGISTER_TYPE_INFO, MFTEnumEx, MFVideoFormat_AV1,
+            MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_NV12, MFVideoTransferMatrix_BT601,
         },
-        System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx},
+        System::Com::{
+            CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
+        },
     },
     core::Interface,
 };
@@ -74,12 +79,56 @@ pub(crate) fn ensure_mf_started() -> windows::core::Result<()> {
     }
 }
 
-/// Whether an Annex B buffer contains a coded slice NAL unit (non-IDR `1` or IDR `5`).
-fn has_slice(data: &[u8]) -> bool {
-    data.windows(4).any(|w| w[..3] == [0, 0, 1] && matches!(w[3] & 0x1f, 1 | 5))
+/// Enumerates and activates a synchronous local Media Foundation transform for
+/// `category` matching `input_subtype` -> `output_subtype`.
+pub(crate) fn create_mft(
+    category: windows::core::GUID,
+    input_subtype: windows::core::GUID,
+    output_subtype: windows::core::GUID,
+) -> windows::core::Result<IMFTransform> {
+    let input_info = MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: input_subtype };
+    let output_info =
+        MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: output_subtype };
+    let mut activates: *mut Option<IMFActivate> = std::ptr::null_mut();
+    let mut count = 0u32;
+    // SAFETY: MFTEnumEx allocates the `activates` array with CoTaskMemAlloc; we take ownership and free it.
+    unsafe {
+        MFTEnumEx(
+            category,
+            MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_LOCALMFT | MFT_ENUM_FLAG_SORTANDFILTER,
+            Some(&input_info),
+            Some(&output_info),
+            &mut activates,
+            &mut count,
+        )?;
+        let mut found: Option<IMFTransform> = None;
+        if !activates.is_null() {
+            let slice = std::slice::from_raw_parts_mut(activates, count as usize);
+            for slot in slice.iter_mut() {
+                if let Some(act) = slot.take()
+                    && found.is_none()
+                    && let Ok(t) = act.ActivateObject::<IMFTransform>()
+                {
+                    found = Some(t);
+                }
+            }
+            CoTaskMemFree(Some(activates.cast()));
+        }
+        found.ok_or_else(|| windows::core::Error::from(E_FAIL))
+    }
+}
+
+/// Whether an access unit buffer contains a coded slice/frame for `codec`.
+fn has_slice(codec: &str, data: &[u8]) -> bool {
+    match codec {
+        "h265" => data.windows(4).any(|w| w[..3] == [0, 0, 1] && ((w[3] >> 1) & 0x3f) <= 21),
+        "av1" => !data.is_empty(),
+        _ => data.windows(4).any(|w| w[..3] == [0, 0, 1] && matches!(w[3] & 0x1f, 1 | 5)),
+    }
 }
 
 pub struct Decoder {
+    codec: String,
     transform: IMFTransform,
     /// The decoded size, as the output type says (padded).
     coded: (u32, u32),
@@ -90,7 +139,10 @@ pub struct Decoder {
 
 impl std::fmt::Debug for Decoder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Decoder").field("coded", &self.coded).finish_non_exhaustive()
+        f.debug_struct("Decoder")
+            .field("codec", &self.codec)
+            .field("coded", &self.coded)
+            .finish_non_exhaustive()
     }
 }
 
@@ -105,13 +157,30 @@ impl Drop for Decoder {
 }
 
 impl Decoder {
-    /// A decoder for the calling thread (which it stays on).
+    /// A decoder for the calling thread (which it stays on), defaulting to H.264.
     pub fn new() -> windows::core::Result<Decoder> {
+        Self::new_for_codec("h264")
+    }
+
+    /// Creates a low-latency video decoder for `"h264"`, `"h265"`, or `"av1"`.
+    pub fn new_for_codec(codec: &str) -> windows::core::Result<Decoder> {
         // SAFETY: plain COM and Media Foundation calls with owned values.
         unsafe {
             ensure_mf_started()?;
-            let transform: IMFTransform =
-                CoCreateInstance(&CLSID_MSH264DecoderMFT, None, CLSCTX_INPROC_SERVER)?;
+            let (subtype, transform) = match codec {
+                "h265" => (
+                    MFVideoFormat_HEVC,
+                    create_mft(MFT_CATEGORY_VIDEO_DECODER, MFVideoFormat_HEVC, MFVideoFormat_NV12)?,
+                ),
+                "av1" => (
+                    MFVideoFormat_AV1,
+                    create_mft(MFT_CATEGORY_VIDEO_DECODER, MFVideoFormat_AV1, MFVideoFormat_NV12)?,
+                ),
+                _ => (
+                    MFVideoFormat_H264,
+                    CoCreateInstance(&CLSID_MSH264DecoderMFT, None, CLSCTX_INPROC_SERVER)?,
+                ),
+            };
             // One picture in, one out: no reordering delay, single worker thread.
             if let Ok(attributes) = transform.GetAttributes() {
                 let _ = attributes.SetUINT32(&MF_LOW_LATENCY, 1);
@@ -119,9 +188,10 @@ impl Decoder {
             }
             let input = MFCreateMediaType()?;
             input.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            input.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
+            input.SetGUID(&MF_MT_SUBTYPE, &subtype)?;
             transform.SetInputType(0, &input, 0)?;
             let mut decoder = Decoder {
+                codec: codec.to_owned(),
                 transform,
                 coded: (0, 0),
                 provides_samples: false,
@@ -133,6 +203,10 @@ impl Decoder {
             decoder.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
             Ok(decoder)
         }
+    }
+
+    pub fn codec(&self) -> &str {
+        &self.codec
     }
 
     /// Picks NV12 output (again after the stream's size changed).
@@ -168,7 +242,7 @@ impl Decoder {
 
     /// Decodes one access unit (Annex B); returns the pictures it completed.
     pub fn decode(&mut self, data: &[u8], time_us: u64) -> windows::core::Result<Vec<Picture>> {
-        let expects_picture = has_slice(data);
+        let expects_picture = has_slice(&self.codec, data);
         let sample = sample_of(data, time_us)?;
         let mut pictures = Vec::new();
         // SAFETY: as above.
@@ -291,24 +365,14 @@ fn sample_of(data: &[u8], time_us: u64) -> windows::core::Result<IMFSample> {
 }
 
 /// NV12 (in the picture's own colors) to 32-bit BGRX, the
-/// visible `width` x `height`, across a few threads. A 1080p picture
-/// takes about 16 ms on one core, too long at 60 frames a second; scoped
-/// threads cost microseconds next to that.
+/// visible `width` x `height`, directly on the decoder thread without per-frame OS thread-spawn overhead.
 pub fn to_bgrx(picture: &Picture, width: u32, height: u32) -> Vec<u8> {
     let (w, h) = (width.min(picture.width) as usize, height.min(picture.height) as usize);
     let mut out = vec![0u8; w * h * 4];
     if w == 0 || h == 0 {
         return out;
     }
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 8);
-    // Whole row pairs per thread (each chroma row serves two luma rows).
-    let rows_per = h.div_ceil(threads).next_multiple_of(2);
-    std::thread::scope(|scope| {
-        for (chunk, rows) in out.chunks_mut(rows_per * w * 4).enumerate() {
-            let first = chunk * rows_per;
-            scope.spawn(move || convert_rows(picture, w, first, rows));
-        }
-    });
+    convert_rows(picture, w, 0, &mut out);
     out
 }
 

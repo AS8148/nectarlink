@@ -24,8 +24,10 @@ pub mod qobject {
         #[qml_singleton]
         /// The phone whose call is shown (set by Home).
         #[qproperty(QString, device, READ, WRITE = set_device, NOTIFY)]
-        /// A call is in progress on it.
+        /// A call is in progress or ringing on it.
         #[qproperty(bool, active)]
+        /// Whether the call is currently ringing (incoming).
+        #[qproperty(bool, ringing)]
         /// Who's on the call, as well as the phone knows.
         #[qproperty(QString, caller)]
         /// The number, when there's a name to show above it.
@@ -55,6 +57,12 @@ pub mod qobject {
         #[qproperty(bool, can_dial, cxx_name = "canDial")]
         /// A dial request is on its way to the phone.
         #[qproperty(bool, dialing)]
+        /// Whether a paired Bluetooth HFP / audio playback endpoint is available for the phone.
+        #[qproperty(bool, hfp_available, cxx_name = "hfpAvailable")]
+        /// Whether call audio is currently routed through this PC over Bluetooth.
+        #[qproperty(bool, hfp_connected, cxx_name = "hfpConnected")]
+        /// Human-readable Bluetooth HFP status or pairing guidance.
+        #[qproperty(QString, hfp_detail, cxx_name = "hfpDetail")]
         type PhoneCall = super::PhoneCallRust;
     }
 
@@ -83,7 +91,10 @@ pub mod qobject {
         /// Puts text on this PC's clipboard (it isn't sent back to the phone).
         #[qinvokable]
         fn copy(self: &PhoneCall, text: &QString);
-        /// Hangs up.
+        /// Answers an incoming ringing call.
+        #[qinvokable]
+        fn answer(self: &PhoneCall);
+        /// Hangs up or declines.
         #[qinvokable]
         fn end(self: &PhoneCall);
         #[qinvokable]
@@ -95,12 +106,20 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "setHold"]
         fn set_hold(self: &PhoneCall, on: bool);
-        /// A keypad key: "0"–"9", "*" or "#".
+        /// A keypad key: "0".."9", "*" or "#".
         #[qinvokable]
         fn press(self: &PhoneCall, key: &QString);
         /// The call's volume up (true) or down.
         #[qinvokable]
         fn volume(self: &PhoneCall, up: bool);
+        /// Connects Bluetooth HFP / audio playback for the active phone.
+        #[qinvokable]
+        #[cxx_name = "connectPcAudio"]
+        fn connect_pc_audio(self: Pin<&mut PhoneCall>);
+        /// Opens Windows Bluetooth & devices settings (`ms-settings:bluetooth`).
+        #[qinvokable]
+        #[cxx_name = "openBluetoothSettings"]
+        fn open_bluetooth_settings(self: Pin<&mut PhoneCall>);
     }
 }
 
@@ -108,6 +127,7 @@ pub mod qobject {
 pub struct PhoneCallRust {
     device: QString,
     active: bool,
+    ringing: bool,
     caller: QString,
     number: QString,
     since: f64,
@@ -125,6 +145,9 @@ pub struct PhoneCallRust {
     contacts: QString,
     can_dial: bool,
     dialing: bool,
+    hfp_available: bool,
+    hfp_connected: bool,
+    hfp_detail: QString,
     /// The call's ID on the phone, for its commands.
     call: Option<(DeviceId, String)>,
     /// What the Calls page last showed, to skip JSON updates that changed nothing.
@@ -188,11 +211,24 @@ impl qobject::PhoneCall {
         }
     }
 
-    fn refresh_state(mut self: Pin<&mut Self>) {
+    pub fn connect_pc_audio(self: Pin<&mut Self>) {
         let device = super::parse_device(&self.rust().device);
-        let call = device.and_then(calls::active);
+        calls::connect_pc_audio(device);
+        self.refresh_state();
+    }
+
+    pub fn open_bluetooth_settings(self: Pin<&mut Self>) {
+        calls::open_bluetooth_settings();
+    }
+
+    fn refresh_state(mut self: Pin<&mut Self>) {
+        let preferred_device = super::parse_device(&self.rust().device);
+        let active_call = calls::active_or_ringing(preferred_device);
+        let call_device = active_call.as_ref().map(|(d, _, _)| *d).or(preferred_device);
+        let is_ringing = active_call.as_ref().is_some_and(|(_, _, r)| *r);
+        let call = active_call.map(|(_, c, _)| c);
         let controls = call.as_ref().and_then(|c| c.controls);
-        self.as_mut().rust_mut().call = device.zip(call.as_ref().map(|c| c.id.clone()));
+        self.as_mut().rust_mut().call = call_device.zip(call.as_ref().map(|c| c.id.clone()));
         let (caller, number) = match &call {
             Some(call) => {
                 let name = call.name.clone().filter(|n| !n.trim().is_empty());
@@ -207,15 +243,21 @@ impl qobject::PhoneCall {
         self.as_mut().set_caller(QString::from(&caller));
         self.as_mut().set_number(QString::from(&number));
         self.as_mut().set_since(call.as_ref().and_then(|c| c.since).unwrap_or(0) as f64);
-        self.as_mut().set_can_end(device.is_some_and(calls::can_control));
-        self.as_mut().set_can_dial(device.is_some_and(calls::can_dial));
+        self.as_mut().set_can_end(call_device.is_some_and(calls::can_control));
+        self.as_mut().set_can_dial(preferred_device.or(call_device).is_some_and(calls::can_dial));
         self.as_mut().set_controls(controls.is_some());
         let controls = controls.unwrap_or_default();
         self.as_mut().set_muted(controls.muted);
         self.as_mut().set_speaker(controls.speaker);
         self.as_mut().set_held(controls.held);
         self.as_mut().set_can_hold(controls.can_hold);
+        self.as_mut().set_ringing(is_ringing);
         self.as_mut().set_active(call.is_some());
+
+        let hfp = calls::hfp_status(call_device);
+        self.as_mut().set_hfp_available(hfp.available);
+        self.as_mut().set_hfp_connected(hfp.connected);
+        self.as_mut().set_hfp_detail(QString::from(&hfp.detail));
 
         let view = calls::view();
         if self.rust().last_view.as_ref() != Some(&view) {
@@ -240,6 +282,10 @@ impl qobject::PhoneCall {
         if let Some((device, call)) = self.rust().call.clone() {
             calls::command(device, call, command);
         }
+    }
+
+    pub fn answer(&self) {
+        self.send(CallCommand::Answer);
     }
 
     pub fn end(&self) {

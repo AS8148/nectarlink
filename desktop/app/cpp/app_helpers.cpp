@@ -50,7 +50,35 @@ void register_qml_app_engine(QQmlApplicationEngine &engine)
     qmlEngineRef() = &engine;
 }
 
+#include <QtCore/QDateTime>
+#include <QtCore/QFile>
+#include <QtCore/QStandardPaths>
+#include <QtCore/QTextStream>
+
+namespace {
+void qtLogMessageHandler(QtMsgType type, const QMessageLogContext &ctx, const QString &msg)
+{
+    if (type == QtDebugMsg)
+        return;
+    const QString dirPath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
+        + QStringLiteral("/Nectarlink/logs");
+    QDir().mkpath(dirPath);
+    QFile file(dirPath + QStringLiteral("/qml.log"));
+    if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        QTextStream ts(&file);
+        ts << QDateTime::currentDateTimeUtc().toString(Qt::ISODate) << " [" << type << "] "
+           << msg << " (" << (ctx.file ? ctx.file : "") << ":" << ctx.line << ")\n";
+    }
+}
+} // namespace
+
 void prepare_qt()
+{
+    qInstallMessageHandler(qtLogMessageHandler);
+    prepare_qt_without_log();
+}
+
+void prepare_qt_without_log()
 {
     // Windows get an alpha channel so the Mica backdrop can show through, and
     // D3D swap chains are presented with DirectComposition, without which

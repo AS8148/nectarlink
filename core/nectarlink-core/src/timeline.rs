@@ -192,3 +192,106 @@ pub(crate) fn encode_data_url(mime: &str, bytes: &[u8]) -> String {
     }
     out
 }
+
+/// Formats a clipboard text string for display in the Timeline UI:
+/// - Local file paths (including `"C:\..."` quoted paths from Explorer's "Copy as path")
+///   return `("Copied <filename>", Some(unquoted_path))`.
+/// - Web/geo URLs (`http://`, `https://`, `geo:`) return `("Link · <domain>", Some(raw_url))`.
+/// - Long or multi-line text returns `("Copied text: <first words>", Some(raw_first_line))`.
+#[must_use]
+pub fn format_clip_display(raw_text: &str) -> (String, Option<String>) {
+    let first_line =
+        raw_text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_else(|| raw_text.trim());
+    let unquoted = first_line
+        .strip_prefix('"')
+        .map(|s| s.strip_suffix('"').unwrap_or(s))
+        .or_else(|| first_line.strip_prefix('\'').map(|s| s.strip_suffix('\'').unwrap_or(s)))
+        .unwrap_or(first_line)
+        .trim();
+
+    let lower_prefix = unquoted.get(..8).map(str::to_ascii_lowercase).unwrap_or_default();
+    if (lower_prefix.starts_with("http://")
+        || lower_prefix.starts_with("https://")
+        || lower_prefix.starts_with("geo:"))
+        && !unquoted.contains(char::is_whitespace)
+    {
+        if lower_prefix.starts_with("geo:") {
+            let (title, raw) = crate::handoff::timeline_link_title_and_detail(unquoted, None);
+            return (title, Some(raw));
+        }
+        let host = unquoted
+            .split("://")
+            .nth(1)
+            .unwrap_or(unquoted)
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or(unquoted);
+        let clean_host = host.strip_prefix("www.").unwrap_or(host);
+        if !clean_host.is_empty() {
+            return (format!("Link · {clean_host}"), Some(unquoted.to_owned()));
+        }
+    }
+
+    let bytes = unquoted.as_bytes();
+    let is_win_drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/');
+    let is_unc = unquoted.starts_with("\\\\") && unquoted.len() > 3;
+    let is_unix_path = (unquoted.starts_with('/') && !unquoted.starts_with("//") && unquoted.len() > 2)
+        || unquoted.starts_with("~/");
+    if is_win_drive || is_unc || is_unix_path {
+        let cleaned = unquoted.trim_end_matches(['\\', '/']);
+        if let Some(name) = cleaned.rsplit(['\\', '/']).find(|seg| !seg.is_empty())
+            && !name.ends_with(':')
+        {
+            return (format!("Copied file {name}"), Some(unquoted.to_owned()));
+        }
+    }
+
+    let collapsed: String = unquoted.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > 44 {
+        let mut snippet = String::new();
+        for word in collapsed.split_whitespace() {
+            if !snippet.is_empty() && snippet.chars().count() + 1 + word.chars().count() > 38 {
+                break;
+            }
+            if !snippet.is_empty() {
+                snippet.push(' ');
+            }
+            snippet.push_str(word);
+        }
+        if snippet.is_empty() {
+            snippet = collapsed.chars().take(38).collect();
+        }
+        return (format!("Copied text: {snippet}…"), Some(collapsed));
+    }
+
+    (collapsed, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_quoted_paths_urls_and_text_for_timeline() {
+        let (t1, d1) = format_clip_display("\"C:\\Users\\Alice\\Videos\\Sample Clip.mp4\"");
+        assert_eq!(t1, "Copied file Sample Clip.mp4");
+        assert_eq!(d1.as_deref(), Some("C:\\Users\\Alice\\Videos\\Sample Clip.mp4"));
+
+        let (t2, d2) = format_clip_display("https://example.com/posts/12345");
+        assert_eq!(t2, "Link · example.com");
+        assert_eq!(d2.as_deref(), Some("https://example.com/posts/12345"));
+
+        let (t3, d3) = format_clip_display("Short note");
+        assert_eq!(t3, "Short note");
+        assert_eq!(d3, None);
+
+        let long_note =
+            "This is a much longer copied paragraph that should be truncated cleanly with a colon";
+        let (t4, d4) = format_clip_display(long_note);
+        assert!(t4.starts_with("Copied text: "), "expected colon prefix, got {t4}");
+        assert_eq!(d4.as_deref(), Some(long_note));
+    }
+}

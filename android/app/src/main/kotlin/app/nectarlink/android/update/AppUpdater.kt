@@ -1,18 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package app.nectarlink.android.update
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import app.nectarlink.android.BuildConfig
 import app.nectarlink.android.NectarlinkApplication
+import app.nectarlink.android.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,11 +39,13 @@ import java.security.MessageDigest
  * key, so only release builds update themselves (debug builds are signed
  * differently).
  */
+@androidx.compose.runtime.Stable
 class AppUpdater(context: Context) {
     private val context = context.applicationContext
-    private val prefs = context.getSharedPreferences("updates", Context.MODE_PRIVATE)
+    internal val prefs = context.getSharedPreferences("updates", Context.MODE_PRIVATE)
 
     /** A newer release. */
+    @androidx.compose.runtime.Immutable
     data class Update(val version: String, val notesUrl: String, internal val apkUrl: String, internal val apkName: String, internal val sumsUrl: String)
 
     sealed interface State {
@@ -56,6 +65,30 @@ class AppUpdater(context: Context) {
 
     /** Whether this build updates itself. */
     val enabled: Boolean get() = !BuildConfig.DEBUG
+
+    private val _autoInstall = MutableStateFlow(prefs.getBoolean(AUTO_INSTALL, true))
+
+    /** Whether a newer release installs by itself, without asking (Settings). */
+    val autoInstall: StateFlow<Boolean> = _autoInstall.asStateFlow()
+
+    fun setAutoInstall(on: Boolean) {
+        prefs.edit { putBoolean(AUTO_INSTALL, on) }
+        _autoInstall.value = on
+    }
+
+    /**
+     * For the background: checks when due and, with automatic updates on, installs a newer
+     * release. Android 12 and later install it without asking once Nectarlink has installed
+     * itself before; otherwise a notification asks for one tap.
+     */
+    suspend fun updateIfDue() {
+        if (!enabled) return
+        // Not while one is already on its way.
+        if (_state.value is State.Downloading || _state.value is State.Installing) return
+        checkIfDue()
+        val available = (_state.value as? State.Available)?.update ?: return
+        if (_autoInstall.value && canInstall()) install(available, automatic = true)
+    }
 
     /** Checks at most once a day (call when the app comes to the front). */
     suspend fun checkIfDue() {
@@ -80,7 +113,14 @@ class AppUpdater(context: Context) {
     }
 
     private fun latest(): Update? {
-        val release = JSONObject(String(get(LATEST, 1 shl 20)))
+        val body = try {
+            get(LATEST, 1 shl 20)
+        } catch (e: HttpStatus) {
+            // GitHub answers 404 until the first release is published: nothing newer.
+            if (e.code == 404) return null
+            throw e
+        }
+        val release = JSONObject(String(body))
         if (release.optBoolean("draft") || release.optBoolean("prerelease")) return null
         val version = release.getString("tag_name").removePrefix("v")
         if (!isNewer(version, BuildConfig.VERSION_NAME)) return null
@@ -112,7 +152,8 @@ class AppUpdater(context: Context) {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     /** Downloads, checks and hands the update to Android's installer. */
-    suspend fun install(update: Update) {
+    suspend fun install(update: Update, automatic: Boolean = false) {
+        prefs.edit { putBoolean(LAST_AUTOMATIC, automatic) }
         if (!canInstall()) {
             _state.value = State.Failed(update, Reason.NotAllowed)
             return
@@ -136,7 +177,8 @@ class AppUpdater(context: Context) {
         val sums = String(get(update.sumsUrl, 64 * 1024))
         val expected = listedHash(sums, update.apkName) ?: throw DamagedException()
         val dir = File(context.cacheDir, "updates").apply { deleteRecursively(); mkdirs() }
-        val file = File(dir, update.apkName)
+        // A fixed name: the release's asset name is not trusted as a path.
+        val file = File(dir, "update.apk")
         val digest = MessageDigest.getInstance("SHA-256")
         open(update.apkUrl).inputStream.use { input ->
             file.outputStream().use { output ->
@@ -196,8 +238,15 @@ class AppUpdater(context: Context) {
                     } else {
                         @Suppress("DEPRECATION")
                         intent.getParcelableExtra(Intent.EXTRA_INTENT)
+                    }?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) ?: return
+                    val updater = (context.applicationContext as NectarlinkApplication).updater
+                    // Started by the user: Android's prompt opens now. In the background it
+                    // can't, so a notification waits for the tap.
+                    if (updater.prefs.getBoolean(LAST_AUTOMATIC, false)) {
+                        updater.notifyReady(confirm)
+                    } else {
+                        context.startActivity(confirm)
                     }
-                    confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let(context::startActivity)
                 }
                 PackageInstaller.STATUS_SUCCESS -> Unit // The new version starts fresh.
                 else -> {
@@ -206,6 +255,29 @@ class AppUpdater(context: Context) {
                 }
             }
         }
+    }
+
+    /** "Nectarlink 0.2.0 is ready", opening Android's install prompt when tapped. */
+    internal fun notifyReady(confirm: Intent) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL, context.getString(R.string.channel_updates), NotificationManager.IMPORTANCE_DEFAULT),
+        )
+        val version = (_state.value as? State.Installing)?.update?.version.orEmpty()
+        val tap = PendingIntent.getActivity(context, READY_ID, confirm, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val notification = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(context.getString(R.string.update_ready_title, version))
+            .setContentText(context.getString(R.string.update_ready_text))
+            .setContentIntent(tap)
+            .setAutoCancel(true)
+            .build()
+        manager.notify(READY_ID, notification)
     }
 
     /** Android didn't install it. */
@@ -217,24 +289,43 @@ class AppUpdater(context: Context) {
         private const val TAG = "AppUpdater"
         private const val LATEST = "https://api.github.com/repos/thtbee/nectarlink/releases/latest"
         private const val LAST_CHECK = "lastCheck"
+        private const val AUTO_INSTALL = "autoInstall"
+        private const val LAST_AUTOMATIC = "lastAutomatic"
+        private const val CHANNEL = "updates"
+        private const val READY_ID = 0x0D47
         private const val CHECK_EVERY_MS = 24L * 3600 * 1000
         private const val MAX_APK = 300L * 1024 * 1024
 
-        private fun open(url: String): HttpURLConnection =
-            (URL(url).openConnection() as HttpURLConnection).apply {
+        /** A response other than 200 OK. */
+        private class HttpStatus(val code: Int) : java.io.IOException("HTTP $code")
+
+        private fun open(url: String): HttpURLConnection {
+            if (!url.startsWith("https://")) throw java.io.IOException("only https")
+            return (URL(url).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
                 readTimeout = 60_000
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "Nectarlink/${BuildConfig.VERSION_NAME} (Android)")
                 setRequestProperty("Accept", "application/vnd.github+json, application/octet-stream")
-                if (responseCode != 200) throw java.io.IOException("HTTP $responseCode")
+                if (responseCode != 200) throw HttpStatus(responseCode)
+                // Redirects stay on https (HttpURLConnection never follows one to another
+                // protocol); checked again in case that ever changes.
+                if (this.url.protocol != "https") throw java.io.IOException("only https")
             }
+        }
 
+        /** The body, up to `limit` bytes; never buffers more than that. */
         private fun get(url: String, limit: Int): ByteArray =
             open(url).inputStream.use { input ->
-                val bytes = input.readBytes()
-                if (bytes.size > limit) throw java.io.IOException("too large")
-                bytes
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(16 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (out.size() + read > limit) throw java.io.IOException("too large")
+                    out.write(buffer, 0, read)
+                }
+                out.toByteArray()
             }
 
         /** The SHA-256 a sums file lists for `name` (`<hex>  <name>` lines). */

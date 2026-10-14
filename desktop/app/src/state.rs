@@ -4,7 +4,7 @@
 //! changed so they can refresh. Nothing here touches Qt, so it is unit-tested.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
     time::{Instant, SystemTime},
@@ -65,6 +65,12 @@ impl Changes {
     pub const DATA_RETENTION: Changes = Changes(1 << 24);
     /// LocalSend LAN interop settings or discovered peers changed.
     pub const LOCALSEND: Changes = Changes(1 << 25);
+    /// Desktop preferences changed from a background/remote event.
+    pub const PREFS: Changes = Changes(1 << 26);
+    /// High-frequency per-device metrics (RTT, battery, power) changed without structural device changes.
+    pub const DEVICE_METRICS: Changes = Changes(1 << 27);
+    /// Offline send queue items changed.
+    pub const QUEUE: Changes = Changes(1 << 28);
 
     pub fn is_empty(self) -> bool {
         self.0 == 0
@@ -259,11 +265,18 @@ pub struct AppState {
     /// for those that aren't shown normally.
     pub app_names: BTreeMap<String, String>,
     pub app_rules: BTreeMap<String, AppRule>,
+    /// Apps whose notification groups are currently expanded in the feed.
+    pub expanded_apps: BTreeSet<String>,
+    /// Most recently dismissed notification(s) for in-feed undo.
+    pub last_dismissed: Vec<NotificationView>,
+    pub last_dismissed_label: String,
     /// Notifications that went away, newest first, while history is kept.
     pub history: Vec<HistoryEntry>,
     pub history_enabled: bool,
     /// Phone asking to control this PC for the first time while `remote_input` is off.
     pub remote_prompt: Option<DeviceId>,
+    /// Phone asking to view this PC's screen while `pc_mirror` is off.
+    pub pc_mirror_prompt: Option<(DeviceId, nectarlink_core::MirrorStart)>,
     /// Active laser pointer overlay (`(device, x, y)` in `0.0..=1.0`).
     pub laser: Option<(DeviceId, f32, f32)>,
     /// This PC's physical adapters and Wake-on-LAN readiness.
@@ -273,6 +286,8 @@ pub struct AppState {
     pub localsend_receiving: bool,
     /// Discovered LocalSend peers on the LAN.
     pub localsend_peers: Vec<LocalSendPeer>,
+    /// Persistent outbound queue items waiting for an offline device or in flight.
+    pub send_queue: Vec<nectarlink_core::QueueItem>,
 }
 
 impl AppState {
@@ -296,10 +311,31 @@ impl AppState {
             .or_else(|| self.localsend_peers.iter().find(|p| p.id == *id).map(|p| p.alias.clone()))
     }
 
+    /// Sorts paired devices so connected (`Online`) phones appear first, then
+    /// `Connecting`, then `Offline` (most recently seen first, falling back to
+    /// `paired_at` order).
+    fn sort_devices(&mut self) {
+        let tier = |link: &LinkState| match link {
+            LinkState::Online { .. } => 0u8,
+            LinkState::Connecting => 1u8,
+            LinkState::Offline { .. } => 2u8,
+        };
+        let last_seen = |link: &LinkState| match link {
+            LinkState::Offline { last_seen } => last_seen.unwrap_or(0),
+            _ => 0,
+        };
+        self.devices.sort_by(|a, b| {
+            tier(&a.link)
+                .cmp(&tier(&b.link))
+                .then_with(|| last_seen(&b.link).cmp(&last_seen(&a.link)))
+                .then_with(|| a.paired_at.cmp(&b.paired_at))
+        });
+    }
+
     /// Replaces the device list (at startup, from the core's store).
     pub fn set_devices(&mut self, devices: Vec<PairedDevice>) -> Changes {
         self.devices = devices.into_iter().map(DeviceView::from).collect();
-        self.devices.sort_by_key(|d| d.paired_at);
+        self.sort_devices();
         Changes::DEVICES
     }
 
@@ -322,9 +358,9 @@ impl AppState {
                     }
                     None => {
                         self.devices.push(DeviceView::from(device.clone()));
-                        self.devices.sort_by_key(|d| d.paired_at);
                     }
                 }
+                self.sort_devices();
                 Changes::DEVICES
             }
             NodeEvent::DeviceRemoved(id) => {
@@ -350,6 +386,10 @@ impl AppState {
                     self.remote_prompt = None;
                     changes |= Changes::REMOTE;
                 }
+                if self.pc_mirror_prompt.as_ref().is_some_and(|(d, _)| d == id) {
+                    self.pc_mirror_prompt = None;
+                    changes |= Changes::REMOTE;
+                }
                 if self.laser.is_some_and(|(d, _, _)| d == *id) {
                     self.laser = None;
                     changes |= Changes::REMOTE;
@@ -359,10 +399,31 @@ impl AppState {
                 if self.notifications.len() != notifications {
                     changes |= Changes::NOTIFICATIONS;
                 }
+                let queue_len = self.send_queue.len();
+                self.send_queue.retain(|q| q.peer != *id);
+                if self.send_queue.len() != queue_len {
+                    changes |= Changes::QUEUE | Changes::TRANSFERS;
+                }
                 changes | self.set_media(*id, Vec::new())
             }
             NodeEvent::LinkChanged { device, link } => {
-                let mut changes = self.update_device(device, |d| d.link = link.clone());
+                let tier_or_path_changed = self.device(device).is_some_and(|d| {
+                    !matches!(
+                        (&d.link, link),
+                        (LinkState::Online { path: p1, .. }, LinkState::Online { path: p2, .. }) if p1 == p2
+                    )
+                });
+                let mut changes = if tier_or_path_changed {
+                    let c = self.update_device(device, |d| d.link = link.clone());
+                    if !c.is_empty() {
+                        self.sort_devices();
+                        c | Changes::DEVICE_METRICS
+                    } else {
+                        c
+                    }
+                } else {
+                    self.update_device_metrics(device, |d| d.link = link.clone())
+                };
                 // A device that comes back sends what plays and its toggles then.
                 if matches!(link, LinkState::Offline { .. }) {
                     changes |= self.set_toggles(*device, None);
@@ -373,9 +434,11 @@ impl AppState {
             NodeEvent::PeerInfoChanged { device, info } => {
                 self.update_device(device, |d| d.info = info.clone())
             }
-            NodeEvent::PeerPowerChanged { device, power } => self.update_device(device, |d| d.power = *power),
+            NodeEvent::PeerPowerChanged { device, power } => {
+                self.update_device_metrics(device, |d| d.power = *power)
+            }
             NodeEvent::Battery { device, battery } => {
-                self.update_device(device, |d| d.battery = Some(battery.clone()))
+                self.update_device_metrics(device, |d| d.battery = Some(battery.clone()))
             }
             NodeEvent::PhoneToggles { device, toggles } => self.set_toggles(*device, Some(toggles.clone())),
             NodeEvent::Capabilities(matrix) => {
@@ -397,6 +460,10 @@ impl AppState {
                     return Changes::NONE;
                 }
                 self.remote_prompt = Some(*device);
+                Changes::REMOTE
+            }
+            NodeEvent::PcMirrorRequested { device, options } => {
+                self.pc_mirror_prompt = Some((*device, options.clone()));
                 Changes::REMOTE
             }
             NodeEvent::Discovered(found) => {
@@ -461,12 +528,16 @@ impl AppState {
             | NodeEvent::StorageRequested { .. }
             | NodeEvent::StorageChanged { .. }
             | NodeEvent::Webcam { .. }
+            | NodeEvent::PcAudioFrame { .. }
             | NodeEvent::CameraCaptureRequested { .. }
             | NodeEvent::CameraCaptureCancelled { .. } => Changes::NONE,
             NodeEvent::CameraCaptureReceived { .. } => Changes::TIMELINE,
             NodeEvent::ClipboardHistoryChanged => Changes::CLIPBOARD | Changes::TIMELINE,
             NodeEvent::TimelineChanged => Changes::TIMELINE,
             NodeEvent::LocalSendChanged => Changes::LOCALSEND,
+            NodeEvent::QueueChanged | NodeEvent::QueueDroppedOnUnpair { .. } => {
+                Changes::QUEUE | Changes::TRANSFERS
+            }
             // The gallery's own downloads (for its viewer, or the clipboard)
             // aren't files the user keeps.
             NodeEvent::Transfer(transfer) if crate::photos::is_private(&transfer.id) => {
@@ -476,6 +547,12 @@ impl AppState {
             // With artwork saved first (see crate::media).
             NodeEvent::MediaChanged { .. } => Changes::NONE,
         }
+    }
+
+    /// Replaces the outbound send queue snapshot from the core.
+    pub fn set_send_queue(&mut self, items: Vec<nectarlink_core::QueueItem>) -> Changes {
+        self.send_queue = items;
+        Changes::QUEUE | Changes::TRANSFERS
     }
 
     /// Replaces a device's players.
@@ -493,19 +570,55 @@ impl AppState {
 
     /// Adds or updates a transfer, keeping a smoothed speed.
     pub fn update_transfer(&mut self, transfer: Transfer, now: Instant) -> Changes {
+        let mut queue_updated = false;
+        if let Some(q) = self.send_queue.iter_mut().find(|q| q.id == transfer.id) {
+            q.bytes_done = transfer.done;
+            if transfer.total > 0 {
+                q.bytes_total = transfer.total;
+            }
+            queue_updated = true;
+        }
         match self.transfers.iter_mut().find(|t| t.transfer.id == transfer.id) {
             Some(view) => {
-                let elapsed = now.saturating_duration_since(view.sampled).as_secs_f64();
                 let running = transfer.state == TransferState::Running;
-                if running && elapsed > 0.0 && transfer.done >= view.transfer.done {
-                    let instant = (transfer.done - view.transfer.done) as f64 / elapsed;
-                    // Smoothed, so the number doesn't jump around.
-                    view.rate = if view.rate == 0.0 { instant } else { view.rate * 0.7 + instant * 0.3 };
-                } else if !running {
+                let was_running = view.transfer.state == TransferState::Running;
+                if !running || !was_running {
+                    // State transition (e.g. Preparing/Waiting -> Running or Running -> Waiting):
+                    // reset rate and anchor timestamp to current `done` baseline.
                     view.rate = 0.0;
+                    view.sampled = now;
+                    view.transfer = transfer;
+                } else if transfer.done < view.transfer.done {
+                    // Retry rolled back un-acknowledged buffered bytes after a disconnect.
+                    view.rate = 0.0;
+                    view.sampled = now;
+                    view.transfer = transfer;
+                } else if transfer.done > view.transfer.done {
+                    let elapsed = now.saturating_duration_since(view.sampled).as_secs_f64();
+                    if elapsed >= 0.15 {
+                        // Cap single-window instantaneous rate to 500 MB/s so initial QUIC
+                        // socket buffer fills cannot display multi-GB/s spikes.
+                        let raw_instant = (transfer.done - view.transfer.done) as f64 / elapsed;
+                        let instant = raw_instant.min(500.0 * 1024.0 * 1024.0);
+                        view.rate =
+                            if view.rate == 0.0 { instant } else { view.rate * 0.72 + instant * 0.28 };
+                        view.sampled = now;
+                        view.transfer = transfer;
+                    } else {
+                        // Keep `view.sampled` and `view.transfer.done` anchored until at least
+                        // 150ms have elapsed so bytes accumulate over a meaningful window.
+                        let baseline_done = view.transfer.done;
+                        view.transfer = transfer;
+                        view.transfer.done = baseline_done;
+                    }
+                } else {
+                    // Duplicate or metadata-only update while running: if stalled > 2.5s, decay rate.
+                    let elapsed = now.saturating_duration_since(view.sampled).as_secs_f64();
+                    if elapsed > 2.5 {
+                        view.rate = 0.0;
+                    }
+                    view.transfer = transfer;
                 }
-                view.sampled = now;
-                view.transfer = transfer;
             }
             None => self.transfers.insert(0, TransferView { transfer, rate: 0.0, sampled: now }),
         }
@@ -518,7 +631,7 @@ impl AppState {
             finished += 1;
             finished <= MAX_FINISHED_TRANSFERS
         });
-        Changes::TRANSFERS
+        if queue_updated { Changes::TRANSFERS | Changes::QUEUE } else { Changes::TRANSFERS }
     }
 
     /// Forgets a transfer, finished or not.
@@ -627,6 +740,63 @@ impl AppState {
         if changed { Changes::APPS | Changes::NOTIFICATIONS | Changes::HISTORY } else { Changes::NONE }
     }
 
+    /// Whether an app's notification group is expanded in the PC feed.
+    pub fn is_app_expanded(&self, app: &str) -> bool {
+        self.expanded_apps.contains(app)
+    }
+
+    pub fn set_app_expanded(&mut self, app: &str, expanded: bool) -> Changes {
+        let changed =
+            if expanded { self.expanded_apps.insert(app.to_owned()) } else { self.expanded_apps.remove(app) };
+        if changed { Changes::APPS | Changes::NOTIFICATIONS } else { Changes::NONE }
+    }
+
+    pub fn toggle_app_expanded(&mut self, app: &str) -> Changes {
+        let next = !self.is_app_expanded(app);
+        self.set_app_expanded(app, next)
+    }
+
+    /// Records a user-initiated dismissal so the feed can offer Undo.
+    pub fn record_dismissed(&mut self, views: Vec<NotificationView>, label: String) -> Changes {
+        if views.is_empty() {
+            return Changes::NONE;
+        }
+        self.last_dismissed = views;
+        self.last_dismissed_label = label;
+        Changes::NOTIFICATIONS
+    }
+
+    /// Restores the most recently dismissed notification(s) to the PC feed.
+    pub fn undo_dismiss(&mut self) -> Changes {
+        let views = std::mem::take(&mut self.last_dismissed);
+        self.last_dismissed_label.clear();
+        if views.is_empty() {
+            return Changes::NONE;
+        }
+        let mut changes = Changes::NOTIFICATIONS;
+        for view in views {
+            let before = self.history.len();
+            self.history
+                .retain(|h| !(h.device == view.device && h.notification.key == view.notification.key));
+            if self.history.len() != before {
+                changes |= Changes::HISTORY;
+            }
+            self.notifications
+                .retain(|n| !(n.device == view.device && n.notification.key == view.notification.key));
+            changes |= self.insert_notification(view.device, view.notification);
+        }
+        changes
+    }
+
+    pub fn clear_undo(&mut self) -> Changes {
+        if self.last_dismissed.is_empty() && self.last_dismissed_label.is_empty() {
+            return Changes::NONE;
+        }
+        self.last_dismissed.clear();
+        self.last_dismissed_label.clear();
+        Changes::NOTIFICATIONS
+    }
+
     /// Keeps notifications that went away, while history is on.
     fn remember(&mut self, gone: Vec<NotificationView>) -> Changes {
         if !self.history_enabled || gone.is_empty() {
@@ -687,6 +857,50 @@ impl AppState {
         Changes::NOTIFICATIONS
     }
 
+    /// Applies a notification event along with where its pictures were saved
+    /// (`None`: the notification came without one).
+    pub fn apply_with_images(
+        &mut self,
+        event: &NodeEvent,
+        images: Vec<((DeviceId, String), Option<PathBuf>)>,
+    ) -> Changes {
+        // A snapshot leaves pictures out when it runs short of room, so there a
+        // missing picture only means "none" for a notification this PC hasn't
+        // seen yet (a new post under a reused key). Single posts always carry theirs.
+        let unchanged: Vec<(DeviceId, String)> = match event {
+            NodeEvent::NotificationsReset { device, items } => items
+                .iter()
+                .filter(|n| {
+                    n.image.is_none()
+                        && self.notifications.iter().any(|v| {
+                            v.device == *device
+                                && v.notification.key == n.key
+                                && v.notification.when == n.when
+                                && v.notification.title == n.title
+                                && v.notification.text == n.text
+                        })
+                })
+                .map(|n| (*device, n.key.clone()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut changes = self.apply(event);
+        for (key, path) in images {
+            changes |= match path {
+                Some(path) => self.set_notification_image(key, path),
+                None if unchanged.contains(&key) => Changes::NONE,
+                None => self.clear_notification_image(&key),
+            };
+        }
+        changes
+    }
+
+    /// Forgets a notification's picture. Apps reuse a key for new posts (X
+    /// does), and one without a picture must not show the previous one's.
+    pub fn clear_notification_image(&mut self, key: &(DeviceId, String)) -> Changes {
+        if self.notification_images.remove(key).is_some() { Changes::NOTIFICATIONS } else { Changes::NONE }
+    }
+
     /// Records where an app's icon is stored.
     pub fn set_app_icon(&mut self, app: &str, path: PathBuf) -> Changes {
         if self.app_icons.get(app) == Some(&path) {
@@ -701,6 +915,13 @@ impl AppState {
         let before = device.clone();
         f(device);
         if *device == before { Changes::NONE } else { Changes::DEVICES }
+    }
+
+    fn update_device_metrics(&mut self, id: &DeviceId, f: impl FnOnce(&mut DeviceView)) -> Changes {
+        let Some(device) = self.device_mut(id) else { return Changes::NONE };
+        let before = device.clone();
+        f(device);
+        if *device == before { Changes::NONE } else { Changes::DEVICE_METRICS }
     }
 
     fn apply_pairing(&mut self, event: &PairingEvent) -> Changes {
@@ -840,6 +1061,7 @@ mod tests {
                 model: None,
                 accent: None,
                 screen: None,
+                install_id: None,
             },
             paired_at: at,
             link: LinkState::Offline { last_seen: None },
@@ -860,14 +1082,36 @@ mod tests {
 
         let online = LinkState::Online { path: ConnectionPath::Lan, rtt_ms: 4 };
         let id = DeviceId([1; 32]);
-        assert_eq!(s.apply(&NodeEvent::LinkChanged { device: id, link: online.clone() }), Changes::DEVICES);
+        assert_eq!(
+            s.apply(&NodeEvent::LinkChanged { device: id, link: online.clone() }),
+            Changes::DEVICES | Changes::DEVICE_METRICS
+        );
         assert_eq!(
             s.apply(&NodeEvent::LinkChanged { device: id, link: online }),
             Changes::NONE,
             "no change, no refresh"
         );
-        let battery = Battery { level: 50, charging: false, plugged: None, full_in: None };
-        s.apply(&NodeEvent::Battery { device: id, battery: battery.clone() });
+        assert_eq!(
+            s.apply(&NodeEvent::LinkChanged {
+                device: id,
+                link: LinkState::Online { path: ConnectionPath::Lan, rtt_ms: 9 }
+            }),
+            Changes::DEVICE_METRICS,
+            "RTT-only update emits DEVICE_METRICS without DEVICES"
+        );
+        let battery = Battery {
+            level: 50,
+            charging: false,
+            plugged: None,
+            full_in: None,
+            cell_bars: None,
+            cell_type: None,
+            wifi_bars: None,
+        };
+        assert_eq!(
+            s.apply(&NodeEvent::Battery { device: id, battery: battery.clone() }),
+            Changes::DEVICE_METRICS
+        );
         assert_eq!(s.device(&id).unwrap().battery, Some(battery));
 
         // Events about unknown devices are ignored.
@@ -878,6 +1122,23 @@ mod tests {
 
         assert_eq!(s.apply(&NodeEvent::DeviceRemoved(id)), Changes::DEVICES);
         assert_eq!(s.devices.len(), 1);
+    }
+
+    #[test]
+    fn online_devices_sort_before_offline_devices() {
+        let mut s = AppState::default();
+        s.apply(&NodeEvent::DeviceAdded(paired(1, 10)));
+        s.apply(&NodeEvent::DeviceAdded(paired(2, 20)));
+        assert_eq!(s.devices[0].id, DeviceId([1; 32]));
+        assert_eq!(s.devices[1].id, DeviceId([2; 32]));
+
+        let online = LinkState::Online { path: ConnectionPath::Lan, rtt_ms: 3 };
+        assert_eq!(
+            s.apply(&NodeEvent::LinkChanged { device: DeviceId([2; 32]), link: online }),
+            Changes::DEVICES | Changes::DEVICE_METRICS
+        );
+        assert_eq!(s.devices[0].id, DeviceId([2; 32]), "online device moves to index 0");
+        assert_eq!(s.devices[1].id, DeviceId([1; 32]));
     }
 
     #[test]
@@ -938,6 +1199,49 @@ mod tests {
             live: None,
             conversation: None,
         }
+    }
+
+    #[test]
+    fn a_new_post_under_a_reused_key_never_shows_the_old_picture() {
+        let mut s = AppState::default();
+        let phone = DeviceId([1; 32]);
+        let key = (phone, "x".to_owned());
+        let pic = PathBuf::from("helicopter.jpg");
+        let mut first = note("x", 100);
+        first.image = Some(vec![9]);
+        s.apply_with_images(
+            &NodeEvent::NotificationPosted { device: phone, notification: first.clone() },
+            vec![(key.clone(), Some(pic.clone()))],
+        );
+        assert_eq!(s.notification_images.get(&key), Some(&pic));
+
+        // A reconnect snapshot that left the same post's picture out keeps it.
+        let mut same = first.clone();
+        same.image = None;
+        s.apply_with_images(
+            &NodeEvent::NotificationsReset { device: phone, items: vec![same] },
+            vec![(key.clone(), None)],
+        );
+        assert_eq!(s.notification_images.get(&key), Some(&pic), "same post, picture kept");
+
+        // A new post under the same key without a picture drops the old one.
+        let mut next = note("x", 200);
+        next.text = Some("Day 8".into());
+        s.apply_with_images(
+            &NodeEvent::NotificationPosted { device: phone, notification: next.clone() },
+            vec![(key.clone(), None)],
+        );
+        assert_eq!(s.notification_images.get(&key), None, "new post, no stale picture");
+
+        // And a snapshot with a different post under that key does the same.
+        s.set_notification_image(key.clone(), pic);
+        let mut other = note("x", 300);
+        other.text = Some("another post".into());
+        s.apply_with_images(
+            &NodeEvent::NotificationsReset { device: phone, items: vec![other] },
+            vec![(key.clone(), None)],
+        );
+        assert_eq!(s.notification_images.get(&key), None);
     }
 
     fn keys(s: &AppState) -> Vec<&str> {
@@ -1193,5 +1497,64 @@ mod tests {
         s.apply(&NodeEvent::PhoneToggles { device: phone, toggles });
         assert!(s.apply(&NodeEvent::DeviceRemoved(phone)).intersects(Changes::TOGGLES));
         assert!(s.toggles.is_empty());
+    }
+
+    #[test]
+    fn app_group_expansion_and_undo_dismiss_work() {
+        let phone = DeviceId([1; 32]);
+        let mut s = AppState { history_enabled: true, ..AppState::default() };
+        s.apply(&NodeEvent::NotificationPosted { device: phone, notification: note("a", 10) });
+        s.apply(&NodeEvent::NotificationPosted { device: phone, notification: note("b", 20) });
+        let app = s.notifications[0].notification.app.clone();
+
+        assert!(!s.is_app_expanded(&app));
+        assert!(s.toggle_app_expanded(&app).intersects(Changes::NOTIFICATIONS | Changes::APPS));
+        assert!(s.is_app_expanded(&app));
+        assert!(s.toggle_app_expanded(&app).intersects(Changes::NOTIFICATIONS | Changes::APPS));
+        assert!(!s.is_app_expanded(&app));
+
+        let dismissed = s.notifications.clone();
+        s.apply(&NodeEvent::NotificationRemoved { device: phone, key: "a".into() });
+        s.apply(&NodeEvent::NotificationRemoved { device: phone, key: "b".into() });
+        s.record_dismissed(dismissed, "Dismissed 2 from Chat".into());
+        assert!(s.notifications.is_empty());
+        assert_eq!(s.history.len(), 2);
+        assert_eq!(s.last_dismissed_label, "Dismissed 2 from Chat");
+
+        let changes = s.undo_dismiss();
+        assert!(changes.intersects(Changes::NOTIFICATIONS));
+        assert_eq!(keys(&s), ["b", "a"]);
+        assert!(s.history.is_empty());
+        assert!(s.last_dismissed_label.is_empty());
+    }
+
+    #[test]
+    fn transfer_events_update_matching_send_queue_item_in_place() {
+        let mut s = AppState::default();
+        let peer = DeviceId([1; 32]);
+        s.set_send_queue(vec![nectarlink_core::QueueItem {
+            id: "q-transfer-1".into(),
+            seq: 1,
+            peer,
+            peer_name: "Pixel".into(),
+            kind: nectarlink_core::QueueKind::Files,
+            status: nectarlink_core::QueueStatus::Sending,
+            created_at: 100,
+            expires_at: 200,
+            attempts: 1,
+            title: "a.bin".into(),
+            detail: "1000 B".into(),
+            bytes_total: 1000,
+            bytes_done: 0,
+            files_total: 1,
+            files_done: 0,
+            files: Vec::new(),
+        }]);
+
+        let t = transfer("q-transfer-1", 450, TransferState::Running);
+        let changes = s.apply(&NodeEvent::Transfer(t));
+        assert_eq!(changes, Changes::TRANSFERS | Changes::QUEUE);
+        assert_eq!(s.send_queue[0].bytes_done, 450);
+        assert_eq!(s.send_queue[0].bytes_total, 1000);
     }
 }

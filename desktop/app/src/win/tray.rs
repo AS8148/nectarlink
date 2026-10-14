@@ -331,6 +331,17 @@ pub fn apply_no_activate_style_by_title(title: &str) {
                 let wanted = ex | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0;
                 let _ =
                     windows::Win32::UI::WindowsAndMessaging::SetWindowLongW(cur, GWL_EXSTYLE, wanted as i32);
+                let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
+                    cur,
+                    Some(windows::Win32::UI::WindowsAndMessaging::HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                        | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
+                        | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+                );
                 break;
             }
             match GetWindow(cur, GW_HWNDNEXT) {

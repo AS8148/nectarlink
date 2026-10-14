@@ -642,6 +642,11 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
     Ok(true)
 }
 
+/// `pc.audio.set` volume values that mean "start" and "stop playing this PC's audio on the
+/// phone" (Use phone as speaker), outside the 0..=100 volume range.
+pub const PHONE_SPEAKER_ON: u8 = 201;
+pub const PHONE_SPEAKER_OFF: u8 = 200;
+
 async fn run_pc_audio_set(shared: &Arc<Shared>, peer: &DeviceId, req: PcAudioSet) -> Envelope {
     if !req.is_valid() {
         return Envelope::error(ErrorCode::BadMessage, "invalid volume or mute");
@@ -649,7 +654,12 @@ async fn run_pc_audio_set(shared: &Arc<Shared>, peer: &DeviceId, req: PcAudioSet
     if !shared.offers_pc_audio() && !shared.offers_deck() {
         return Envelope::error(ErrorCode::Unsupported, "PC audio control is not supported here");
     }
-    if !shared.toggle_on(peer, crate::actions::POWER_TOGGLE) && !shared.toggle_on(peer, INPUT_TOGGLE) {
+    let is_phone_speaker_toggle =
+        req.volume.is_some_and(|v| v == PHONE_SPEAKER_OFF || v == PHONE_SPEAKER_ON) && req.muted.is_none();
+    if !is_phone_speaker_toggle
+        && !shared.toggle_on(peer, crate::actions::POWER_TOGGLE)
+        && !shared.toggle_on(peer, INPUT_TOGGLE)
+    {
         return Envelope::error(ErrorCode::Denied, "PC actions are turned off for this device");
     }
     let platform = shared.platform.clone();
@@ -661,14 +671,18 @@ async fn run_pc_audio_set(shared: &Arc<Shared>, peer: &DeviceId, req: PcAudioSet
         .unwrap_or_else(|e| Err(e.to_string()));
     match ran {
         Ok(()) => {
-            let mut state = shared.deck.local_state();
-            if let Some(v) = vol {
-                state.volume = v.min(100);
+            if !is_phone_speaker_toggle {
+                let mut state = shared.deck.local_state();
+                if let Some(v) = vol
+                    && v <= 100
+                {
+                    state.volume = v;
+                }
+                if let Some(m) = muted {
+                    state.muted = m;
+                }
+                let _ = shared.set_deck_state(state).await;
             }
-            if let Some(m) = muted {
-                state.muted = m;
-            }
-            let _ = shared.set_deck_state(state).await;
             Envelope::empty(types::OK)
         }
         Err(reason) => {

@@ -11,8 +11,10 @@ QtObject {
     id: theme
 
     readonly property bool graphite: Preferences.theme === "graphite"
+    readonly property bool glass: Preferences.theme === "glass" || Preferences.theme === "blurry"
     readonly property bool dark: Preferences.colorMode === "dark"
                                  || (Preferences.colorMode === "system" && AppController.systemDark)
+    readonly property bool amoled: dark && Preferences.amoled && (graphite || Preferences.seed === "black")
     readonly property bool reduceMotion: AppController.reduceMotion
 
     readonly property var bloomSeeds: Tokens.data.themes.bloom.seeds
@@ -20,6 +22,20 @@ QtObject {
     // in the shape of a preset seed.
     readonly property var wallpaperSeed: AppController.wallpaperColors !== ""
         ? JSON.parse(AppController.wallpaperColors) : null
+    // Material You color scheme extracted from the currently playing media artwork.
+    readonly property var artworkSeed: {
+        if (MediaList.activeColors === "")
+            return null
+        try {
+            return JSON.parse(MediaList.activeColors)
+        } catch (e) {
+            return null
+        }
+    }
+    readonly property string artworkUrl: MediaList.activeArt
+    readonly property bool isArtworkSeed: Preferences.seed === "artwork"
+    readonly property bool artworkAmbientActive: false
+    readonly property bool ambientBlurActive: glass
     // Material You color schemes from paired phones (`[{ id, key, name, label, hasAccent, scheme }]`).
     readonly property var phoneSeeds: AppController.phoneColors !== ""
         ? JSON.parse(AppController.phoneColors) : []
@@ -47,16 +63,20 @@ QtObject {
         }
         return null
     }
-    // "wallpaper", "phone" / "phone:<id>", or a preset name; wallpaper and
-    // phone seeds fall back to the default preset until their colors are known.
-    readonly property string seed: isPhoneSeed
-        ? (activePhoneSeed ? Preferences.seed : (wallpaperSeed ? "wallpaper" : Tokens.data.themes.bloom.defaultSeed))
-        : Preferences.seed === "wallpaper"
-          ? (wallpaperSeed ? "wallpaper" : Tokens.data.themes.bloom.defaultSeed)
-          : (bloomSeeds[Preferences.seed] ? Preferences.seed : Tokens.data.themes.bloom.defaultSeed)
-    readonly property var seedColors: (seed === "phone" || seed.startsWith("phone:"))
-        ? activePhoneSeed
-        : (seed === "wallpaper" ? wallpaperSeed : bloomSeeds[seed])
+    // "artwork", "wallpaper", "phone" / "phone:<id>", or a preset name; dynamic
+    // seeds fall back to wallpaper or the default preset until their colors are known.
+    readonly property string seed: isArtworkSeed
+        ? (artworkSeed ? "artwork" : (wallpaperSeed ? "wallpaper" : Tokens.data.themes.bloom.defaultSeed))
+        : isPhoneSeed
+          ? (activePhoneSeed ? Preferences.seed : (wallpaperSeed ? "wallpaper" : Tokens.data.themes.bloom.defaultSeed))
+          : Preferences.seed === "wallpaper"
+            ? (wallpaperSeed ? "wallpaper" : Tokens.data.themes.bloom.defaultSeed)
+            : (bloomSeeds[Preferences.seed] ? Preferences.seed : Tokens.data.themes.bloom.defaultSeed)
+    readonly property var seedColors: seed === "artwork"
+        ? artworkSeed
+        : (seed === "phone" || seed.startsWith("phone:"))
+          ? activePhoneSeed
+          : (seed === "wallpaper" ? wallpaperSeed : bloomSeeds[seed])
     readonly property var palette: graphite
         ? Tokens.data.themes.graphite.variants[dark ? "slate" : "paper"]
         : seedColors[dark ? "dark" : "light"]
@@ -69,16 +89,16 @@ QtObject {
     readonly property color primaryContainerContent: palette.onPrimaryContainer
     readonly property color secondaryContainer: palette.secondaryContainer
     readonly property color secondaryContainerContent: palette.onSecondaryContainer
-    readonly property color surface: palette.surface
-    readonly property color surfaceLow: palette.surfaceContainerLow
-    readonly property color surfaceContainerLow: palette.surfaceContainerLow
-    readonly property color surfaceContainer: palette.surfaceContainer
-    readonly property color surfaceContainerHigh: palette.surfaceContainerHigh
-    readonly property color surfaceContainerHighest: palette.surfaceContainerHighest
+    readonly property color surface: amoled ? "#000000" : palette.surface
+    readonly property color surfaceLow: amoled ? "#050507" : palette.surfaceContainerLow
+    readonly property color surfaceContainerLow: amoled ? "#050507" : palette.surfaceContainerLow
+    readonly property color surfaceContainer: amoled ? "#0A0B0E" : palette.surfaceContainer
+    readonly property color surfaceContainerHigh: amoled ? "#121318" : palette.surfaceContainerHigh
+    readonly property color surfaceContainerHighest: amoled ? "#1A1C23" : palette.surfaceContainerHighest
     readonly property color surfaceContent: palette.onSurface
     readonly property color surfaceContentVariant: palette.onSurfaceVariant
     readonly property color outline: palette.outline
-    readonly property color outlineVariant: palette.outlineVariant
+    readonly property color outlineVariant: amoled ? "#22242C" : palette.outlineVariant
     // Success never gets its own (green) color: it uses the theme's ink.
     readonly property color success: primary
     readonly property color warning: status.warning
@@ -86,13 +106,59 @@ QtObject {
     readonly property color errorContent: status.onError
 
     // ---- Component colors (docs/design/assets/nl.css) ----
-    readonly property color cardColor: graphite ? "transparent" : surfaceContainer
-    readonly property color cardBorder: graphite ? outlineVariant : "transparent"
-    readonly property color tileColor: graphite ? "transparent" : surfaceContainerHigh
+    readonly property color cardColor: graphite ? "transparent"
+        : (glass
+            ? Qt.tint(
+                Qt.rgba(surfaceContainer.r, surfaceContainer.g, surfaceContainer.b, amoled ? 0.56 : (dark ? 0.36 : 0.52)),
+                Qt.rgba(primary.r, primary.g, primary.b, dark ? 0.08 : 0.06)
+            )
+            : (artworkAmbientActive
+                ? Qt.rgba(surfaceContainer.r, surfaceContainer.g, surfaceContainer.b, dark ? 0.74 : 0.80)
+                : (amoled
+                    ? Qt.tint(surfaceContainer, Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, 0.08))
+                    : Qt.tint(
+                        surfaceContainer,
+                        Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, isPhoneSeed ? (dark ? 0.28 : 0.36) : (dark ? 0.16 : 0.22))
+                    ))))
+    readonly property color cardBorder: graphite ? outlineVariant
+        : (glass
+            ? (dark ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.28))
+            : (artworkAmbientActive
+                ? Qt.rgba(outlineVariant.r, outlineVariant.g, outlineVariant.b, dark ? 0.36 : 0.45)
+                : (amoled ? "#1D1F27" : "transparent")))
+    readonly property color tileColor: graphite ? "transparent"
+        : (glass
+            ? Qt.tint(
+                Qt.rgba(1, 1, 1, dark ? 0.08 : 0.48),
+                Qt.rgba(primary.r, primary.g, primary.b, dark ? 0.08 : 0.06)
+            )
+            : (artworkAmbientActive
+                ? Qt.rgba(surfaceContainerHigh.r, surfaceContainerHigh.g, surfaceContainerHigh.b, dark ? 0.76 : 0.82)
+                : (amoled
+                    ? Qt.tint(surfaceContainerHigh, Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, 0.10))
+                    : Qt.tint(
+                        surfaceContainerHigh,
+                        Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, isPhoneSeed ? (dark ? 0.32 : 0.42) : (dark ? 0.18 : 0.24))
+                    ))))
     readonly property color heroColor: graphite ? "transparent"
-        : Qt.tint(surface, Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, 0.62))
+        : Qt.tint(
+            ambientBlurActive
+                ? Qt.rgba(surface.r, surface.g, surface.b, glass ? (amoled ? 0.54 : (dark ? 0.34 : 0.48)) : (dark ? 0.65 : 0.72))
+                : (amoled ? "#090A0E" : surface),
+            Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, glass ? (dark ? 0.30 : 0.38) : (artworkAmbientActive ? 0.52 : (amoled ? 0.32 : 0.68)))
+        )
     readonly property color heroContent: graphite ? surfaceContent : primaryContainerContent
-    readonly property color railColor: graphite ? "transparent" : surfaceLow
+    readonly property color railColor: graphite ? "transparent"
+        : (glass
+            ? Qt.rgba(surfaceLow.r, surfaceLow.g, surfaceLow.b, amoled ? 0.48 : (dark ? 0.28 : 0.42))
+            : (artworkAmbientActive
+                ? Qt.rgba(surfaceLow.r, surfaceLow.g, surfaceLow.b, dark ? 0.62 : 0.68)
+                : (amoled
+                    ? "#030305"
+                    : Qt.tint(
+                        surfaceLow,
+                        Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, isPhoneSeed ? (dark ? 0.24 : 0.32) : (dark ? 0.14 : 0.18))
+                    ))))
     readonly property color indicator: graphite ? surfaceContent : secondaryContainer
     readonly property color indicatorContent: graphite ? surface : secondaryContainerContent
     readonly property color buttonShadow: graphite ? palette.buttonShadow : "transparent"

@@ -148,7 +148,7 @@ pub fn unique_recording_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
         })
         .find(|(audio, markers)| !audio.exists() && !markers.exists())
         .map(|(audio, _)| audio)
-        .expect("a free recording file name exists")
+        .unwrap_or_else(|| first)
 }
 
 /// Companion marker file path next to `audio_path` (`<stem>.markers.txt`).

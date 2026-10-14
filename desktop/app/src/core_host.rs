@@ -23,7 +23,7 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub struct CoreHost {
-    runtime: Runtime,
+    pub(crate) runtime: Runtime,
     node: OnceLock<Node>,
     /// Signaled once the node is up, or has failed to start.
     started: Notify,
@@ -38,9 +38,14 @@ pub fn host() -> &'static CoreHost {
     HOST.get().expect("core host is started in main before Qt")
 }
 
+/// The running host's data directory, if the host has been started.
+pub fn try_data_dir() -> Option<&'static std::path::Path> {
+    HOST.get().map(|h| h.data_dir.as_path())
+}
+
 /// The node, once it has started.
 pub fn node() -> Option<Node> {
-    host().node.get().cloned()
+    HOST.get()?.node.get().cloned()
 }
 
 /// The node once it has started, or `None` if it couldn't.
@@ -90,13 +95,11 @@ pub fn start(data_dir: PathBuf, platform: Arc<dyn Platform>) -> std::io::Result<
     Ok(host)
 }
 
-async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
-    let host = host();
-    let wake = crate::win::wol::query_wake_status();
-    let mut config = NodeConfig::new(&data_dir, this_device(), env!("CARGO_PKG_VERSION"));
-    config.downloads_dir = Some(downloads_dir());
-    // This PC's own players, for phones (crate::win::media_sessions).
-    config.capabilities = vec![
+/// Computes the PC's advertised capabilities, advertising capture (`mirror.capture`)
+/// and input injection (`mirror.input`, `input.inject`) only when enabled for at
+/// least one paired device (or actively sharing).
+pub fn compute_capabilities(node: Option<&Node>) -> Vec<String> {
+    let mut caps = vec![
         "media.control".into(),
         "pc.power".into(),
         nectarlink_core::PC_WAKE.into(),
@@ -107,17 +110,68 @@ async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
         nectarlink_core::SMS_SHOW.into(),
         nectarlink_core::MIRROR_VIEW.into(),
         nectarlink_core::MIRROR_LISTEN.into(),
-        nectarlink_core::INPUT_INJECT.into(),
         nectarlink_core::DECK_ACTIONS.into(),
         nectarlink_core::PC_AUDIO.into(),
         nectarlink_core::RECORDER.into(),
         nectarlink_core::TOGGLES_SHOW.into(),
         nectarlink_core::STORAGE_MOUNT.into(),
+        nectarlink_core::STORAGE_READ.into(),
+        nectarlink_core::STORAGE_WRITE.into(),
         nectarlink_core::WEBCAM_VIRTUAL.into(),
     ];
-    if crate::win::vcam::is_registered() {
-        config.capabilities.push(nectarlink_core::WEBCAM_ADDON_VCAM.into());
+    let mut pc_mirror_enabled = crate::pc_mirror::is_active();
+    let mut remote_input_enabled = false;
+    if let Some(node) = node
+        && let Ok(devices) = node.paired_devices()
+    {
+        for d in devices {
+            if let Ok(toggles) = node.device_toggles(d.id) {
+                for (name, on) in toggles {
+                    if on && name == nectarlink_core::PC_MIRROR_TOGGLE {
+                        pc_mirror_enabled = true;
+                    }
+                    if on && name == "remote_input" {
+                        remote_input_enabled = true;
+                    }
+                }
+            }
+        }
     }
+    if pc_mirror_enabled {
+        caps.push(nectarlink_core::MIRROR_CAPTURE.into());
+    }
+    if remote_input_enabled {
+        caps.push(nectarlink_core::MIRROR_INPUT.into());
+        caps.push(nectarlink_core::INPUT_INJECT.into());
+    }
+    if crate::win::vcam::is_registered() {
+        caps.push(nectarlink_core::WEBCAM_ADDON_VCAM.into());
+    }
+    caps
+}
+
+/// Recomputes and broadcasts this PC's advertised capabilities when feature toggles
+/// (`pc_mirror`, `remote_input`) or active sessions change.
+pub fn refresh_capabilities() {
+    let Some(node) = node() else { return };
+    spawn(async move {
+        let caps = compute_capabilities(Some(&node));
+        node.update_power(nectarlink_core::PowerLevel::Basic, caps).await;
+    });
+}
+
+async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
+    let host = host();
+    let wake = crate::win::wol::query_wake_status();
+    let mut config = NodeConfig::new(&data_dir, this_device(), env!("CARGO_PKG_VERSION"));
+    config.downloads_dir = Some(downloads_dir());
+    // NECTARLINK_NO_ADB=1 keeps a development copy from reaching phones plugged in over USB.
+    let adb_disabled = std::env::var_os("NECTARLINK_NO_ADB").is_some_and(|v| v == "1");
+    config.adb_server = (!adb_disabled).then_some(nectarlink_core::DEFAULT_ADB_ADDR);
+    config.away_mode = crate::settings::Settings::load(&data_dir).away_mode;
+    // This PC's own players, for phones (crate::win::media_sessions).
+    config.capabilities = compute_capabilities(None);
+    let initial_caps = config.capabilities.clone();
     let node = match Node::start(config, platform).await {
         Ok(node) => node,
         Err(e) => {
@@ -130,6 +184,10 @@ async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
             return;
         }
     };
+    let post_start_caps = compute_capabilities(Some(&node));
+    if post_start_caps != initial_caps {
+        node.update_power(nectarlink_core::PowerLevel::Basic, post_start_caps).await;
+    }
     node.set_wake_info(wake.info.clone()).await;
     // Subscribe before reading the initial state so no event is missed.
     let mut events = node.events();
@@ -146,9 +204,14 @@ async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
         .collect();
     let toggles: Vec<_> =
         devices.iter().filter_map(|d| node.phone_toggles(d.id).map(|t| (d.id, t))).collect();
+    let send_queue = node.send_queue(None).unwrap_or_default();
     let status = CoreStatus::Ready { device_id: node.device_id(), name: this_device().name };
     crate::clipboard::apply_history_setting(&node);
-    let saved_settings = crate::settings::Settings::load(&data_dir);
+    let mut saved_settings = crate::settings::Settings::load(&data_dir);
+    let walkthrough_reconciled = saved_settings.reconcile_walkthrough_for_paired_devices(devices.len());
+    if walkthrough_reconciled {
+        let _ = saved_settings.save(&data_dir);
+    }
     let _ = node.set_timeline_retention(nectarlink_core::TimelineRetention {
         max_days: saved_settings.timeline_retention_days,
         max_entries: nectarlink_core::DEFAULT_TIMELINE_MAX_ENTRIES,
@@ -162,16 +225,76 @@ async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
         for (id, t) in toggles {
             changes |= s.set_toggles(id, Some(t));
         }
+        changes |= s.set_send_queue(send_queue);
         s.status = Some(status);
         s.wake = wake;
         changes |= Changes::STATUS | Changes::CAPABILITIES | Changes::CLIPBOARD | Changes::TIMELINE;
+        if walkthrough_reconciled {
+            changes |= Changes::PREFS;
+        }
         changes
     });
     host.started.notify_waiters();
 
+    host.runtime.spawn(async {
+        let mut was_active = false;
+        let mut last_sent_at = std::time::Instant::now() - std::time::Duration::from_secs(60);
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            let Some(node) = self::node() else { continue };
+            let online_peers: Vec<_> = host.hub.read(|s| {
+                s.devices
+                    .iter()
+                    .filter(|d| matches!(d.link, LinkState::Online { .. }))
+                    .map(|d| d.id)
+                    .collect()
+            });
+            if online_peers.is_empty() {
+                was_active = false;
+                continue;
+            }
+            let active = crate::win::input::is_user_active_within_ms(30_000);
+            let should_send = active != was_active
+                || (active && last_sent_at.elapsed() >= std::time::Duration::from_secs(30));
+            if should_send {
+                was_active = active;
+                last_sent_at = std::time::Instant::now();
+                for peer in online_peers {
+                    let node = node.clone();
+                    tokio::spawn(async move {
+                        let _ = node
+                            .set_phone_toggle(
+                                peer,
+                                "pc_active".into(),
+                                nectarlink_core::PhoneToggleValue::Bool(active),
+                            )
+                            .await;
+                    });
+                }
+            }
+        }
+    });
+
     loop {
         match events.recv().await {
             Ok(event) => {
+                if matches!(
+                    &event,
+                    nectarlink_core::NodeEvent::QueueChanged
+                        | nectarlink_core::NodeEvent::QueueDroppedOnUnpair { .. }
+                ) && let Some(node) = self::node()
+                {
+                    let items = node.send_queue(None).unwrap_or_default();
+                    host.hub.update(|s| s.set_send_queue(items));
+                }
+                if let nectarlink_core::NodeEvent::QueueDroppedOnUnpair { peer_name, dropped_count, .. } =
+                    &event
+                    && *dropped_count > 0
+                {
+                    crate::bridge::app::show_message(format!(
+                        "Dropped {dropped_count} queued item(s) for {peer_name} (device unpaired)."
+                    ));
+                }
                 crate::notifications::apply(&event);
                 crate::media::on_event(&event);
                 crate::notifications::update_toasts(&event);
@@ -181,12 +304,14 @@ async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
                 crate::calls::on_event(&event);
                 crate::messages::on_event(&event);
                 crate::mirror::on_event(&event);
+                crate::pc_mirror::on_event(&event);
                 crate::remote::on_event(&event);
                 crate::transfers::on_event(&event);
                 crate::send_to::on_event(&event);
                 crate::battery::on_event(&event);
                 crate::storage::on_event(&event);
                 crate::webcam::on_event(&event);
+                crate::automations::on_event(&event);
                 crate::bridge::app::on_home_event(&event);
             }
             Err(RecvError::Lagged(missed)) => {
@@ -201,11 +326,14 @@ async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
                         devices.iter().filter_map(|d| n.phone_toggles(d.id).map(|t| (d.id, t))).collect()
                     })
                     .unwrap_or_default();
+                let send_queue =
+                    host.node.get().map(|n| n.send_queue(None).unwrap_or_default()).unwrap_or_default();
                 host.hub.update(|s| {
                     let mut changes = s.set_devices(devices);
                     for (id, t) in toggles {
                         changes |= s.set_toggles(id, Some(t));
                     }
+                    changes |= s.set_send_queue(send_queue);
                     changes
                 });
             }
@@ -230,6 +358,7 @@ fn this_device() -> DeviceInfo {
         model: None,
         accent: None,
         screen: None,
+        install_id: crate::win::machine_guid().as_deref().and_then(nectarlink_core::install_id_from),
     }
 }
 

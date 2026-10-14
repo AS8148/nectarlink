@@ -29,12 +29,23 @@ pub enum Request {
     Show,
     /// Send files to a paired device.
     Send { device: String, paths: Vec<PathBuf> },
+    /// Share files, a link, or text from the Windows Share sheet or `--share`.
+    Share {
+        #[serde(default)]
+        files: Vec<PathBuf>,
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        text: Option<String>,
+    },
     /// Show or update a watched CLI task (`nectarlink notify-when`) on a paired phone.
     TaskNotify {
         #[serde(default)]
         device: Option<String>,
         task: nectarlink_core::TaskNotify,
     },
+    /// Run a taskbar Jump List task (`--task <action>`).
+    Task { action: String },
     /// Quit.
     Quit,
 }
@@ -119,11 +130,19 @@ mod tests {
                 exit_code: None,
             },
         };
+        let share = Request::Share {
+            files: vec![PathBuf::from(r"C:\files\photo.png")],
+            url: Some("https://example.com".into()),
+            text: Some("note".into()),
+        };
+        let jump = Request::Task { action: "find-phone".into() };
         queue(data.path(), &send(1)).unwrap();
         queue(data.path(), &Request::Show).unwrap();
         queue(data.path(), &task).unwrap();
+        queue(data.path(), &share).unwrap();
+        queue(data.path(), &jump).unwrap();
         queue(data.path(), &send(2)).unwrap();
-        assert_eq!(drain(data.path()), vec![send(1), Request::Show, task, send(2)]);
+        assert_eq!(drain(data.path()), vec![send(1), Request::Show, task, share, jump, send(2)]);
         assert!(drain(data.path()).is_empty(), "drained");
     }
 

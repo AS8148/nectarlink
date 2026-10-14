@@ -49,8 +49,8 @@ Datagram-eligible `Input` variants:
 
 ### 2.2 Control stream requests
 
-Discrete actions that must arrive — and permission checks when opening the
-remote screen — use control-stream requests:
+Discrete actions that must arrive, and permission checks when opening the
+remote screen, use control-stream requests:
 
 ```
 t = "remote.check"  id = n  b = {}
@@ -101,15 +101,15 @@ SlideAction  = "next" | "previous" | "start" | "stop" | "black"
   up / standard wheel ticks, `dx > 0` scrolls right) in wheel notches
   (fractions allowed for smooth scrolling), each finite and within
   `[-200, 200]`.
-- **Text (`text`):** 1–256 UTF-8 bytes of printable Unicode text (no control
+- **Text (`text`):** 1 to 256 UTF-8 bytes of printable Unicode text (no control
   characters). Injected as Unicode characters (`KEYEVENTF_UNICODE` on Windows)
   so non-Latin scripts and emojis work regardless of keyboard layout.
 - **Keys (`key`):**
   - Named keys: `enter`, `backspace`, `tab`, `escape`, `space`, `left`,
     `right`, `up`, `down`, `home`, `end`, `page_up`, `page_down`, `delete`,
-    `f1`–`f12`, `win`.
-  - Modified keys: a single ASCII lowercase letter (`a`–`z`) or digit
-    (`0`–`9`) when `mods` is non-empty (up to 4 modifiers from `ctrl`, `alt`,
+    `f1` to `f12`, `win`.
+  - Modified keys: a single ASCII lowercase letter (`a` to `z`) or digit
+    (`0` to `9`) when `mods` is non-empty (up to 4 modifiers from `ctrl`, `alt`,
     `shift`, `win`).
   - Named shortcuts (with empty `mods`): `copy` (`Ctrl+C`), `paste`
     (`Ctrl+V`), `cut` (`Ctrl+X`), `undo` (`Ctrl+Z`), `select_all` (`Ctrl+A`),

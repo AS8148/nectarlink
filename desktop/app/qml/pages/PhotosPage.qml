@@ -186,13 +186,7 @@ Item {
         load()
     }
 
-    opacity: active ? 1 : 0
-    visible: opacity > 0
-    Behavior on opacity { NumberAnimation { duration: Theme.fadeNormal } }
-    transform: Translate {
-        y: page.active || Theme.reduceMotion ? 0 : 12
-        Behavior on y { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springGentle; damping: Theme.dampingGentle } }
-    }
+    visible: active
 
     // Keyboard shortcuts for viewer navigation and selection.
     Shortcut {
@@ -216,7 +210,7 @@ Item {
         }
     }
     Shortcut {
-        sequence: StandardKey.Copy
+        sequences: [StandardKey.Copy]
         enabled: page.active && (
             (page.viewerIndex >= 0 && page.viewedItem !== null && !page.viewedItem.isVideo)
             || (page.selectedCount === 1 && !page.singleSelectedIsVideo)
@@ -268,7 +262,7 @@ Item {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             role: "title"
-            text: page.deviceId.length === 0 ? qsTr("Your phone's photos on your PC")
+            text: page.deviceId.length === 0 ? qsTr("Photos")
                 : qsTr("%1 isn't connected").arg(page.deviceName)
         }
         Txt {
@@ -278,8 +272,8 @@ Item {
             role: "body"
             muted: true
             text: page.deviceId.length === 0
-                ? qsTr("Pair your phone to browse its camera roll, screenshots, and albums right from here.")
-                : qsTr("Your photos and albums show up here when it's back.")
+                ? qsTr("Pair your phone to browse photos and albums.")
+                : qsTr("Connect %1 to view photos.").arg(page.deviceName)
         }
     }
 
@@ -616,12 +610,12 @@ Item {
                     role: "bodySmall"
                     muted: true
                     text: Photos.status === "off"
-                        ? qsTr("Turn on Photos for this phone, here in Settings and in the Nectarlink app on the phone.")
+                        ? qsTr("Enable Photos in Settings.")
                         : Photos.status === "unsupported"
-                          ? qsTr("In the Nectarlink app on your phone, tap Allow on “Photos and videos”.")
+                          ? qsTr("Grant photos permission on %1.").arg(page.deviceName)
                           : Photos.status === "offline"
-                            ? qsTr("Your photos and albums show up here when it's back.")
-                            : qsTr("Something went wrong reading the photo library from the phone.")
+                            ? qsTr("Connect %1 to view photos.").arg(page.deviceName)
+                            : qsTr("Unable to load photos.")
                 }
                 LockChip {
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -657,14 +651,6 @@ Item {
                     role: "title"
                     size: 15
                     text: qsTr("No photos or videos")
-                }
-                Txt {
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
-                    role: "bodySmall"
-                    muted: true
-                    text: qsTr("Photos and videos on your phone will appear here.")
                 }
             }
 
@@ -744,8 +730,13 @@ Item {
     // ---- In-app Photo & Video Viewer Overlay ----
     Rectangle {
         id: viewer
+        readonly property bool opened: page.viewerIndex >= 0 && page.viewedItem !== null
         anchors.fill: parent
-        visible: page.viewerIndex >= 0 && page.viewedItem !== null
+        visible: opacity > 0
+        opacity: opened ? 1.0 : 0.0
+        scale: opened || Theme.reduceMotion ? 1.0 : 0.96
+        Behavior on opacity { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast; easing.type: Easing.OutCubic } }
+        Behavior on scale { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast; easing.type: Easing.OutCubic } }
         color: Theme.surface
         z: 10
 
@@ -1271,9 +1262,27 @@ Item {
             // Under the selection circle (its z is higher). A MouseArea, as
             // a TapHandler's event point doesn't carry the keyboard modifiers.
             MouseArea {
+                id: mouse
                 anchors.fill: parent
-                onClicked: (mouse) => {
-                    const mods = mouse.modifiers
+                property point pressPos: Qt.point(0, 0)
+                property bool dragStarted: false
+                onPressed: (ev) => {
+                    pressPos = Qt.point(ev.x, ev.y)
+                    dragStarted = false
+                    if (!tile.isVideo && tile.fullUrl.length === 0)
+                        Photos.ensureFull(tile.itemId)
+                }
+                onPositionChanged: (ev) => {
+                    if (pressed && !dragStarted
+                        && Math.hypot(ev.x - pressPos.x, ev.y - pressPos.y) > Qt.styleHints.startDragDistance) {
+                        dragStarted = true
+                        Photos.startDrag(tile.itemId)
+                    }
+                }
+                onClicked: (ev) => {
+                    if (dragStarted)
+                        return
+                    const mods = ev.modifiers
                     const shift = (mods & Qt.ShiftModifier) !== 0
                     const ctrl = (mods & Qt.ControlModifier) !== 0
                     if (page.selectMode || page.selectedCount > 0 || shift || ctrl) {
@@ -1284,5 +1293,17 @@ Item {
                 }
             }
         }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: 10
+        radius: Theme.radiusLg
+        color: "transparent"
+        border.width: 2
+        border.color: Theme.primary
+        visible: opacity > 0
+        opacity: AppController.highlightTarget === "photos:main" ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
     }
 }

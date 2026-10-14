@@ -412,7 +412,20 @@ fn message_json(m: &SmsMessage, pictures: &HashMap<String, PathBuf>, sender: Opt
         .filter(|p| p.mime.starts_with("image/"))
         .map(|p| json!(pictures.get(&p.id).map(|f| crate::icons::file_url(f)).unwrap_or_default()))
         .collect();
-    let others = m.parts.iter().filter(|p| !p.mime.starts_with("image/")).count();
+    let audios: Vec<Value> = m
+        .parts
+        .iter()
+        .filter(|p| p.mime.starts_with("audio/"))
+        .map(|p| {
+            json!({
+                "url": pictures.get(&p.id).map(|f| crate::icons::file_url(f)).unwrap_or_default(),
+                "mime": p.mime,
+                "size": format_attachment_size(p.size as usize),
+            })
+        })
+        .collect();
+    let others =
+        m.parts.iter().filter(|p| !p.mime.starts_with("image/") && !p.mime.starts_with("audio/")).count();
     json!({
         "id": m.id,
         "body": m.body,
@@ -420,6 +433,7 @@ fn message_json(m: &SmsMessage, pictures: &HashMap<String, PathBuf>, sender: Opt
         "outgoing": m.outgoing,
         "status": m.status.clone().unwrap_or_default(),
         "images": images,
+        "audios": audios,
         "attachments": others,
         "sender": if m.outgoing { None } else { sender },
         "code": if m.outgoing { None } else { one_time_code(&m.body) },
@@ -439,6 +453,7 @@ fn chat_message_json(m: &ChatMessageRecord) -> Value {
         "outgoing": m.self_sent,
         "status": if m.id < 0 { "pending" } else { "" },
         "images": [],
+        "audios": [],
         "attachments": 0,
         "sender": sender,
         "code": if m.self_sent { None } else { one_time_code(&m.text) },
@@ -615,7 +630,9 @@ fn save_chat_assets(
                 crate::photos::fingerprint(&format!("{device} {}", t.thread_id))
                     ^ crate::photos::fingerprint_bytes(avatar)
             ));
-            if path.exists() || std::fs::write(&path, avatar).is_ok() {
+            let already_valid =
+                path.is_file() && std::fs::metadata(&path).is_ok_and(|m| m.len() == avatar.len() as u64);
+            if already_valid || std::fs::write(&path, avatar).is_ok() {
                 photos.insert(t.thread_id.clone(), path);
             }
         }
@@ -627,7 +644,9 @@ fn save_chat_assets(
                 crate::photos::fingerprint(&format!("{device} {}", t.app))
                     ^ crate::photos::fingerprint_bytes(icon)
             ));
-            if path.exists() || std::fs::write(&path, icon).is_ok() {
+            let already_valid =
+                path.is_file() && std::fs::metadata(&path).is_ok_and(|m| m.len() == icon.len() as u64);
+            if already_valid || std::fs::write(&path, icon).is_ok() {
                 app_icons.insert(t.app.clone(), path);
             }
         }
@@ -808,7 +827,10 @@ fn load_messages(before: Option<i64>) {
                     s.messages
                         .iter()
                         .flat_map(|m| m.parts.iter())
-                        .filter(|p| p.mime.starts_with("image/") && !s.pictures.contains_key(&p.id))
+                        .filter(|p| {
+                            (p.mime.starts_with("image/") || p.mime.starts_with("audio/"))
+                                && !s.pictures.contains_key(&p.id)
+                        })
                         .map(|p| p.id.clone())
                         .collect()
                 }
@@ -835,6 +857,20 @@ async fn fetch_pictures(device: DeviceId, generation: u64, parts: Vec<String>) {
             "png"
         } else if mime.contains("gif") {
             "gif"
+        } else if mime.contains("webp") {
+            "webp"
+        } else if mime.contains("mp4") || mime.contains("m4a") || mime.contains("aac") {
+            "m4a"
+        } else if mime.contains("mpeg") || mime.contains("mp3") {
+            "mp3"
+        } else if mime.contains("ogg") {
+            "ogg"
+        } else if mime.contains("wav") {
+            "wav"
+        } else if mime.contains("amr") {
+            "amr"
+        } else if mime.contains("3gp") {
+            "3gp"
         } else {
             "jpg"
         };
@@ -899,7 +935,7 @@ fn url_to_path(raw: &str) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(&out).into_owned())
 }
 
-fn detect_or_convert_image(path: &Path, raw: Vec<u8>) -> Result<(String, Vec<u8>), String> {
+fn detect_or_convert_attachment(path: &Path, raw: Vec<u8>) -> Result<(String, Vec<u8>), String> {
     if raw.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Ok(("image/png".into(), raw));
     }
@@ -918,23 +954,43 @@ fn detect_or_convert_image(path: &Path, raw: Vec<u8>) -> Result<(String, Vec<u8>
         "jpg" | "jpeg" => return Ok(("image/jpeg".into(), raw)),
         "gif" => return Ok(("image/gif".into(), raw)),
         "webp" => return Ok(("image/webp".into(), raw)),
+        "m4a" | "mp4" => return Ok(("audio/mp4".into(), raw)),
+        "aac" => return Ok(("audio/aac".into(), raw)),
+        "mp3" => return Ok(("audio/mpeg".into(), raw)),
+        "ogg" | "oga" => return Ok(("audio/ogg".into(), raw)),
+        "wav" => return Ok(("audio/wav".into(), raw)),
+        "amr" => return Ok(("audio/amr".into(), raw)),
+        "3gp" => return Ok(("audio/3gpp".into(), raw)),
         _ => {}
     }
     // Convert BMP/TIFF/ICO or other Windows-decodable images to PNG.
     let bitmap = crate::win::image::decode(&raw)
-        .map_err(|_| "Only image files (PNG, JPEG, WebP, GIF, BMP) can be attached.".to_owned())?;
+        .map_err(|_| "Only image or voice-note audio files can be attached.".to_owned())?;
     let png = crate::win::image::encode_png(&bitmap).map_err(|e| e.to_string())?;
     Ok(("image/png".into(), png))
 }
 
-fn stage_image_bytes(name: String, mime: String, data: Vec<u8>) -> bool {
+fn stage_attachment_bytes(name: String, mime: String, data: Vec<u8>) -> bool {
     let size_text = format_attachment_size(data.len());
+    let is_audio = mime.starts_with("audio/");
     let ext = if mime.contains("png") {
         "png"
     } else if mime.contains("gif") {
         "gif"
     } else if mime.contains("webp") {
         "webp"
+    } else if mime.contains("mp4") || mime.contains("m4a") || mime.contains("aac") {
+        "m4a"
+    } else if mime.contains("mpeg") || mime.contains("mp3") {
+        "mp3"
+    } else if mime.contains("ogg") {
+        "ogg"
+    } else if mime.contains("wav") {
+        "wav"
+    } else if mime.contains("amr") {
+        "amr"
+    } else if mime.contains("3gp") {
+        "3gp"
     } else {
         "jpg"
     };
@@ -943,9 +999,13 @@ fn stage_image_bytes(name: String, mime: String, data: Vec<u8>) -> bool {
         let p = dir.join(format!("mms-stage-{:016x}.{ext}", crate::photos::fingerprint_bytes(&data)));
         (p.exists() || std::fs::write(&p, &data).is_ok()).then_some(p)
     });
-    let preview_url = preview_path.as_ref().map(|p| crate::icons::file_url(p)).unwrap_or_default();
+    let preview_url = if is_audio {
+        String::new()
+    } else {
+        preview_path.as_ref().map(|p| crate::icons::file_url(p)).unwrap_or_default()
+    };
     let (data, error) = if data.len() > MAX_ATTACHMENT_BYTES {
-        (Vec::new(), format!("Image is {size_text} — MMS supports up to 900 KB"))
+        (Vec::new(), format!("Attachment is {size_text} (MMS supports up to 900 KB)"))
     } else {
         (data, String::new())
     };
@@ -957,16 +1017,16 @@ fn stage_image_bytes(name: String, mime: String, data: Vec<u8>) -> bool {
     true
 }
 
-/// Stages an image file from disk (via drag-and-drop or file picker) as an MMS attachment.
+/// Stages an image or audio file from disk (via drag-and-drop or file picker) as an MMS attachment.
 pub fn attach_file(path_or_url: String) -> bool {
     let path = url_to_path(&path_or_url);
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("image.png").to_owned();
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("attachment").to_owned();
     let raw = match std::fs::read(&path) {
         Ok(b) if !b.is_empty() => b,
         _ => return false,
     };
-    match detect_or_convert_image(&path, raw) {
-        Ok((mime, data)) => stage_image_bytes(name, mime, data),
+    match detect_or_convert_attachment(&path, raw) {
+        Ok((mime, data)) => stage_attachment_bytes(name, mime, data),
         Err(error) => {
             state(|s| {
                 s.staged_attachment = Some(StagedAttachment {
@@ -991,7 +1051,7 @@ pub fn paste_clipboard_image() -> bool {
     let Some(png) = crate::win::clipboard::read_image_png() else {
         return false;
     };
-    stage_image_bytes("Clipboard image.png".into(), "image/png".into(), png)
+    stage_attachment_bytes("Clipboard image.png".into(), "image/png".into(), png)
 }
 
 /// Clears any staged MMS image attachment.
@@ -1019,7 +1079,7 @@ fn chat_reply_problem(error: &Error) -> &'static str {
     match error {
         Error::Denied => "Notifications are turned off for this phone.",
         Error::Offline | Error::NotPaired | Error::Timeout => "The phone isn't connected.",
-        _ => "Couldn't send that reply — the notification may have been dismissed on your phone.",
+        _ => "Couldn't send that reply. The notification may have been dismissed on your phone.",
     }
 }
 

@@ -74,10 +74,12 @@ object MirrorRequests {
             return false
         }
         createChannel(context)
+        val activityIntent = request.toIntent(Intent(context, MirrorConsentActivity::class.java))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val open = PendingIntent.getActivity(
             context,
             request.pcId.hashCode(),
-            request.toIntent(Intent(context, MirrorConsentActivity::class.java)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            activityIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL)
@@ -90,7 +92,16 @@ object MirrorRequests {
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
-        return runCatching { NotificationManagerCompat.from(context).notify(TAG, request.pcId.hashCode(), notification) }.isSuccess
+        val posted = runCatching { NotificationManagerCompat.from(context).notify(TAG, request.pcId.hashCode(), notification) }.isSuccess
+        val am = context.getSystemService(android.app.ActivityManager::class.java)
+        val inForeground = am?.runningAppProcesses?.any {
+            it.pid == android.os.Process.myPid() &&
+                it.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+        } == true
+        if (inForeground) {
+            runCatching { context.startActivity(activityIntent) }
+        }
+        return posted
     }
 
     fun dismiss(context: Context, pcId: String) {

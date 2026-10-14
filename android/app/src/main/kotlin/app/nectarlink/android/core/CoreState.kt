@@ -6,6 +6,9 @@ import app.nectarlink.core.ClipboardHistoryEntry
 import app.nectarlink.core.DiscoveredDevice
 import app.nectarlink.core.Event
 import app.nectarlink.core.Feature
+import app.nectarlink.core.FfiQueueItem
+import app.nectarlink.core.FfiQueueKind
+import app.nectarlink.core.FfiQueueStatus
 import app.nectarlink.core.Link
 import app.nectarlink.core.LocalSendPeer
 import app.nectarlink.core.PairedDevice
@@ -13,6 +16,92 @@ import app.nectarlink.core.PairingFailure
 import app.nectarlink.core.PowerLevel
 import app.nectarlink.core.TimelineEntry
 import app.nectarlink.core.Transfer
+
+/** An item in the persistent outbound Send Queue as rendered by the UI. */
+@androidx.compose.runtime.Immutable
+data class QueueItemUi(
+    val id: String,
+    val peerId: String,
+    val peerName: String,
+    val kind: FfiQueueKind,
+    val title: String,
+    val detail: String,
+    val totalBytes: Long,
+    val bytesDone: Long = 0L,
+    val filesTotal: Int = 0,
+    val filesDone: Int = 0,
+    val createdAtMs: Long,
+    val expiresAtMs: Long,
+    val attempts: Int,
+    val status: FfiQueueStatus,
+    val error: String?,
+    val activeTransferId: String? = null,
+)
+
+internal fun FfiQueueKind.isFileBacked(): Boolean = when (this) {
+    FfiQueueKind.FILES,
+    FfiQueueKind.FOLDER,
+    FfiQueueKind.HANDOFF_DOCUMENT,
+    FfiQueueKind.RECORDING,
+    -> true
+    FfiQueueKind.CLIPBOARD,
+    FfiQueueKind.CLIPBOARD_IMAGE,
+    FfiQueueKind.LINK,
+    FfiQueueKind.TASK_NOTIFY,
+    FfiQueueKind.CAMERA_REQUEST,
+    -> false
+}
+
+/** Normalizes multi-line queue titles to a single clean line for display. */
+fun formatQueueItemTitle(kind: FfiQueueKind, title: String, maxChars: Int = 44): String {
+    val singleLine = title
+        .replace("\r\n", " ")
+        .replace('\n', ' ')
+        .replace('\r', ' ')
+        .replace(Regex("\\s+"), " ")
+        .trim()
+    if (singleLine.isEmpty()) {
+        return when (kind) {
+            FfiQueueKind.CLIPBOARD -> "Clipboard"
+            FfiQueueKind.CLIPBOARD_IMAGE -> "Clipboard image"
+            FfiQueueKind.FILES -> "Files"
+            FfiQueueKind.FOLDER -> "Folder"
+            FfiQueueKind.LINK -> "Link"
+            FfiQueueKind.HANDOFF_DOCUMENT -> "Document"
+            FfiQueueKind.RECORDING -> "Recording"
+            FfiQueueKind.TASK_NOTIFY -> "Task alert"
+            FfiQueueKind.CAMERA_REQUEST -> "Camera request"
+        }
+    }
+    return if (singleLine.length > maxChars && maxChars > 3) {
+        singleLine.take(maxChars - 3).trimEnd() + "..."
+    } else {
+        singleLine
+    }
+}
+
+internal fun FfiQueueItem.toUi(): QueueItemUi = QueueItemUi(
+    id = id,
+    peerId = deviceId,
+    peerName = deviceName,
+    kind = kind,
+    title = title,
+    detail = detail,
+    totalBytes = bytesTotal.toLong().coerceAtLeast(0L),
+    bytesDone = bytesDone.toLong().coerceAtLeast(0L),
+    filesTotal = filesTotal.toInt().coerceAtLeast(0),
+    filesDone = filesDone.toInt().coerceAtLeast(0),
+    createdAtMs = createdAt * 1000L,
+    expiresAtMs = expiresAt * 1000L,
+    attempts = attempts.toInt(),
+    status = status,
+    error = when (val s = status) {
+        is FfiQueueStatus.Failed -> s.error
+        is FfiQueueStatus.Expired -> s.error
+        else -> null
+    },
+    activeTransferId = if (kind.isFileBacked()) id else null,
+)
 
 /** Whether the core is running. */
 sealed interface CoreStatus {
@@ -46,6 +135,7 @@ enum class WakeState {
 }
 
 /** A paired device as the UI shows it. */
+@androidx.compose.runtime.Immutable
 data class Device(
     val id: String,
     val name: String,
@@ -69,12 +159,23 @@ data class Device(
     /** Whether a feature works with this device now (the capability matrix). */
     fun has(feature: String): Boolean =
         features.any { it.id == feature && it.status is app.nectarlink.core.FeatureStatus.Available }
+
+    /** Whether a feature works at all now, fully or in a limited form (e.g. send by tap only). */
+    fun usable(feature: String): Boolean =
+        features.any {
+            it.id == feature &&
+                (it.status is app.nectarlink.core.FeatureStatus.Available || it.status is app.nectarlink.core.FeatureStatus.Partial)
+        }
 }
 
+private val deviceOrder: Comparator<Device> =
+    compareByDescending<Device> { it.online }.thenBy { it.pairedAt }
+
 /** Everything the UI renders, folded from core events. */
+@androidx.compose.runtime.Immutable
 data class CoreState(
     val status: CoreStatus = CoreStatus.Starting,
-    /** Paired devices, in pairing order. */
+    /** Paired devices, online first then in pairing order. */
     val devices: List<Device> = emptyList(),
     val discovered: List<DiscoveredDevice> = emptyList(),
     val pairing: PairingState = PairingState.Idle,
@@ -88,6 +189,8 @@ data class CoreState(
     val elevated: Boolean = false,
     /** Whether the user turned on control from the PC (the accessibility service). */
     val inputAccess: Boolean = false,
+    /** Whether a paired PC tried to inject mouse/keyboard input while input access is off. */
+    val remoteInputRequested: Boolean = false,
     /** Whether the user let Nectarlink read and send texts (for PCs). */
     val smsAccess: Boolean = false,
     /** Whether the user let Nectarlink follow and answer calls (to show them on PCs). */
@@ -100,6 +203,8 @@ data class CoreState(
     val photoPartialAccess: Boolean = false,
     /** Whether Android lets Nectarlink run unrestricted in the background. */
     val backgroundUnrestricted: Boolean = true,
+    /** Whether Companion Device Manager association is active for waking when a PC BLE beacon is nearby. */
+    val companionAssociated: Boolean = false,
     /** Whether the user allowed Do Not Disturb / silent mode control from a PC. */
     val dndAccess: Boolean = false,
     /** Whether the user allowed screen brightness changes from a PC. */
@@ -114,6 +219,8 @@ data class CoreState(
     val webcamRequest: WebcamRequest? = null,
     /** File transfers, newest first (running ones and the latest finished). */
     val transfers: List<Transfer> = emptyList(),
+    /** Persistent outbound send queue items waiting to send, sending, failed, or expired. */
+    val sendQueue: List<QueueItemUi> = emptyList(),
     /** Whether the encrypted local clipboard history is enabled. */
     val clipboardHistoryEnabled: Boolean = true,
     /** The last 50 clips exchanged with paired PCs (pinned first, then newest first). */
@@ -134,10 +241,14 @@ data class CoreState(
     val cachedMmsFiles: Int = 0,
     /** Whether LocalSend LAN interop is enabled (off by default). */
     val localsendEnabled: Boolean = false,
+    /** Whether staying connected over mobile data (LTE/5G) or relay when away from Wi-Fi is enabled. */
+    val awayMode: Boolean = false,
     /** Nearby LocalSend devices discovered on the LAN. */
     val localsendPeers: List<LocalSendPeer> = emptyList(),
     /** IDs of paired PCs currently typing on this phone without mirroring. */
     val keyboardFromPc: Set<String> = emptySet(),
+    /** Vibrant seed color (`0xRRGGBB`) extracted from currently playing phone or PC media artwork. */
+    val activeMediaColor: UInt? = null,
 ) {
     fun device(id: String): Device? = devices.firstOrNull { it.id == id }
 
@@ -156,7 +267,7 @@ data class CoreState(
                     deckState = prev?.deckState,
                     storageEnabled = if (p.id in storageAllowed) true else prev?.storageEnabled ?: false,
                 )
-            }.sortedBy { it.pairedAt },
+            }.sortedWith(deviceOrder),
         )
     }
 
@@ -172,23 +283,47 @@ data class CoreState(
     fun reduce(event: Event): CoreState = when (event) {
         is Event.DeviceAdded -> {
             val device = event.device.toDevice()
-            copy(devices = (devices.filterNot { it.id == device.id } + device).sortedBy { it.pairedAt })
+            copy(devices = (devices.filterNot { it.id == device.id } + device).sortedWith(deviceOrder))
         }
         is Event.DeviceRemoved -> copy(
             devices = devices.filterNot { it.id == event.id },
+            sendQueue = sendQueue.filterNot { it.peerId == event.id },
             ringingFrom = if (ringingFrom == nameOf(event.id)) null else ringingFrom,
             storageRequestedFrom = if (storageRequestedFrom == event.id) null else storageRequestedFrom,
             webcamRequest = if (webcamRequest?.pcId == event.id) null else webcamRequest,
             keyboardFromPc = keyboardFromPc - event.id,
         )
-        is Event.LinkChanged -> update(event.id) {
-            it.copy(
-                link = event.link,
-                wakeState = if (event.link is Link.Online) WakeState.Idle else it.wakeState,
-            )
-        }.copy(
-            keyboardFromPc = if (event.link is Link.Offline) keyboardFromPc - event.id else keyboardFromPc,
-        )
+        is Event.LinkChanged -> {
+            val prev = device(event.id)
+            if (prev == null) {
+                this
+            } else {
+                val oldLink = prev.link
+                val newLink = event.link
+                if (oldLink is Link.Online && newLink is Link.Online &&
+                    oldLink.relayed == newLink.relayed &&
+                    oldLink.usb == newLink.usb &&
+                    (oldLink.rttMs >= 1u) == (newLink.rttMs >= 1u) &&
+                    kotlin.math.abs(oldLink.rttMs.toInt() - newLink.rttMs.toInt()) < 3 &&
+                    prev.wakeState == WakeState.Idle
+                ) {
+                    this
+                } else {
+                    val onlineChanged = (oldLink is Link.Online) != (newLink is Link.Online)
+                    update(event.id) {
+                        it.copy(
+                            link = newLink,
+                            wakeState = if (newLink is Link.Online) WakeState.Idle else it.wakeState,
+                        )
+                    }.let { updated ->
+                        updated.copy(
+                            devices = if (onlineChanged) updated.devices.sortedWith(deviceOrder) else updated.devices,
+                            keyboardFromPc = if (newLink is Link.Offline) updated.keyboardFromPc - event.id else updated.keyboardFromPc,
+                        )
+                    }
+                }
+            }
+        }
         is Event.PeerInfoChanged -> update(event.id) {
             it.copy(
                 name = event.info.name,
@@ -219,17 +354,24 @@ data class CoreState(
             if (pairing == PairingState.Idle) this else copy(pairing = PairingState.Failed(event.failure))
         // PCs don't send notifications; nothing for the phone to show.
         is Event.NotificationsReset, is Event.NotificationPosted, is Event.NotificationRemoved -> this
-        // Android shows its own "copied" confirmation; Core refreshes clipboardHistory/timeline/LocalSend on change.
+        // Android shows its own "copied" confirmation; Core refreshes clipboardHistory/timeline/LocalSend/sendQueue on change.
         is Event.ClipboardReceived,
         is Event.ClipboardHistoryChanged,
         is Event.TimelineChanged,
         is Event.LocalSendChanged,
+        is Event.QueueChanged,
+        is Event.QueueDroppedOnUnpair,
         -> this
-        is Event.Transfer -> copy(transfers = withTransfer(event.transfer))
+        is Event.Transfer -> copy(
+            transfers = withTransfer(event.transfer),
+            sendQueue = withTransferQueueProgress(event.transfer),
+        )
         // Shown in Android's media controls (see media/PcMedia).
         is Event.MediaChanged -> this
         is Event.StorageRequested -> copy(storageRequestedFrom = event.id)
+        is Event.RemoteInputRequested -> copy(remoteInputRequested = !inputAccess && !elevated)
         // PCs only: phones announce their own photos, calls, contacts, texts, toggles, storage, screen and webcam.
+        // Live PC audio frames are played directly by PcSpeakerPlayer in Core.
         is Event.PhotoAdded,
         is Event.PhotosChanged,
         is Event.CallChanged,
@@ -238,9 +380,12 @@ data class CoreState(
         is Event.SmsChanged,
         is Event.PhoneToggles,
         is Event.Mirroring,
-        is Event.RemoteInputRequested,
         is Event.StorageChanged,
         is Event.Webcam,
+        is Event.PcAudioFrame,
+        is Event.PcMirrorConfig,
+        is Event.PcMirrorFrame,
+        is Event.PcMirrorEnded,
         -> this
     }
 
@@ -254,8 +399,79 @@ data class CoreState(
         return updated.filter { !it.isFinished() || it in finished }
     }
 
-    private fun update(id: String, change: (Device) -> Device): CoreState =
-        copy(devices = devices.map { if (it.id == id) change(it) else it })
+    private fun withTransferQueueProgress(transfer: Transfer): List<QueueItemUi> {
+        if (transfer.direction != app.nectarlink.core.TransferDirection.OUTGOING || sendQueue.isEmpty()) {
+            return sendQueue
+        }
+        var changed = false
+        val updated = sendQueue.map { item ->
+            val targetId = item.activeTransferId ?: item.id
+            if (targetId == transfer.id && item.kind.isFileBacked()) {
+                val nextTotal = if (transfer.total > 0uL) {
+                    transfer.total.toLong().coerceAtLeast(0L)
+                } else {
+                    item.totalBytes
+                }
+                val nextDone = transfer.done.toLong().coerceIn(0L, nextTotal.coerceAtLeast(0L))
+                if (nextDone != item.bytesDone || nextTotal != item.totalBytes || item.activeTransferId != transfer.id) {
+                    changed = true
+                    item.copy(
+                        totalBytes = nextTotal,
+                        bytesDone = nextDone,
+                        activeTransferId = transfer.id,
+                    )
+                } else {
+                    item
+                }
+            } else {
+                item
+            }
+        }
+        return if (changed) updated else sendQueue
+    }
+
+    private fun update(id: String, change: (Device) -> Device): CoreState {
+        var changed = false
+        val next = devices.map {
+            if (it.id == id) {
+                val u = change(it)
+                if (u != it) changed = true
+                u
+            } else {
+                it
+            }
+        }
+        return if (changed) copy(devices = next) else this
+    }
+}
+
+internal fun Event.affectsCoreState(): Boolean = when (this) {
+    is Event.NotificationsReset,
+    is Event.NotificationPosted,
+    is Event.NotificationRemoved,
+    is Event.ClipboardReceived,
+    is Event.ClipboardHistoryChanged,
+    is Event.TimelineChanged,
+    is Event.LocalSendChanged,
+    is Event.QueueChanged,
+    is Event.QueueDroppedOnUnpair,
+    is Event.MediaChanged,
+    is Event.PhotoAdded,
+    is Event.PhotosChanged,
+    is Event.CallChanged,
+    is Event.CallLogChanged,
+    is Event.ContactsChanged,
+    is Event.SmsChanged,
+    is Event.PhoneToggles,
+    is Event.Mirroring,
+    is Event.StorageChanged,
+    is Event.Webcam,
+    is Event.PcAudioFrame,
+    is Event.PcMirrorConfig,
+    is Event.PcMirrorFrame,
+    is Event.PcMirrorEnded,
+    -> false
+    else -> true
 }
 
 /** Finished transfers kept on Home. */
@@ -264,7 +480,8 @@ const val MAX_FINISHED_TRANSFERS = 5
 fun Transfer.isFinished(): Boolean =
     status !is app.nectarlink.core.TransferStatus.Requested &&
         status !is app.nectarlink.core.TransferStatus.Running &&
-        status !is app.nectarlink.core.TransferStatus.Waiting
+        status !is app.nectarlink.core.TransferStatus.Waiting &&
+        status !is app.nectarlink.core.TransferStatus.Paused
 
 internal fun PairedDevice.toDevice() = Device(
     id = id,

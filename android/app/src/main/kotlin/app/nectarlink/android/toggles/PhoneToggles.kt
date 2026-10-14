@@ -42,7 +42,7 @@ class PhoneToggles(
     private val wifi = this.context.getSystemService(WifiManager::class.java)
     private val bluetooth = this.context.getSystemService(BluetoothManager::class.java)
 
-    private val torchCameraId: String? = findTorchCamera()
+    private val torchCameraId: String? by lazy { findTorchCamera() }
     @Volatile private var torchOn: Boolean = false
     private var started = false
     private var lastSent: CorePhoneToggles? = null
@@ -183,10 +183,19 @@ class PhoneToggles(
                     val on = (value as? PhoneToggleValue.Bool)?.on ?: return false
                     Elevated.runCommand(if (on) "svc bluetooth enable" else "svc bluetooth disable")
                 }
+                "hotspot" -> {
+                    val on = (value as? PhoneToggleValue.Bool)?.on ?: return false
+                    Elevated.runCommand(if (on) "hotspot on" else "hotspot off")
+                }
+                "pc_active" -> {
+                    val on = (value as? PhoneToggleValue.Bool)?.on ?: return false
+                    app.nectarlink.android.notifications.NotificationListener.setPcActive(on)
+                    true
+                }
                 else -> false
             }
         }.onFailure { Log.w(TAG, "toggle $id failed", it) }.getOrDefault(false)
-        if (ok) {
+        if (ok && id != "pc_active") {
             pushIfChanged()
             schedulePush()
             mainHandler.removeCallbacks(followUpRunnable)

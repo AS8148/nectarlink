@@ -161,6 +161,10 @@ impl SavedWindows {
 #[derive(Debug)]
 struct State {
     windows: HashMap<Window, Shown>,
+    /// Most recently focused or interacted-with mirror window.
+    active_window: Option<Window>,
+    /// Last clipboard text synced on window focus so unchanged text isn't resent.
+    last_focus_clip: Option<String>,
     /// Phones whose sound is coming in.
     sound: HashSet<DeviceId>,
     /// Phones kept awake while mirroring their screen.
@@ -179,6 +183,8 @@ impl Default for State {
     fn default() -> Self {
         Self {
             windows: HashMap::new(),
+            active_window: None,
+            last_focus_clip: None,
             sound: HashSet::new(),
             stay_awake: HashSet::new(),
             screen_off: HashSet::new(),
@@ -203,6 +209,8 @@ type FrameMap = HashMap<Window, (u32, u32, Arc<Vec<u8>>)>;
 static FRAMES: Mutex<Option<FrameMap>> = Mutex::new(None);
 /// Active MP4 recorders per window.
 static RECORDERS: Mutex<Option<HashMap<Window, MirrorRecorder>>> = Mutex::new(None);
+/// Fast atomic count of active recorders to skip locking RECORDERS on the 60fps packet/audio hot path.
+static ACTIVE_RECORDERS: AtomicUsize = AtomicUsize::new(0);
 /// Latest video stream dimensions per window.
 static LAST_CONFIG: Mutex<Option<HashMap<Window, (u32, u32)>>> = Mutex::new(None);
 /// Latest audio stream format `(rate, channels)` per device.
@@ -468,11 +476,19 @@ pub fn screenshot_file(window: Window) {
 
 /// Whether `window` is currently recording to an MP4 file.
 pub fn is_recording(window: &Window) -> bool {
-    RECORDERS.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|m| m.contains_key(window))
+    ACTIVE_RECORDERS.load(Ordering::Relaxed) > 0
+        && RECORDERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|m| m.contains_key(window))
 }
 
 /// Unix epoch milliseconds when the active recording for `window` started (`0` if not recording).
 pub fn recording_started_ms(window: &Window) -> i64 {
+    if ACTIVE_RECORDERS.load(Ordering::Relaxed) == 0 {
+        return 0;
+    }
     RECORDERS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -533,11 +549,12 @@ pub fn toggle_recording(window: Window) {
         recorder.set_sps_pps(sps_pps);
     }
 
-    RECORDERS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get_or_insert_with(HashMap::new)
-        .insert(window, recorder);
+    {
+        let mut guard = RECORDERS.lock().unwrap_or_else(|e| e.into_inner());
+        let map = guard.get_or_insert_with(HashMap::new);
+        map.insert(window, recorder);
+        ACTIVE_RECORDERS.store(map.len(), Ordering::Release);
+    }
 
     set_notice(window, "Recording started");
     core_host::host().hub.changed(Changes::MIRROR);
@@ -548,8 +565,12 @@ pub fn toggle_recording(window: Window) {
 
 /// Stops and finalizes any active MP4 recording for `window`.
 pub fn stop_recording(window: Window) {
-    let recorder =
-        RECORDERS.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|m| m.remove(&window));
+    let recorder = {
+        let mut guard = RECORDERS.lock().unwrap_or_else(|e| e.into_inner());
+        let rec = guard.as_mut().and_then(|m| m.remove(&window));
+        ACTIVE_RECORDERS.store(guard.as_ref().map_or(0, HashMap::len), Ordering::Release);
+        rec
+    };
     let Some(recorder) = recorder else { return };
     core_host::host().hub.changed(Changes::MIRROR);
     let duration_secs = recorder.started_at().elapsed().as_secs().max(1);
@@ -615,11 +636,24 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 }
 
 fn set_phase(window: Window, phase: Phase) {
+    let showing = matches!(phase, Phase::Showing);
     state(|s| {
+        if showing && s.active_window.is_none() {
+            s.active_window = Some(window);
+        } else if !showing && s.active_window == Some(window) {
+            s.active_window = s
+                .windows
+                .iter()
+                .find(|(w, shown)| **w != window && matches!(shown.phase, Phase::Showing))
+                .map(|(w, _)| *w);
+        }
         if let Some(shown) = s.windows.get_mut(&window) {
             shown.phase = phase;
         }
     });
+    if showing {
+        ensure_gamepad_loop();
+    }
     core_host::host().hub.changed(Changes::MIRROR);
 }
 
@@ -781,7 +815,7 @@ pub fn keyboard_paste(device: DeviceId) {
     if keyboard_device() != Some(device) {
         return;
     }
-    if let crate::win::clipboard::Clip::Text(text) = crate::win::clipboard::read() {
+    if let crate::win::clipboard::Clip::Text { text, .. } = crate::win::clipboard::read() {
         keyboard_text(device, text);
     }
 }
@@ -871,9 +905,30 @@ fn request(window: Window, options: MirrorStart) {
                 e => describe(&e),
             };
             set_phase(window, Phase::Ended(Some(reason)));
+            return;
+        }
+        // An app window has no prompt to wait for on the phone: its first frame comes within
+        // seconds, or the phone couldn't start it (its stream then ends with no picture).
+        if app {
+            tokio::time::sleep(APP_START_TIMEOUT).await;
+            let stuck = state(|s| s.windows.get(&window).is_some_and(|w| w.phase == Phase::Asking));
+            if stuck {
+                tracing::warn!(session = window.session, "an app window never started on the phone");
+                node.mirror_stop(window.device, window.session).await;
+                set_phase(
+                    window,
+                    Phase::Ended(Some(
+                        "The app didn't open on the phone. Try again, or open Nectarlink on the phone to check                          Wireless debugging."
+                            .into(),
+                    )),
+                );
+            }
         }
     });
 }
+
+/// How long an app window may take to show its first frame.
+const APP_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Stops a mirroring (its window closed).
 pub fn stop(window: Window) {
@@ -1065,8 +1120,8 @@ pub fn palette_apps(device: DeviceId) -> Vec<(String, String)> {
     out
 }
 
-/// The PC's mouse and keyboard on a mirrored screen or app window, sent in
-/// order.
+/// The PC's mouse, keyboard, and gamepad on a mirrored screen or app window,
+/// sent in order.
 pub fn input(window: Window, input: nectarlink_core::MirrorInput) {
     static QUEUE: std::sync::OnceLock<
         tokio::sync::mpsc::UnboundedSender<(Window, nectarlink_core::MirrorInput)>,
@@ -1086,6 +1141,328 @@ pub fn input(window: Window, input: nectarlink_core::MirrorInput) {
         queue
     });
     let _ = queue.send((window, input));
+}
+
+/// Resolves the currently active or showing mirror window.
+fn active_or_showing_window() -> Option<Window> {
+    state(|s| {
+        if let Some(active) = s.active_window
+            && s.windows.get(&active).is_some_and(|w| matches!(w.phase, Phase::Showing))
+        {
+            return Some(active);
+        }
+        s.windows
+            .iter()
+            .find(|(_, shown)| matches!(shown.phase, Phase::Showing))
+            .or_else(|| s.windows.iter().next())
+            .map(|(w, _)| *w)
+    })
+}
+
+/// Parses dropped `file://` URLs or local paths, optionally prefixed by a `<device>/<session>` window key.
+pub(crate) fn parse_dropped_file_urls(raw_urls: &[String]) -> (Option<Window>, Vec<PathBuf>) {
+    let mut explicit_window: Option<Window> = None;
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for (idx, raw) in raw_urls.iter().enumerate() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if idx == 0
+            && !trimmed.starts_with("file:")
+            && !Path::new(trimmed).exists()
+            && let Some(win) = Window::parse(trimmed)
+        {
+            explicit_window = Some(win);
+            continue;
+        }
+        let local = cxx_qt_lib::QUrl::from(&cxx_qt_lib::QString::from(trimmed))
+            .to_local_file()
+            .map(|p| String::from(&p))
+            .filter(|p| !p.is_empty())
+            .or_else(|| {
+                trimmed
+                    .strip_prefix("file:///")
+                    .or_else(|| trimmed.strip_prefix("file://"))
+                    .map(|s| s.replace('/', "\\"))
+            });
+        let pb = PathBuf::from(local.as_deref().unwrap_or(trimmed));
+        if pb.exists() {
+            paths.push(pb);
+        }
+    }
+    (explicit_window, paths)
+}
+
+/// Sends files dropped onto a mirror window to the mirrored phone and shows an
+/// in-window toast notice.
+pub fn drop_files(raw_urls: &[String]) {
+    let (explicit_window, paths) = parse_dropped_file_urls(raw_urls);
+    if paths.is_empty() {
+        return;
+    }
+    let Some(window) = explicit_window.or_else(active_or_showing_window) else {
+        return;
+    };
+    let notice = if paths.len() == 1 {
+        let name = paths[0].file_name().and_then(|n| n.to_str()).unwrap_or("file");
+        format!("Sending {name}…")
+    } else {
+        format!("Sending {} files…", paths.len())
+    };
+    set_notice(window, notice);
+    crate::transfers::send(window.device, paths);
+}
+
+/// Requests remote input control from the phone for `key` and shows a guidance banner.
+pub fn request_control(key: &str) {
+    let Some(window) = Window::parse(key) else { return };
+    set_notice(window, "On your phone, tap Allow / turn on Control from your PC in Nectarlink");
+    input(
+        window,
+        nectarlink_core::MirrorInput::Touch { action: nectarlink_core::TouchAction::Up, x: 0.5, y: 0.5 },
+    );
+}
+
+/// Notifies PC-to-phone cursor/keyboard Flow when the mouse enters `key`.
+pub fn enter_window(key: &str) {
+    if let Some(win) = Window::parse(key) {
+        state(|s| {
+            s.active_window = Some(win);
+        });
+        crate::input_share::enter_remote(win.device);
+    }
+}
+
+/// Notifies PC-to-phone cursor/keyboard Flow when the mouse leaves a mirror window.
+pub fn leave_window() {
+    let _ = crate::input_share::leave_remote();
+}
+
+/// Records text that arrived from a remote device so focus/hover sync never echoes it back.
+pub fn note_remote_clipboard(text: &str) {
+    let normalized = text.replace("\r\n", "\n");
+    state(|s| {
+        s.last_focus_clip = Some(normalized);
+    });
+}
+
+/// Synchronizes the clipboard from PC to `device` only if the clipboard contains new text.
+pub fn sync_clipboard_for_device(device: DeviceId) {
+    let Some(node) = core_host::node() else { return };
+    let can_send = core_host::host().hub.read(|s| {
+        s.matrices.get(&device).and_then(|m| m.state("clipboard.pc_to_phone"))
+            == Some(nectarlink_core::FeatureState::Available)
+    });
+    if !can_send {
+        return;
+    }
+
+    if let crate::win::clipboard::Clip::Text { text, html, rtf } = crate::win::clipboard::read()
+        && !text.is_empty()
+    {
+        let normalized = text.replace("\r\n", "\n");
+        let changed = state(|s| {
+            if s.last_focus_clip.as_deref() == Some(normalized.as_str()) {
+                false
+            } else {
+                s.last_focus_clip = Some(normalized);
+                true
+            }
+        });
+        if changed {
+            core_host::spawn(async move {
+                let _ = node.send_clipboard_rich(device, text, html, rtf).await;
+            });
+        }
+    }
+}
+
+/// Sends the PC's clipboard to the phone when `window` gains focus, if
+/// "Clipboard follows control" is on.
+pub fn sync_clipboard_on_focus(window: Window) {
+    state(|s| {
+        s.active_window = Some(window);
+    });
+    if crate::settings::flow_follow_clipboard() {
+        sync_clipboard_for_device(window.device);
+    }
+}
+
+/// Standard XInput / Xbox left thumbstick deadzone.
+pub const LEFT_THUMB_DEADZONE: i16 = 7849;
+/// Standard XInput / Xbox right thumbstick deadzone.
+pub const RIGHT_THUMB_DEADZONE: i16 = 8689;
+/// Standard XInput / Xbox trigger threshold.
+pub const TRIGGER_THRESHOLD: u8 = 30;
+
+/// Normalized controller snapshot forwarded via [`nectarlink_core::MirrorInput::Gamepad`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GamepadState {
+    pub buttons: u16,
+    pub lx: i16,
+    pub ly: i16,
+    pub rx: i16,
+    pub ry: i16,
+    pub lt: u8,
+    pub rt: u8,
+}
+
+impl GamepadState {
+    /// Converts this controller snapshot into a [`nectarlink_core::MirrorInput::Gamepad`] message.
+    pub fn to_mirror_input(self) -> nectarlink_core::MirrorInput {
+        nectarlink_core::MirrorInput::Gamepad {
+            buttons: self.buttons,
+            lx: self.lx,
+            ly: self.ly,
+            rx: self.rx,
+            ry: self.ry,
+            lt: self.lt,
+            rt: self.rt,
+        }
+    }
+}
+
+fn deadzone_axis(val: i16, deadzone: i16) -> i16 {
+    if val.saturating_abs() <= deadzone { 0 } else { val }
+}
+
+/// Applies stick deadzones and trigger thresholds so idle controller noise does
+/// not generate redundant [`nectarlink_core::MirrorInput::Gamepad`] frames.
+pub fn normalize_gamepad_state(raw: GamepadState) -> GamepadState {
+    GamepadState {
+        buttons: raw.buttons,
+        lx: deadzone_axis(raw.lx, LEFT_THUMB_DEADZONE),
+        ly: deadzone_axis(raw.ly, LEFT_THUMB_DEADZONE),
+        rx: deadzone_axis(raw.rx, RIGHT_THUMB_DEADZONE),
+        ry: deadzone_axis(raw.ry, RIGHT_THUMB_DEADZONE),
+        lt: if raw.lt <= TRIGGER_THRESHOLD { 0 } else { raw.lt },
+        rt: if raw.rt <= TRIGGER_THRESHOLD { 0 } else { raw.rt },
+    }
+}
+
+#[allow(unsafe_code)]
+fn poll_xinput_gamepad() -> Option<GamepadState> {
+    use windows::Win32::UI::Input::XboxController::{XINPUT_STATE, XInputGetState};
+    for user_index in 0..4u32 {
+        let mut xstate = XINPUT_STATE::default();
+        // SAFETY: xstate is a valid stack-allocated XINPUT_STATE for slot 0..3.
+        if unsafe { XInputGetState(user_index, &mut xstate) } == 0 {
+            let gp = xstate.Gamepad;
+            return Some(normalize_gamepad_state(GamepadState {
+                buttons: gp.wButtons.0,
+                lx: gp.sThumbLX,
+                ly: gp.sThumbLY,
+                rx: gp.sThumbRX,
+                ry: gp.sThumbRY,
+                lt: gp.bLeftTrigger,
+                rt: gp.bRightTrigger,
+            }));
+        }
+    }
+    None
+}
+
+fn poll_winrt_gamepad() -> Option<GamepadState> {
+    use windows::Gaming::Input::{Gamepad, GamepadButtons};
+    let gamepads = Gamepad::Gamepads().ok()?;
+    if gamepads.Size().ok()? == 0 {
+        return None;
+    }
+    let pad = gamepads.GetAt(0).ok()?;
+    let reading = pad.GetCurrentReading().ok()?;
+    let b = reading.Buttons;
+    let mut buttons = 0u16;
+    if (b & GamepadButtons::DPadUp) != GamepadButtons::None {
+        buttons |= 0x0001;
+    }
+    if (b & GamepadButtons::DPadDown) != GamepadButtons::None {
+        buttons |= 0x0002;
+    }
+    if (b & GamepadButtons::DPadLeft) != GamepadButtons::None {
+        buttons |= 0x0004;
+    }
+    if (b & GamepadButtons::DPadRight) != GamepadButtons::None {
+        buttons |= 0x0008;
+    }
+    if (b & GamepadButtons::Menu) != GamepadButtons::None {
+        buttons |= 0x0010;
+    }
+    if (b & GamepadButtons::View) != GamepadButtons::None {
+        buttons |= 0x0020;
+    }
+    if (b & GamepadButtons::LeftThumbstick) != GamepadButtons::None {
+        buttons |= 0x0040;
+    }
+    if (b & GamepadButtons::RightThumbstick) != GamepadButtons::None {
+        buttons |= 0x0080;
+    }
+    if (b & GamepadButtons::LeftShoulder) != GamepadButtons::None {
+        buttons |= 0x0100;
+    }
+    if (b & GamepadButtons::RightShoulder) != GamepadButtons::None {
+        buttons |= 0x0200;
+    }
+    if (b & GamepadButtons::A) != GamepadButtons::None {
+        buttons |= 0x1000;
+    }
+    if (b & GamepadButtons::B) != GamepadButtons::None {
+        buttons |= 0x2000;
+    }
+    if (b & GamepadButtons::X) != GamepadButtons::None {
+        buttons |= 0x4000;
+    }
+    if (b & GamepadButtons::Y) != GamepadButtons::None {
+        buttons |= 0x8000;
+    }
+    let scale_axis = |v: f64| -> i16 { (v.clamp(-1.0, 1.0) * f64::from(i16::MAX)).round() as i16 };
+    let scale_trigger = |v: f64| -> u8 { (v.clamp(0.0, 1.0) * 255.0).round() as u8 };
+    Some(normalize_gamepad_state(GamepadState {
+        buttons,
+        lx: scale_axis(reading.LeftThumbstickX),
+        ly: scale_axis(reading.LeftThumbstickY),
+        rx: scale_axis(reading.RightThumbstickX),
+        ry: scale_axis(reading.RightThumbstickY),
+        lt: scale_trigger(reading.LeftTrigger),
+        rt: scale_trigger(reading.RightTrigger),
+    }))
+}
+
+fn poll_gamepad() -> Option<GamepadState> {
+    poll_xinput_gamepad().or_else(poll_winrt_gamepad)
+}
+
+fn ensure_gamepad_loop() {
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    if RUNNING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    core_host::spawn(async move {
+        let mut last_state = GamepadState::default();
+        loop {
+            let target = active_or_showing_window().filter(|w| matches!(phase(w), Some(Phase::Showing)));
+            let Some(window) = target else {
+                RUNNING.store(false, Ordering::Release);
+                break;
+            };
+            match poll_gamepad() {
+                Some(current) => {
+                    if current != last_state {
+                        last_state = current;
+                        input(window, current.to_mirror_input());
+                    }
+                    tokio::time::sleep(Duration::from_millis(16)).await;
+                }
+                None => {
+                    if last_state != GamepadState::default() {
+                        last_state = GamepadState::default();
+                        input(window, last_state.to_mirror_input());
+                    }
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+            }
+        }
+    });
 }
 
 /// Where the core puts a phone's video (or the screen's sound, from a
@@ -1165,13 +1542,17 @@ impl MirrorSink for Sink {
     }
 
     fn packet(&self, keyframe: bool, time_us: u64, data: Vec<u8>) {
-        {
+        if keyframe {
             let mut sps_map = LAST_SPS_PPS.lock().unwrap_or_else(|e| e.into_inner());
             let entry = sps_map.get_or_insert_with(HashMap::new).entry(self.window).or_default();
             merge_sps_pps(entry, &data);
         }
-        if let Some(rec) =
-            RECORDERS.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|m| m.get_mut(&self.window))
+        if ACTIVE_RECORDERS.load(Ordering::Relaxed) > 0
+            && let Some(rec) = RECORDERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_mut()
+                .and_then(|m| m.get_mut(&self.window))
             && let Err(e) = rec.on_packet(keyframe, time_us, &data)
         {
             tracing::warn!(error = %e, "mirror recording packet failed");
@@ -1201,6 +1582,7 @@ impl MirrorSink for Sink {
             .get_or_insert_with(HashMap::new)
             .insert(self.window.device, (config.rate, config.channels));
         if self.window.session == MIRROR_SCREEN
+            && ACTIVE_RECORDERS.load(Ordering::Relaxed) > 0
             && let Some(rec) = RECORDERS
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -1223,6 +1605,7 @@ impl MirrorSink for Sink {
 
     fn audio(&self, time_us: u64, data: Vec<u8>) {
         if self.window.session == MIRROR_SCREEN
+            && ACTIVE_RECORDERS.load(Ordering::Relaxed) > 0
             && let Some(rec) = RECORDERS
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -1270,7 +1653,22 @@ fn decode(window: Window, items: &Receiver<Item>, waiting: &AtomicUsize) {
     while let Ok(item) = items.recv() {
         match item {
             Item::Config(config) => {
-                if size != (0, 0) && size != (config.width, config.height) {
+                if decoder.codec() != config.codec {
+                    match Decoder::new_for_codec(&config.codec) {
+                        Ok(next) => decoder = next,
+                        Err(e) => {
+                            tracing::error!(error = %e, codec = %config.codec, "no decoder for codec");
+                            set_phase(
+                                window,
+                                Phase::Ended(Some(format!(
+                                    "This PC can't decode {} video.",
+                                    config.codec.to_uppercase()
+                                ))),
+                            );
+                            return;
+                        }
+                    }
+                } else if size != (0, 0) && size != (config.width, config.height) {
                     decoder.flush();
                 }
                 size = (config.width, config.height);
@@ -1378,7 +1776,10 @@ impl Stats {
 
 #[cfg(test)]
 mod tests {
-    use super::merge_recent_apps;
+    use super::{
+        GamepadState, LEFT_THUMB_DEADZONE, RIGHT_THUMB_DEADZONE, TRIGGER_THRESHOLD, merge_recent_apps,
+        normalize_gamepad_state, parse_dropped_file_urls,
+    };
 
     #[test]
     fn recent_apps_combines_saved_and_notification_packages_without_duplicates() {
@@ -1398,5 +1799,55 @@ mod tests {
                 "com.spotify.music".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn gamepad_deadzone_filters_idle_noise_and_converts_to_mirror_input() {
+        let idle = normalize_gamepad_state(GamepadState {
+            buttons: 0,
+            lx: LEFT_THUMB_DEADZONE - 10,
+            ly: -LEFT_THUMB_DEADZONE,
+            rx: RIGHT_THUMB_DEADZONE,
+            ry: -(RIGHT_THUMB_DEADZONE - 1),
+            lt: TRIGGER_THRESHOLD,
+            rt: 5,
+        });
+        assert_eq!(idle, GamepadState::default());
+
+        let active = normalize_gamepad_state(GamepadState {
+            buttons: 0x1001, // A + DPadUp
+            lx: 16_000,
+            ly: -24_000,
+            rx: -12_000,
+            ry: 30_000,
+            lt: 128,
+            rt: 255,
+        });
+        assert_eq!(
+            active.to_mirror_input(),
+            nectarlink_core::MirrorInput::Gamepad {
+                buttons: 0x1001,
+                lx: 16_000,
+                ly: -24_000,
+                rx: -12_000,
+                ry: 30_000,
+                lt: 128,
+                rt: 255,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_dropped_file_urls_extracts_existing_paths_and_optional_window_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_a = dir.path().join("alpha.txt");
+        std::fs::write(&file_a, b"hello").unwrap();
+        let file_url = format!("file:///{}", file_a.to_string_lossy().replace('\\', "/"));
+        let dev = nectarlink_core::DeviceId([0x11; 32]);
+        let key = format!("{dev}/0");
+
+        let (win, paths) = parse_dropped_file_urls(&[key, file_url]);
+        assert_eq!(win.map(|w| w.device), Some(dev));
+        assert_eq!(paths, vec![file_a]);
     }
 }

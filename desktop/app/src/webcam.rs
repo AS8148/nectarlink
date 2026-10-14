@@ -5,11 +5,29 @@
 //! camera creates inside Windows' Frame Server, or this session's while it
 //! isn't there), and feeds the live preview `VideoView` (`stream:
 //! "webcam"`) in Settings.
+//!
+//! ## 4K (3840×2160) Support & Why 10-bit HDR Is Omitted
+//!
+//! End-to-end 4K UHD (`3840×2160` @ 30 fps) is supported across the phone
+//! camera encoder, the desktop H.264 decoder, the shared-memory frame
+//! transport (`nectarlink-vcam` v2), and the Media Foundation virtual camera
+//! source (`RGB32` and `NV12`).
+//!
+//! 10-bit HDR (`P010` / BT.2020 PQ or HLG) is intentionally omitted: Windows'
+//! inbox H.264 Media Foundation Transform (`CLSID_CMSH264DecoderMFT`) decodes
+//! 8-bit 4:2:0 profiles into 8-bit `NV12` (`MFVideoFormat_NV12`), and the
+//! shared-memory virtual camera pipeline operates in 8-bit-per-channel SDR
+//! Rec.709 (`BGRX` / `MFVideoFormat_RGB32` and `MFVideoFormat_NV12` with
+//! `MFVideoTransferMatrix_BT709`) for universal compatibility with conferencing
+//! apps.
 
-use std::sync::{
-    Arc, Mutex, OnceLock,
-    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
-    mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
+use std::{
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+        mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
+    },
+    time::{Duration, Instant},
 };
 
 use nectarlink_core::{DeviceId, Error, NodeEvent, WebcamConfig, WebcamSink, WebcamStart};
@@ -68,6 +86,7 @@ struct State {
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 static MIRROR: AtomicBool = AtomicBool::new(false);
+static CAMERA_FRONT: AtomicBool = AtomicBool::new(false);
 static HEIGHT: AtomicU32 = AtomicU32::new(720);
 static PREVIEW_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -75,11 +94,52 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     f(STATE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_default())
 }
 
+fn normalize_height(h: u32) -> u32 {
+    match h {
+        2160 => 2160,
+        1080 => 1080,
+        _ => 720,
+    }
+}
+
+/// Maps a resolution label (`"720"`, `"1080"`, `"2160"`, `"4k"`, `"4K"`) to
+/// `(width, height)` in pixels.
+pub fn dimensions(res: &str) -> (u16, u16) {
+    match res.trim() {
+        "2160" | "4k" | "4K" => (3840, 2160),
+        "1080" => (1920, 1080),
+        _ => (1280, 720),
+    }
+}
+
+/// Returns the currently selected vertical resolution as `"720"`, `"1080"`, or `"2160"`.
+pub fn resolution() -> &'static str {
+    match height() {
+        2160 => "2160",
+        1080 => "1080",
+        _ => "720",
+    }
+}
+
+/// Sets the webcam resolution from a string token (`"720"`, `"1080"`, or `"2160"`).
+/// Unrecognized values are ignored.
+#[cfg(test)]
+pub fn set_resolution(res: &str) {
+    let h = match res.trim() {
+        "2160" => 2160,
+        "1080" => 1080,
+        "720" => 720,
+        _ => return,
+    };
+    set_height(h);
+}
+
 /// Initializes webcam preferences and (if registered) the Windows virtual
 /// camera session.
 pub fn init(settings: &Settings) {
     MIRROR.store(settings.webcam_mirror, Ordering::Relaxed);
-    let h = if settings.webcam_height == 1080 { 1080 } else { 720 };
+    CAMERA_FRONT.store(settings.webcam_camera.trim().eq_ignore_ascii_case("front"), Ordering::Relaxed);
+    let h = normalize_height(settings.webcam_height);
     HEIGHT.store(h, Ordering::Relaxed);
     let preferred = settings.webcam_phone.as_deref().and_then(|s| s.parse().ok());
     let registered = vcam::is_registered();
@@ -124,11 +184,28 @@ fn save_settings(update: impl FnOnce(&mut Settings)) {
     }
 }
 
-/// Currently selected phone (`preferred_phone` if still paired, otherwise the
+/// Currently selected phone (`preferred_phone` if online, otherwise the first
+/// online paired phone, falling back to `preferred_phone` if paired or the
 /// first paired phone).
 pub fn selected_phone() -> Option<DeviceId> {
     let preferred = state(|s| s.preferred_phone);
     core_host::host().hub.read(|app| {
+        if let Some(id) = preferred
+            && app
+                .devices
+                .iter()
+                .any(|d| d.id == id && matches!(d.link, nectarlink_core::LinkState::Online { .. }))
+        {
+            return Some(id);
+        }
+        if let Some(online_id) = app
+            .devices
+            .iter()
+            .find(|d| matches!(d.link, nectarlink_core::LinkState::Online { .. }))
+            .map(|d| d.id)
+        {
+            return Some(online_id);
+        }
         if let Some(id) = preferred
             && app.devices.iter().any(|d| d.id == id)
         {
@@ -150,10 +227,37 @@ pub fn height() -> u32 {
 }
 
 pub fn set_height(h: u32) {
-    let h = if h == 1080 { 1080 } else { 720 };
-    HEIGHT.store(h, Ordering::Relaxed);
-    save_settings(|s| s.webcam_height = h);
-    core_host::host().hub.changed(Changes::WEBCAM);
+    let h = normalize_height(h);
+    let prev = HEIGHT.swap(h, Ordering::Relaxed);
+    #[cfg(not(test))]
+    {
+        save_settings(|s| s.webcam_height = h);
+        core_host::host().hub.changed(Changes::WEBCAM);
+        if prev != h {
+            reconfigure_active_stream();
+        }
+    }
+    #[cfg(test)]
+    let _ = prev;
+}
+
+pub fn camera() -> &'static str {
+    if CAMERA_FRONT.load(Ordering::Relaxed) { "front" } else { "back" }
+}
+
+pub fn set_camera(cam: &str) {
+    let front = cam.trim().eq_ignore_ascii_case("front");
+    let prev = CAMERA_FRONT.swap(front, Ordering::Relaxed);
+    #[cfg(not(test))]
+    {
+        save_settings(|s| s.webcam_camera = camera().to_owned());
+        core_host::host().hub.changed(Changes::WEBCAM);
+        if prev != front {
+            reconfigure_active_stream();
+        }
+    }
+    #[cfg(test)]
+    let _ = prev;
 }
 
 pub fn mirror() -> bool {
@@ -162,8 +266,11 @@ pub fn mirror() -> bool {
 
 pub fn set_mirror(on: bool) {
     MIRROR.store(on, Ordering::Relaxed);
-    save_settings(|s| s.webcam_mirror = on);
-    core_host::host().hub.changed(Changes::WEBCAM);
+    #[cfg(not(test))]
+    {
+        save_settings(|s| s.webcam_mirror = on);
+        core_host::host().hub.changed(Changes::WEBCAM);
+    }
 }
 
 pub fn phase() -> Phase {
@@ -256,7 +363,7 @@ fn mapping() -> Option<Arc<SharedFrameMapping>> {
 }
 
 /// Updates the camera's global mapping (if a camera client has opened it)
-/// without allocating the 8 MB local fallback mapping while idle.
+/// without allocating the 33 MB local fallback mapping while idle.
 fn idle_mapping() -> Option<Arc<SharedFrameMapping>> {
     state(|s| {
         let due = s.global_tried.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(1));
@@ -322,18 +429,40 @@ pub fn release_idle_resources() {
     }
 }
 
+fn current_webcam_start() -> WebcamStart {
+    let (w_u16, h_u16) = dimensions(resolution());
+    let (w, h) = (u32::from(w_u16), u32::from(h_u16));
+    let bitrate = match h {
+        2160 => 20_000_000,
+        1080 => 8_000_000,
+        _ => 4_000_000,
+    };
+    WebcamStart { width: w, height: h, fps: 30, bitrate, camera: camera().to_owned() }
+}
+
+#[cfg(not(test))]
+fn reconfigure_active_stream() {
+    let active_device = state(|s| match s.phase {
+        Phase::Streaming { device, .. } | Phase::Asking { device } => Some(device),
+        Phase::Idle | Phase::Ended { .. } => None,
+    });
+    if let (Some(device), Some(node)) = (active_device, core_host::node()) {
+        let options = current_webcam_start();
+        core_host::spawn(async move {
+            let _ = node.webcam_start(device, options).await;
+        });
+    }
+}
+
 /// Requests a webcam stream from `device` (or the selected phone).
 pub fn start(device: Option<DeviceId>) {
     let Some(device) = device.or_else(selected_phone) else { return };
     set_selected_phone(device);
-    let h = height();
-    let w = if h == 1080 { 1920 } else { 1280 };
     state(|s| s.phase = Phase::Asking { device });
     core_host::host().hub.changed(Changes::WEBCAM);
 
     let Some(node) = core_host::node() else { return };
-    let bitrate = if h == 1080 { 8_000_000 } else { 4_000_000 };
-    let options = WebcamStart { width: w, height: h, fps: 30, bitrate, camera: "back".into() };
+    let options = current_webcam_start();
     core_host::spawn(async move {
         if let Err(e) = node.webcam_start(device, options).await {
             let reason = match e {
@@ -527,6 +656,8 @@ fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
     let phone_name = phone_name_for(Some(device));
     let mut size = (0u32, 0u32);
     let mut need_keyframe = true;
+    let mut local_mapping = mapping();
+    let mut last_mapping_check = Instant::now();
 
     while let Ok(item) = items.recv() {
         match item {
@@ -564,9 +695,13 @@ fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
                     if flip {
                         mirror_bgrx_in_place(&mut bgrx, src_w, src_h);
                     }
-                    if let Some(mapping) = mapping() {
+                    if local_mapping.is_none() && last_mapping_check.elapsed() >= Duration::from_secs(1) {
+                        local_mapping = mapping();
+                        last_mapping_check = Instant::now();
+                    }
+                    if let Some(ref map) = local_mapping {
                         // Already flipped in place if `flip` is true, so pass `false` here.
-                        mapping.write_frame(&phone_name, src_w, src_h, time_us, &bgrx, false);
+                        map.write_frame(&phone_name, src_w, src_h, time_us, &bgrx, false);
                     }
                     ffi::video_frame(PREVIEW_STREAM, src_w, src_h, &bgrx);
                 }
@@ -582,4 +717,42 @@ fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
     });
     refresh_idle_frame();
     core_host::host().hub.changed(Changes::WEBCAM);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_720_1080_and_2160_4k_dimensions() {
+        assert_eq!(dimensions("720"), (1280, 720));
+        assert_eq!(dimensions("1080"), (1920, 1080));
+        assert_eq!(dimensions("2160"), (3840, 2160));
+        assert_eq!(dimensions("4k"), (3840, 2160));
+        assert_eq!(dimensions("4K"), (3840, 2160));
+        assert_eq!(dimensions("unknown"), (1280, 720));
+    }
+
+    #[test]
+    fn selects_and_validates_720_1080_and_2160_resolutions() {
+        set_resolution("720");
+        assert_eq!(height(), 720);
+        assert_eq!(resolution(), "720");
+
+        set_resolution("1080");
+        assert_eq!(height(), 1080);
+        assert_eq!(resolution(), "1080");
+
+        set_resolution("2160");
+        assert_eq!(height(), 2160);
+        assert_eq!(resolution(), "2160");
+
+        // Invalid resolution string leaves selection unchanged.
+        set_resolution("9999");
+        assert_eq!(height(), 2160);
+        assert_eq!(resolution(), "2160");
+
+        set_height(720);
+        assert_eq!(height(), 720);
+    }
 }

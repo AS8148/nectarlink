@@ -6,6 +6,7 @@ import app.nectarlink
 FocusScope {
     id: button
     property string iconPath
+    property int iconSize: hasText ? 16 : 18
     property string text: ""
     property string label
     property bool tonal: false
@@ -15,11 +16,13 @@ FocusScope {
     readonly property bool hasText: text.length > 0
     readonly property string effectiveTip: label.length > 0 ? label : text
 
-    implicitWidth: hasText ? contentRow.implicitWidth + 24 : 36
-    implicitHeight: hasText ? 32 : 36
+    implicitWidth: hasText ? contentRow.implicitWidth + 24 : 34
+    implicitHeight: 34
     activeFocusOnTab: true
     opacity: enabled ? 1 : 0.38
     Component.onDestruction: tooltipPill.shown = false
+    onVisibleChanged: if (!visible) { tooltipPill.shown = false; tipAutoHide.stop() }
+    onEnabledChanged: if (!enabled) { tooltipPill.shown = false; tipAutoHide.stop() }
 
     Accessible.role: Accessible.Button
     Accessible.name: hasText ? text : label
@@ -36,23 +39,30 @@ FocusScope {
         id: body
         anchors.fill: parent
         radius: Theme.pill(height)
-        color: button.tonal ? Theme.secondaryContainer : "transparent"
-        border.width: Theme.graphite && button.hasText ? 1 : 0
-        border.color: button.tonal ? Theme.surfaceContent : Theme.outlineVariant
-        scale: tap.pressed ? Theme.pressScale : 1
-        Behavior on scale { SpringAnimation { spring: Theme.springSnappy; damping: Theme.dampingSnappy } }
+        color: button.tonal
+            ? (Theme.glass
+                ? Qt.tint(Qt.rgba(1, 1, 1, Theme.dark ? 0.10 : 0.54), Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, Theme.dark ? 0.18 : 0.14))
+                : Theme.secondaryContainer)
+            : "transparent"
+        Behavior on color { enabled: !Theme.reduceMotion; ColorAnimation { duration: Theme.fadeFast } }
+        border.width: (Theme.graphite && button.hasText) || (Theme.glass && button.tonal) ? 1 : 0
+        border.color: Theme.glass
+            ? Qt.rgba(1, 1, 1, Theme.dark ? 0.12 : 0.38)
+            : (button.tonal ? Theme.surfaceContent : Theme.outlineVariant)
+        scale: mouse.pressed ? Theme.pressScale : 1
+        Behavior on scale { enabled: !Theme.reduceMotion; NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
         Rectangle {
             anchors.fill: parent
             radius: parent.radius
             color: Theme.surfaceContent
-            opacity: tap.pressed ? 0.12 : (hover.hovered ? 0.07 : 0)
-            Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
+            opacity: mouse.pressed ? 0.14 : (mouse.containsMouse ? 0.08 : 0)
+            Behavior on opacity { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast } }
         }
         Icon {
             visible: !button.hasText
             anchors.centerIn: parent
-            width: 18; height: 18
+            width: button.iconSize; height: button.iconSize
             path: button.iconPath
             color: button.iconColor
         }
@@ -64,7 +74,7 @@ FocusScope {
             Icon {
                 visible: button.iconPath.length > 0
                 anchors.verticalCenter: parent.verticalCenter
-                width: 15; height: 15
+                width: button.iconSize; height: button.iconSize
                 path: button.iconPath
                 color: button.iconColor
             }
@@ -90,22 +100,32 @@ FocusScope {
     Timer {
         id: tipTimer
         interval: 450
-        running: hover.hovered && !tap.pressed && button.enabled && button.visible && button.effectiveTip.length > 0
-        onRunningChanged: if (!running) tooltipPill.shown = false
+        repeat: false
+        running: mouse.containsMouse && !mouse.pressed && button.enabled && button.visible && button.effectiveTip.length > 0 && !tooltipPill.shown
         onTriggered: {
-            tooltipPill.reposition()
-            tooltipPill.shown = true
+            if (mouse.containsMouse && button.visible) {
+                tooltipPill.reposition()
+                tooltipPill.shown = true
+                tipAutoHide.restart()
+            }
         }
+    }
+
+    Timer {
+        id: tipAutoHide
+        interval: 2400
+        repeat: false
+        onTriggered: tooltipPill.shown = false
     }
 
     Rectangle {
         id: tooltipPill
         property bool shown: false
-        parent: button.Window.contentItem ? button.Window.contentItem : button
+        parent: tooltipPill.visible && button.Window.contentItem ? button.Window.contentItem : button
         z: 1000
         visible: opacity > 0 && button.effectiveTip.length > 0
-        opacity: shown && hover.hovered && !tap.pressed && button.visible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
+        opacity: shown && mouse.containsMouse && !mouse.pressed && button.visible && button.enabled ? 1 : 0
+        Behavior on opacity { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast } }
         width: Math.min(tipText.implicitWidth + 18, 300)
         height: tipText.implicitHeight + 10
         radius: Theme.graphite ? Theme.radiusXs : Theme.radiusSm
@@ -138,6 +158,15 @@ FocusScope {
         }
     }
 
-    HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
-    TapHandler { id: tap; onTapped: button.clicked() }
+    MouseArea {
+        id: mouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onContainsMouseChanged: if (!containsMouse) tooltipPill.shown = false
+        onClicked: {
+            tooltipPill.shown = false
+            button.clicked()
+        }
+    }
 }

@@ -96,6 +96,7 @@ t = "mirror.input"   b = { type: "touch", action: "down" | "move" | "up", x: flo
                    | { type: "scroll", x: float, y: float, dx: float, dy: float }
                    | { type: "key", key: text }
                    | { type: "text", text: text }
+                   | { type: "gamepad", buttons: uint, lx: int, ly: int, rx: int, ry: int, lt: uint, rt: uint }
 ```
 
 Sent by the PC, not answered (input is only worth it right away), and
@@ -105,7 +106,7 @@ bottom), so they hold at any size and rotation.
 
 - `touch`: one finger. At Elevated, the phone injects each down, move and
   up as it comes, so dragging is live. At Assist, Android plays a gesture
-  whole, so the phone turns each down–up into a tap (barely moved), a long
+  whole, so the phone turns each down and up into a tap (barely moved), a long
   press (held 450 ms or more) or a swipe along the way it went, when it
   comes up.
 - `scroll`: the mouse wheel at a point, in notches (positive: down or
@@ -121,11 +122,21 @@ bottom), so they hold at any size and rotation.
   text is inserted directly into the focused editable node; at Elevated
   without the accessibility service, ASCII/Latin text is typed as key events
   and non-ASCII text is pasted via the phone's clipboard (`KEYCODE_PASTE`).
+- `gamepad`: controller state forwarded from the PC's connected gamepad
+  (e.g. XInput). `buttons` is a 16-bit XInput-compatible button bitmask
+  (D-pad up/down/left/right, Start, Back, L3, R3, LB, RB, Guide, A, B, X, Y);
+  `lx`, `ly`, `rx`, `ry` are signed 16-bit thumbstick axes (`-32768..=32767`);
+  `lt` and `rt` are unsigned 8-bit trigger axes (`0..=255`). At Elevated,
+  the phone injects matching `KeyEvent` (`SOURCE_GAMEPAD`) and `MotionEvent`
+  (`SOURCE_JOYSTICK`) inputs on the target display.
 
 The Windows app maps the left button to a finger, right-click to Back,
-middle-click to Home and Ctrl+V to typing the PC's clipboard, and also
-offers a **Type on phone** bar on Home (and in the Command Palette) to type
-on the phone with the PC keyboard without mirroring its screen.
+middle-click to Home, Ctrl+C to syncing the phone's clipboard back to the PC,
+and Ctrl+V to syncing the PC's clipboard (`clip.set`) and pasting/typing into
+the phone. Dragging and dropping files onto the mirror canvas sends them to
+the phone via the `files` service (`files.offer`). The app also offers a
+**Type on phone** bar on Home (and in the Command Palette) to type on the
+phone with the PC keyboard without mirroring its screen.
 
 ## 5. Sound
 

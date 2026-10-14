@@ -18,6 +18,16 @@ import android.speech.SpeechRecognizer
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -34,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -96,7 +107,7 @@ import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.hypot
 
-enum class RemoteMode { Touchpad, AirMouse, Presentation }
+enum class RemoteMode { Touchpad, AirMouse, Presentation, Screen }
 
 @Composable
 fun RemoteScreen(
@@ -125,8 +136,16 @@ fun RemoteScreen(
     }
 
     var mode by rememberSaveable(initialMode) { mutableStateOf(initialMode) }
+    var screenFullScreen by rememberSaveable { mutableStateOf(false) }
+    val isFullScreen = mode == RemoteMode.Screen && screenFullScreen
     var access by remember(device.id) { mutableStateOf(Core.RemoteAccess.Allowed) }
     val utteranceJoiner = remember(device.id) { UtteranceJoiner() }
+
+    LaunchedEffect(mode) {
+        if (mode != RemoteMode.Screen && screenFullScreen) {
+            screenFullScreen = false
+        }
+    }
 
     // Check access on entry and poll while denied so the prompt banner clears
     // as soon as the user clicks Allow on the PC.
@@ -147,119 +166,167 @@ fun RemoteScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .then(
+                if (isFullScreen) {
+                    Modifier
+                } else {
+                    Modifier
+                        .systemBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                },
+            ),
+        verticalArrangement = Arrangement.spacedBy(if (isFullScreen) 0.dp else 12.dp),
     ) {
-        // Header: Back, PC name, online dot
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_back),
-                    contentDescription = stringResource(R.string.action_back),
+        if (!isFullScreen) {
+            // Header: Back, PC name, online dot
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_back),
+                        contentDescription = stringResource(R.string.action_back),
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    device.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                Surface(
+                    shape = CircleShape,
+                    color = if (device.online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.size(10.dp),
+                ) {}
+            }
+
+            // Mode switcher: Touchpad | Air mouse | Presentation | Screen
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = mode == RemoteMode.Touchpad,
+                    onClick = { mode = RemoteMode.Touchpad },
+                    shape = SegmentedButtonDefaults.itemShape(0, 4),
+                    icon = {},
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        stringResource(R.string.remote_mode_touchpad),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                SegmentedButton(
+                    selected = mode == RemoteMode.AirMouse,
+                    onClick = { mode = RemoteMode.AirMouse },
+                    shape = SegmentedButtonDefaults.itemShape(1, 4),
+                    icon = {},
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        stringResource(R.string.remote_mode_air),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                SegmentedButton(
+                    selected = mode == RemoteMode.Presentation,
+                    onClick = { mode = RemoteMode.Presentation },
+                    shape = SegmentedButtonDefaults.itemShape(2, 4),
+                    icon = {},
+                    modifier = Modifier.weight(1.1f),
+                ) {
+                    Text(
+                        stringResource(R.string.remote_mode_presentation),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                SegmentedButton(
+                    selected = mode == RemoteMode.Screen,
+                    onClick = { mode = RemoteMode.Screen },
+                    shape = SegmentedButtonDefaults.itemShape(3, 4),
+                    icon = {},
+                    modifier = Modifier.weight(0.95f),
+                ) {
+                    Text(
+                        stringResource(R.string.remote_mode_screen),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            // Status banner when offline, denied, or unsupported
+            when {
+                !device.online || access == Core.RemoteAccess.Offline -> OfflineWakeBanner(
+                    device = device,
+                    onWake = { core.wake(device.id) },
+                )
+                access == Core.RemoteAccess.Denied -> StatusBanner(
+                    title = stringResource(R.string.remote_denied_title, device.name),
+                    text = stringResource(R.string.remote_denied_text, device.name),
+                )
+                access == Core.RemoteAccess.Unsupported -> StatusBanner(
+                    title = null,
+                    text = stringResource(R.string.remote_unsupported_text, device.name),
                 )
             }
-            Spacer(Modifier.width(4.dp))
-            Text(
-                device.name,
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.weight(1f),
-            )
-            Surface(
-                shape = CircleShape,
-                color = if (device.online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                modifier = Modifier.size(10.dp),
-            ) {}
         }
 
-        // Mode switcher: Touchpad | Air mouse | Presentation
-        val largeFont = LocalConfiguration.current.fontScale >= 1.15f
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            SegmentedButton(
-                selected = mode == RemoteMode.Touchpad,
-                onClick = { mode = RemoteMode.Touchpad },
-                shape = SegmentedButtonDefaults.itemShape(0, 3),
-                icon = { if (!largeFont) SegmentedButtonDefaults.Icon(mode == RemoteMode.Touchpad) },
-                modifier = Modifier.weight(0.95f),
-            ) {
-                Text(
-                    stringResource(R.string.remote_mode_touchpad),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        val reducedMotion = LocalReducedMotion.current
+        AnimatedContent(
+            targetState = mode,
+            transitionSpec = {
+                if (reducedMotion) {
+                    EnterTransition.None togetherWith ExitTransition.None
+                } else {
+                    val forward = targetState.ordinal >= initialState.ordinal
+                    (slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { if (forward) it / 8 else -it / 8 } +
+                        fadeIn(tween(200))) togetherWith
+                        (slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { if (forward) -it / 10 else it / 10 } +
+                            fadeOut(tween(150)))
+                }
+            },
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            label = "RemoteModeTransition",
+        ) { currentMode ->
+            when (currentMode) {
+                RemoteMode.Touchpad -> TouchpadView(
+                    pcId = device.id,
+                    pcName = device.name,
+                    core = core,
+                    sensitivity = sensitivity,
+                    utteranceJoiner = utteranceJoiner,
+                    onStatus = onStatus,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                RemoteMode.AirMouse -> AirMouseView(
+                    pcId = device.id,
+                    pcName = device.name,
+                    core = core,
+                    sensitivity = sensitivity,
+                    utteranceJoiner = utteranceJoiner,
+                    onStatus = onStatus,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                RemoteMode.Presentation -> PresentationView(
+                    pcId = device.id,
+                    pcName = device.name,
+                    core = core,
+                    onStatus = onStatus,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                RemoteMode.Screen -> PcMirrorView(
+                    pcId = device.id,
+                    pcName = device.name,
+                    core = core,
+                    isFullScreen = screenFullScreen,
+                    onFullScreenChange = { screenFullScreen = it },
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
-            SegmentedButton(
-                selected = mode == RemoteMode.AirMouse,
-                onClick = { mode = RemoteMode.AirMouse },
-                shape = SegmentedButtonDefaults.itemShape(1, 3),
-                icon = { if (!largeFont) SegmentedButtonDefaults.Icon(mode == RemoteMode.AirMouse) },
-                modifier = Modifier.weight(0.95f),
-            ) {
-                Text(
-                    stringResource(R.string.remote_mode_air),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            SegmentedButton(
-                selected = mode == RemoteMode.Presentation,
-                onClick = { mode = RemoteMode.Presentation },
-                shape = SegmentedButtonDefaults.itemShape(2, 3),
-                icon = { if (!largeFont) SegmentedButtonDefaults.Icon(mode == RemoteMode.Presentation) },
-                modifier = Modifier.weight(1.2f),
-            ) {
-                Text(
-                    stringResource(R.string.remote_mode_presentation),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-
-        // Status banner when offline, denied, or unsupported
-        when {
-            !device.online || access == Core.RemoteAccess.Offline -> OfflineWakeBanner(
-                device = device,
-                onWake = { core.wake(device.id) },
-            )
-            access == Core.RemoteAccess.Denied -> StatusBanner(
-                title = stringResource(R.string.remote_denied_title, device.name),
-                text = stringResource(R.string.remote_denied_text, device.name),
-            )
-            access == Core.RemoteAccess.Unsupported -> StatusBanner(
-                title = null,
-                text = stringResource(R.string.remote_unsupported_text, device.name),
-            )
-        }
-
-        when (mode) {
-            RemoteMode.Touchpad -> TouchpadView(
-                pcId = device.id,
-                pcName = device.name,
-                core = core,
-                sensitivity = sensitivity,
-                utteranceJoiner = utteranceJoiner,
-                onStatus = onStatus,
-                modifier = Modifier.weight(1f),
-            )
-            RemoteMode.AirMouse -> AirMouseView(
-                pcId = device.id,
-                pcName = device.name,
-                core = core,
-                sensitivity = sensitivity,
-                utteranceJoiner = utteranceJoiner,
-                onStatus = onStatus,
-                modifier = Modifier.weight(1f),
-            )
-            RemoteMode.Presentation -> PresentationView(
-                pcId = device.id,
-                pcName = device.name,
-                core = core,
-                onStatus = onStatus,
-                modifier = Modifier.weight(1f),
-            )
         }
     }
 }
@@ -393,6 +460,9 @@ private fun TouchpadView(
                 .semantics { contentDescription = touchpadDesc }
                 .pointerInput(pcId, sensitivity) {
                     val tapSlop = viewConfiguration.touchSlop
+                    // Movement in reference-density pixels, so the same physical swipe moves
+                    // the PC pointer and scrolls the same amount on every phone's screen.
+                    val toReference = TOUCHPAD_REFERENCE_DENSITY / density
                     val tapTimeoutMs = 240L
                     val doubleTapWindowMs = 260L
                     var lastSingleTapTime = 0L
@@ -411,11 +481,20 @@ private fun TouchpadView(
 
                         while (true) {
                             val event = awaitPointerEvent()
-                            val pressed = event.changes.filter { it.pressed }
-                            if (pressed.isEmpty()) break
+                            val changes = event.changes
+                            var pressedCount = 0
+                            var firstPressed: androidx.compose.ui.input.pointer.PointerInputChange? = null
+                            for (i in 0 until changes.size) {
+                                val c = changes[i]
+                                if (c.pressed) {
+                                    if (firstPressed == null) firstPressed = c
+                                    pressedCount++
+                                }
+                            }
+                            if (pressedCount == 0 || firstPressed == null) break
 
-                            if (pressed.size > maxPointers) {
-                                maxPointers = pressed.size
+                            if (pressedCount > maxPointers) {
+                                maxPointers = pressedCount
                                 if (dragStarted) {
                                     core.remoteButton(pcId, "left", "up", onStatus)
                                     dragStarted = false
@@ -424,8 +503,8 @@ private fun TouchpadView(
                                 isDragHold = false
                             }
 
-                            if (pressed.size == 1 && maxPointers == 1) {
-                                val change = pressed[0]
+                            if (pressedCount == 1 && maxPointers == 1) {
+                                val change = firstPressed
                                 touchPoint = change.position
                                 val delta = change.positionChange()
                                 val dist = hypot(delta.x, delta.y)
@@ -438,27 +517,30 @@ private fun TouchpadView(
                                 }
 
                                 if (dist > 0.2f) {
-                                    val scaledDx = delta.x * sensitivity
-                                    val scaledDy = delta.y * sensitivity
+                                    val scaledDx = delta.x * toReference * sensitivity
+                                    val scaledDy = delta.y * toReference * sensitivity
                                     core.remoteMove(pcId, scaledDx, scaledDy)
                                     change.consume()
                                 }
-                            } else if (pressed.size >= 2) {
-                                touchPoint = pressed[0].position
+                            } else if (pressedCount >= 2) {
+                                touchPoint = firstPressed.position
                                 var avgDx = 0f
                                 var avgDy = 0f
-                                for (c in pressed) {
-                                    val d = c.positionChange()
-                                    avgDx += d.x
-                                    avgDy += d.y
-                                    c.consume()
+                                for (i in 0 until changes.size) {
+                                    val c = changes[i]
+                                    if (c.pressed) {
+                                        val d = c.positionChange()
+                                        avgDx += d.x
+                                        avgDy += d.y
+                                        c.consume()
+                                    }
                                 }
-                                avgDx /= pressed.size
-                                avgDy /= pressed.size
+                                avgDx /= pressedCount
+                                avgDy /= pressedCount
                                 totalMoved += hypot(avgDx, avgDy)
 
-                                scrollAccumX += avgDx
-                                scrollAccumY += avgDy
+                                scrollAccumX += avgDx * toReference
+                                scrollAccumY += avgDy * toReference
                                 val stepPx = 18f
                                 if (abs(scrollAccumX) >= stepPx || abs(scrollAccumY) >= stepPx) {
                                     val notchesX = -(scrollAccumX / 48f)
@@ -736,13 +818,18 @@ private fun AirMouseView(
 
                         while (true) {
                             val event = awaitPointerEvent()
-                            val pressed = event.changes.filter { it.pressed }
-                            if (pressed.isEmpty()) break
-                            if (pressed.size > maxPointers) maxPointers = pressed.size
-                            for (c in pressed) {
-                                val d = c.positionChange()
-                                totalMoved += hypot(d.x, d.y)
+                            val changes = event.changes
+                            var pressedCount = 0
+                            for (i in 0 until changes.size) {
+                                val c = changes[i]
+                                if (c.pressed) {
+                                    pressedCount++
+                                    val d = c.positionChange()
+                                    totalMoved += hypot(d.x, d.y)
+                                }
                             }
+                            if (pressedCount == 0) break
+                            if (pressedCount > maxPointers) maxPointers = pressedCount
                         }
 
                         padHeld = false
@@ -1369,15 +1456,15 @@ private fun PresentationView(
 ) {
     val context = LocalContext.current
     var laserHeld by remember { mutableStateOf(false) }
-    var laserX by remember { mutableFloatStateOf(0.5f) }
-    var laserY by remember { mutableFloatStateOf(0.5f) }
+    val laserXState = remember { mutableFloatStateOf(0.5f) }
+    val laserYState = remember { mutableFloatStateOf(0.5f) }
 
     // While held, say it again every second even if it hasn't moved: the PC
     // hides a dot that stops hearing from its phone.
     LaunchedEffect(laserHeld, pcId) {
         while (laserHeld) {
             delay(1000)
-            core.remoteLaser(pcId, true, laserX, laserY)
+            core.remoteLaser(pcId, true, laserXState.floatValue, laserYState.floatValue)
         }
     }
 
@@ -1411,8 +1498,8 @@ private fun PresentationView(
 
                 val nx = (0.5f + dYaw / 0.65f).coerceIn(0f, 1f)
                 val ny = (0.5f + dPitch / 0.50f).coerceIn(0f, 1f)
-                laserX = nx
-                laserY = ny
+                laserXState.floatValue = nx
+                laserYState.floatValue = ny
                 core.remoteLaser(pcId, true, nx, ny)
             }
 
@@ -1526,19 +1613,23 @@ private fun PresentationView(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val w = size.width.coerceAtLeast(1).toFloat()
                         val h = size.height.coerceAtLeast(1).toFloat()
-                        laserX = (down.position.x / w).coerceIn(0f, 1f)
-                        laserY = (down.position.y / h).coerceIn(0f, 1f)
+                        val initX = (down.position.x / w).coerceIn(0f, 1f)
+                        val initY = (down.position.y / h).coerceIn(0f, 1f)
+                        laserXState.floatValue = initX
+                        laserYState.floatValue = initY
                         laserHeld = true
-                        core.remoteLaser(pcId, true, laserX, laserY)
+                        core.remoteLaser(pcId, true, initX, initY)
 
                         while (true) {
                             val event = awaitPointerEvent()
                             val active = event.changes.firstOrNull { it.pressed } ?: break
                             val d = active.positionChange()
                             if (hypot(d.x, d.y) > 0.5f) {
-                                laserX = (active.position.x / w).coerceIn(0f, 1f)
-                                laserY = (active.position.y / h).coerceIn(0f, 1f)
-                                core.remoteLaser(pcId, true, laserX, laserY)
+                                val nx = (active.position.x / w).coerceIn(0f, 1f)
+                                val ny = (active.position.y / h).coerceIn(0f, 1f)
+                                laserXState.floatValue = nx
+                                laserYState.floatValue = ny
+                                core.remoteLaser(pcId, true, nx, ny)
                                 active.consume()
                             }
                         }
@@ -1551,7 +1642,7 @@ private fun PresentationView(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 if (laserHeld) {
                     Canvas(Modifier.fillMaxSize()) {
-                        val pt = Offset(laserX * size.width, laserY * size.height)
+                        val pt = Offset(laserXState.floatValue * size.width, laserYState.floatValue * size.height)
                         drawCircle(
                             color = primaryColor.copy(alpha = 0.28f),
                             radius = 26.dp.toPx(),
@@ -1592,3 +1683,6 @@ private fun PresentationView(
         }
     }
 }
+
+/** The screen density (xxhdpi) the touchpad speeds and scroll steps were tuned at. */
+private const val TOUCHPAD_REFERENCE_DENSITY = 2.625f

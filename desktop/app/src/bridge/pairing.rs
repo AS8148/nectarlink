@@ -101,7 +101,21 @@ fn hub() -> &'static crate::state::Hub {
 
 /// Asks the core for a fresh pairing link and shows it.
 fn host_qr() {
-    hub().update(|s| s.set_pairing(PairingView::Starting));
+    let mut skip = false;
+    hub().update(|s| {
+        if matches!(
+            s.pairing,
+            PairingView::Comparing { .. } | PairingView::Confirmed { .. } | PairingView::Connecting { .. }
+        ) {
+            skip = true;
+            Changes::NONE
+        } else {
+            s.set_pairing(PairingView::Starting)
+        }
+    });
+    if skip {
+        return;
+    }
     let Some(node) = core_host::node() else {
         hub().update(|s| s.set_pairing(PairingView::Failed(PairingFailure::Other("not ready".into()))));
         return;
@@ -116,7 +130,7 @@ fn host_qr() {
                 PairingView::Failed(PairingFailure::Other(e.to_string()))
             }
         };
-        // Don't resurrect a screen the user already left.
+        // Don't resurrect a screen the user already left, or clobber a SAS code check.
         hub()
             .update(|s| if s.pairing == PairingView::Starting { s.set_pairing(next) } else { Changes::NONE });
     });

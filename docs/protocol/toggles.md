@@ -20,7 +20,7 @@ the capability matrix's reason for what unlocks them.
 | `toggles.brightness` | phone | Basic + Modify system settings (or Elevated) | Changes the screen brightness (`0..=100`) |
 | `toggles.wifi` | phone | Elevated | Turns Wi-Fi on or off |
 | `toggles.bluetooth` | phone | Elevated | Turns Bluetooth on or off |
-| `toggles.show` | desktop | — | Shows a phone's controls and sends `phone.toggle.set` requests |
+| `toggles.show` | desktop | None | Shows a phone's controls and sends `phone.toggle.set` requests |
 
 A phone sends `phone.toggles` only to desktops that offer `toggles.show`,
 and only while both devices allow the `toggles` device toggle (on by

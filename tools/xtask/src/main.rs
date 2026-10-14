@@ -282,9 +282,11 @@ fn render_kotlin(tokens: &Value) -> Result<String> {
         "// Generated from docs/design/tokens.json by `cargo xtask tokens`. Do not edit.".into(),
         "package app.nectarlink.android.ui.theme".into(),
         String::new(),
+        "import androidx.compose.runtime.Immutable".into(),
         "import androidx.compose.ui.graphics.Color".into(),
         String::new(),
         "/** Material color roles of one theme variant. */".into(),
+        "@Immutable".into(),
         "data class Palette(".into(),
     ];
     out.extend(ROLES.iter().map(|r| format!("    val {r}: Color,")));
@@ -292,6 +294,7 @@ fn render_kotlin(tokens: &Value) -> Result<String> {
         ")".into(),
         String::new(),
         "/** A Bloom color preset: its seed swatch and light and dark palettes. */".into(),
+        "@Immutable".into(),
         "data class Seed(val color: Color, val light: Palette, val dark: Palette)".into(),
         String::new(),
         "object Tokens {".into(),

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package app.nectarlink.android.notifications
 
+import android.app.AppOpsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Process
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -23,47 +25,83 @@ class NotificationListener : NotificationListenerService() {
     private val core get() = (application as NectarlinkApplication).core
     private val reader by lazy { NotificationReader(this) }
     private val limiter = LiveRateLimiter { notification -> core.notificationPosted(notification) }
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "nectarlink-notif-reader").apply { isDaemon = true }
+    }
 
     /** Keys already sent, so an update that shouldn't alert again doesn't. */
-    private val sent = mutableSetOf<String>()
+    private val sent = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     override fun onListenerConnected() {
         instance = this
-        limiter.clear()
-        sent.clear()
-        val items = activeNotifications.orEmpty().mapNotNull { reader.read(it, currentRanking, update = false) }
-        sent += items.map { it.key }
-        core.notificationAccessChanged(true, items)
+        if (isPcActive()) applyHostHints(true)
+        worker.execute {
+            val snapshot = runCatching { activeNotifications?.toList().orEmpty() }.getOrDefault(emptyList())
+            val ranking = runCatching { currentRanking }.getOrNull()
+            limiter.clear()
+            sent.clear()
+            val items = snapshot.mapNotNull { reader.read(it, ranking, update = false) }
+            sent.addAll(items.map { it.key })
+            core.notificationAccessChanged(true, items)
+        }
     }
 
     override fun onListenerDisconnected() {
-        limiter.clear()
         if (instance === this) instance = null
-        core.notificationAccessChanged(false, emptyList())
+        worker.execute {
+            limiter.clear()
+            sent.clear()
+            core.notificationAccessChanged(false, emptyList())
+        }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification, rankingMap: RankingMap?) {
-        val notification = reader.read(sbn, rankingMap, update = sbn.key in sent)
-        if (notification == null) {
-            // Something we mirrored may have turned into something we don't
-            // (e.g. it became ongoing); take it away on the PC.
-            limiter.cancel(sbn.key)
-            if (sent.remove(sbn.key)) core.notificationRemoved(sbn.key)
-            return
+        val key = sbn.key
+        worker.execute {
+            val notification = reader.read(sbn, rankingMap, update = key in sent)
+            if (notification == null) {
+                // Something we mirrored may have turned into something we don't
+                // (e.g. it became ongoing); take it away on the PC.
+                limiter.cancel(key)
+                if (sent.remove(key)) core.notificationRemoved(key)
+                return@execute
+            }
+            sent.add(key)
+            limiter.onPosted(notification)
         }
-        sent += sbn.key
-        limiter.onPosted(notification)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        limiter.cancel(sbn.key)
-        if (sent.remove(sbn.key)) core.notificationRemoved(sbn.key)
+        val key = sbn.key
+        worker.execute {
+            limiter.cancel(key)
+            if (sent.remove(key)) core.notificationRemoved(key)
+        }
     }
 
     override fun onDestroy() {
-        limiter.clear()
         if (instance === this) instance = null
+        worker.execute { limiter.clear() }
+        worker.shutdown()
         super.onDestroy()
+    }
+
+    internal fun applyHostHints(suppressPhoneEffects: Boolean) {
+        runCatching {
+            requestListenerHints(if (suppressPhoneEffects) HINT_HOST_DISABLE_NOTIFICATION_EFFECTS else 0)
+        }
+    }
+
+    /** Re-reads active notifications after Elevated grants sensitive notification access. */
+    internal fun refreshActive() {
+        worker.execute {
+            val items = runCatching {
+                val ranking = currentRanking
+                activeNotifications.orEmpty().mapNotNull { reader.read(it, ranking, update = true) }
+            }.getOrDefault(emptyList())
+            sent.addAll(items.map { it.key })
+            core.notificationsRefreshed(items)
+        }
     }
 
     /** What a PC asks for, on the listener that's connected now. */
@@ -78,9 +116,58 @@ class NotificationListener : NotificationListenerService() {
         internal var instance: NotificationListener? = null
             private set
 
+        @Volatile
+        private var pcActiveUntilMs: Long = 0L
+        private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        private val expirePcActive = Runnable {
+            if (!isPcActive()) {
+                instance?.applyHostHints(false)
+            }
+        }
+
+        fun isPcActive(): Boolean =
+            android.os.SystemClock.elapsedRealtime() < pcActiveUntilMs
+
+        /**
+         * Updates whether the user is actively using a paired PC (`pc_active`
+         * toggle). When active, Android's `HINT_HOST_DISABLE_NOTIFICATION_EFFECTS`
+         * suppresses redundant phone notification sound/vibration effects while
+         * still delivering notifications to the PC.
+         */
+        fun setPcActive(active: Boolean) {
+            mainHandler.removeCallbacks(expirePcActive)
+            if (active) {
+                pcActiveUntilMs = android.os.SystemClock.elapsedRealtime() + 65_000L
+                instance?.applyHostHints(true)
+                mainHandler.postDelayed(expirePcActive, 66_000L)
+            } else {
+                pcActiveUntilMs = 0L
+                instance?.applyHostHints(false)
+            }
+        }
+
         /** Whether the user granted notification access to this app. */
         fun hasAccess(context: Context): Boolean =
             NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+
+        /**
+         * Whether this listener may read notifications Android 15+ marks
+         * sensitive (such as one-time verification codes). Before Android 15
+         * listeners aren't redacted by this app-op.
+         */
+        fun canReadSensitive(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return true
+            val ops = context.getSystemService(AppOpsManager::class.java) ?: return false
+            return runCatching {
+                // Deprecated on 37 for attribution-aware checks; this one is only the app's own.
+                @Suppress("DEPRECATION")
+                ops.unsafeCheckOpNoThrow(OP_SENSITIVE, Process.myUid(), context.packageName) == AppOpsManager.MODE_ALLOWED
+            }.getOrDefault(false)
+        }
+
+        /** The app-op's name for `appops set`. */
+        const val OP_SENSITIVE_NAME = "RECEIVE_SENSITIVE_NOTIFICATIONS"
+        private const val OP_SENSITIVE = "android:receive_sensitive_notifications"
 
         fun component(context: Context) = ComponentName(context, NotificationListener::class.java)
 

@@ -2,7 +2,9 @@
 package app.nectarlink.android.elevated
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
@@ -11,6 +13,7 @@ import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.core.content.edit
 import app.nectarlink.android.calls.CallCompanion
+import app.nectarlink.android.notifications.NotificationListener
 import app.nectarlink.core.MirrorInputEvent
 import app.nectarlink.core.TouchPhase
 import io.github.muntashirakon.adb.AbsAdbConnectionManager
@@ -18,10 +21,13 @@ import io.github.muntashirakon.adb.AdbPairingRequiredException
 import io.github.muntashirakon.adb.AdbStream
 import io.github.muntashirakon.adb.android.AdbMdns
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -64,20 +70,46 @@ object Elevated {
     val state: StateFlow<State> = _state.asStateFlow()
 
     private lateinit var context: Context
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Mutex()
     private var adb: Connection? = null
     private var shell: AdbStream? = null
+    private var rootProcess: Process? = null
     @Volatile private var input: Writer? = null
     private var socket: java.net.Socket? = null
     /** Where the helper listens, and the token it wants, while it runs. */
     @Volatile private var helper: Pair<Int, String>? = null
     @Volatile private var screenOffRequested = false
 
+    /** True when the active Elevated helper was launched directly via Root (`su`). */
+    @Volatile var rootActive: Boolean = false
+        private set
+
     val running: Boolean get() = input != null
+
+    private val rootAvailableCached: Boolean by lazy {
+        val paths = arrayOf(
+            "/system/bin/su",
+            "/system/xbin/su",
+            "/sbin/su",
+            "/debug_ramdisk/su",
+            "/data/adb/ksu/bin/su",
+            "/data/adb/ap/bin/su",
+        )
+        paths.any { runCatching { java.io.File(it).exists() }.getOrDefault(false) }
+    }
+
+    /** Checks whether a `su` binary (Magisk, KernelSU, APatch) is present on the device. */
+    fun isRootAvailable(): Boolean = rootAvailableCached
 
     fun init(context: Context) {
         this.context = context.applicationContext
-        if (paired()) _state.value = State.Waiting
+        scope.launch(Dispatchers.IO) {
+            if (paired() || isRootAvailable()) {
+                _state.value = State.Waiting
+                start()
+            }
+        }
     }
 
     private fun paired() = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(PAIRED, false)
@@ -139,12 +171,19 @@ object Elevated {
 
     // ---- Starting ----
 
-    /** Connects and starts the input helper (when set up; again after it stopped). */
+    /** Connects and starts the input helper (when set up or rooted; again after it stopped). */
     suspend fun start(): Boolean = withContext(Dispatchers.IO) {
-        if (!paired()) return@withContext false
+        if (!paired() && !isRootAvailable()) return@withContext false
         lock.withLock {
             if (running) return@withContext true
             _state.value = State.Starting
+            if (tryStartWithRootLocked()) {
+                return@withContext true
+            }
+            if (!paired()) {
+                _state.value = State.NotSetUp
+                return@withContext false
+            }
             turnOnWirelessDebugging()
             val adb = connection()
             val connected = try {
@@ -170,6 +209,57 @@ object Elevated {
         }
     }
 
+    /**
+     * Attempts to launch [InputServer] directly via `su` (Magisk / KernelSU / APatch)
+     * without requiring Wireless Debugging.
+     */
+    private fun tryStartWithRootLocked(): Boolean {
+        if (!isRootAvailable()) return false
+        val idOk = runCatching {
+            val check = ProcessBuilder("su", "-c", "id").redirectErrorStream(true).start()
+            val finished = check.waitFor(4, java.util.concurrent.TimeUnit.SECONDS)
+            if (!finished) {
+                check.destroyForcibly()
+                false
+            } else {
+                val out = check.inputStream.bufferedReader().readText()
+                check.exitValue() == 0 && out.contains("uid=0")
+            }
+        }.getOrDefault(false)
+        if (!idOk) return false
+
+        return runCatching {
+            val token = ByteArray(24).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
+            val apk = context.applicationInfo.sourceDir
+            val cmd = "CLASSPATH=$apk app_process /system/bin ${InputServer::class.java.name} $token"
+            val proc = ProcessBuilder("su", "-c", cmd).start()
+            rootProcess = proc
+            val output = proc.inputStream.bufferedReader()
+            val first = output.readLine().orEmpty()
+            val port = first.removePrefix("ready ").toIntOrNull()
+            check(first.startsWith("ready ") && port != null) {
+                "root helper said ${first.ifEmpty { "nothing" }}"
+            }
+            rootActive = true
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(PAIRED, true) }
+            connectSocketLocked(port, token)
+            Thread {
+                runCatching { output.lineSequence().forEach { line -> Log.d(TAG, "root-helper: $line") } }
+                input = null
+                rootActive = false
+                runCatching { socket?.close() }
+                if (_state.value == State.Running) _state.value = if (paired()) State.Waiting else State.NotSetUp
+                onChange()
+            }.start()
+            true
+        }.onFailure {
+            Log.i(TAG, "root helper start failed, falling back to wireless debugging", it)
+            runCatching { rootProcess?.destroyForcibly() }
+            rootProcess = null
+            rootActive = false
+        }.getOrDefault(false)
+    }
+
     /** Wireless debugging back on, when Nectarlink may (granted at the first start). */
     private fun turnOnWirelessDebugging() {
         if (context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) != PackageManager.PERMISSION_GRANTED) return
@@ -191,6 +281,17 @@ object Elevated {
         if (!CallCompanion.allowed(context) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             run(adb, "appops set ${context.packageName} ${CallCompanion.OP_NAME} allow")
         }
+        // Lets the notification listener read one-time codes in notifications
+        // Android 15+ marks sensitive, and refreshes the listener registration
+        // so NotificationManagerService updates its trusted-listener UID set.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            if (!NotificationListener.canReadSensitive(context)) {
+                run(adb, "appops set ${context.packageName} ${NotificationListener.OP_SENSITIVE_NAME} allow")
+            }
+            if (NotificationListener.hasAccess(context)) {
+                run(adb, "cmd notification allow_listener ${context.packageName}/${NotificationListener::class.java.name}")
+            }
+        }
         // Lets PCs toggle Do Not Disturb / silent mode and screen brightness without extra prompts.
         if (context.getSystemService(android.app.NotificationManager::class.java)?.isNotificationPolicyAccessGranted == false) {
             run(adb, "cmd notification allow_dnd ${context.packageName}")
@@ -208,24 +309,87 @@ object Elevated {
         val first = output.readLine().orEmpty()
         val port = first.removePrefix("ready ").toIntOrNull()
         check(first.startsWith("ready ") && port != null) { "the helper said ${first.ifEmpty { "nothing" }}" }
-        helper = port to token
-        val local = java.net.Socket(java.net.InetAddress.getLoopbackAddress(), port).apply { tcpNoDelay = true }
-        socket = local
-        val writer = OutputStreamWriter(local.outputStream, Charsets.UTF_8)
-        writer.write(token + "\n")
-        writer.flush()
-        input = writer
-        _state.value = State.Running
-        if (screenOffRequested) send(writer, "P 0")
+        connectSocketLocked(port, token)
         // Watches the helper: when its shell ends, Elevated stops.
         Thread {
             runCatching { output.lineSequence().forEach { line -> Log.d(TAG, "helper: $line") } }
             input = null
             runCatching { socket?.close() }
-            if (_state.value == State.Running) _state.value = State.Waiting
+            if (_state.value == State.Running) _state.value = if (paired()) State.Waiting else State.NotSetUp
             onChange()
         }.start()
+    }
+
+    private fun connectSocketLocked(port: Int, token: String) {
+        helper = port to token
+        val local = java.net.Socket(java.net.InetAddress.getLoopbackAddress(), port).apply { tcpNoDelay = true }
+        socket = local
+        val writer = OutputStreamWriter(local.outputStream, Charsets.UTF_8)
+        writer.write("$token\nH\n")
+        writer.flush()
+        input = writer
+        _state.value = State.Running
+        if (screenOffRequested) send(writer, "P 0")
+        Thread {
+            runCatching {
+                local.inputStream.bufferedReader().lineSequence().forEach { line ->
+                    if (line.startsWith("CLIP\t")) {
+                        val parts = line.split('\t')
+                        val b64Text = parts.getOrNull(1).orEmpty()
+                        val b64Html = parts.getOrNull(2).orEmpty()
+                        val text = runCatching {
+                            String(android.util.Base64.decode(b64Text, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                        }.getOrDefault("")
+                        val html = if (b64Html.isNotEmpty()) {
+                            runCatching {
+                                String(android.util.Base64.decode(b64Html, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                            }.getOrNull()?.takeIf(String::isNotBlank)
+                        } else {
+                            null
+                        }
+                        if (text.isNotBlank()) {
+                            onClipboardChanged(text, html)
+                        }
+                    }
+                }
+            }
+            if (socket === local) {
+                input = null
+                runCatching { local.close() }
+                if (_state.value == State.Running) _state.value = if (paired()) State.Waiting else State.NotSetUp
+                onChange()
+            }
+        }.start()
         onChange()
+    }
+
+    /** Attaches to an [InputServer] started directly from `adb shell`. */
+    suspend fun attachFromShell(appContext: Context, port: Int, token: String): Boolean = withContext(Dispatchers.IO) {
+        if (!::context.isInitialized) init(appContext)
+        lock.withLock {
+            runCatching { socket?.close() }
+            runCatching { connectSocketLocked(port, token) }.onFailure {
+                Log.w(TAG, "couldn't attach to shell helper", it)
+            }.isSuccess
+        }
+    }
+
+    /** Receives the loopback port and token from an [InputServer] started via `adb shell`. */
+    class AttachReceiver : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val port = intent.getIntExtra("port", 0)
+            val token = intent.getStringExtra("token").orEmpty()
+            if (port <= 0 || token.isEmpty()) return
+            val pending = goAsync()
+            val app = context.applicationContext
+            scope.launch {
+                try {
+                    attachFromShell(app, port, token)
+                } finally {
+                    pending.finish()
+                }
+            }
+        }
     }
 
     /** Runs a shell command to its end; returns what it printed. */
@@ -252,14 +416,17 @@ object Elevated {
 
     private fun stopLocked() {
         screenOffRequested = false
+        rootActive = false
         input = null
         helper = null
         runCatching { socket?.close() }
         runCatching { shell?.close() }
+        runCatching { rootProcess?.destroyForcibly() }
         runCatching { adb?.disconnect() }
         socket = null
         shell = null
-        if (paired()) _state.value = State.Waiting
+        rootProcess = null
+        _state.value = if (paired()) State.Waiting else State.NotSetUp
         onChange()
     }
 
@@ -277,6 +444,9 @@ object Elevated {
 
     /** Told when Elevated starts or stops (what the phone offers changes). */
     @Volatile var onChange: () -> Unit = {}
+
+    /** Told when the shell helper observes a primary clipboard change in the background: `(text, html)`. */
+    @Volatile var onClipboardChanged: (String, String?) -> Unit = { _, _ -> }
 
     // ---- Input ----
 
@@ -316,8 +486,32 @@ object Elevated {
                     else -> send(writer, "${to}T $piece")
                 }
             }
+            is MirrorInputEvent.Gamepad ->
+                "G ${event.buttons} ${event.lx} ${event.ly} ${event.rx} ${event.ry} ${event.lt} ${event.rt}"
         }
         return send(writer, line)
+    }
+
+    /** Sends a gamepad state directly through the Elevated helper. */
+    fun sendGamepad(buttons: Int, lx: Int, ly: Int, rx: Int, ry: Int, lt: Int, rt: Int): Boolean {
+        val writer = input ?: return false
+        return send(writer, "G $buttons $lx $ly $rx $ry $lt $rt")
+    }
+
+    /**
+     * Opens a 48 kHz 16-bit stereo PCM audio stream from the Elevated helper
+     * (`InputServer` command `"A"`). Returns null if Elevated isn't running.
+     */
+    fun openAudioStream(): java.net.Socket? {
+        val (port, token) = helper ?: return null
+        return runCatching {
+            java.net.Socket(java.net.InetAddress.getLoopbackAddress(), port).apply {
+                tcpNoDelay = true
+                val out = OutputStreamWriter(getOutputStream(), Charsets.UTF_8)
+                out.write("$token\nA\n")
+                out.flush()
+            }
+        }.onFailure { Log.w(TAG, "can't open Elevated audio stream", it) }.getOrNull()
     }
 
     /** Runs an allowed shell command through the Elevated helper. */
@@ -339,17 +533,48 @@ object Elevated {
      * connection (packets as [AppDisplay] writes them). Null when Elevated
      * isn't running. Write "K\n" for a keyframe; close it to close the window.
      */
-    fun openApp(pkg: String, width: Int, height: Int, dpi: Int, bitrate: Int, fps: Int): java.net.Socket? {
+    fun openApp(
+        pkg: String,
+        width: Int,
+        height: Int,
+        dpi: Int,
+        bitrate: Int,
+        fps: Int,
+        codec: String = "h264",
+    ): java.net.Socket? {
         if (!PACKAGE.matches(pkg)) return null
         val (port, token) = helper ?: return null
         return runCatching {
             java.net.Socket(java.net.InetAddress.getLoopbackAddress(), port).apply {
                 tcpNoDelay = true
                 val out = OutputStreamWriter(getOutputStream(), Charsets.UTF_8)
-                out.write("$token\nV $width $height $dpi $bitrate $fps $pkg\n")
+                out.write("$token\nV $width $height $dpi $bitrate $fps $pkg $codec\n")
                 out.flush()
             }
         }.onFailure { Log.w(TAG, "can't open an app window", it) }.getOrNull()
+    }
+
+    /**
+     * Opens a full-screen mirror stream (`pkg == "-"`) via the Elevated shell
+     * helper without requiring a MediaProjection consent prompt on the phone.
+     */
+    fun openScreen(
+        width: Int,
+        height: Int,
+        dpi: Int,
+        bitrate: Int,
+        fps: Int,
+        codec: String = "h264",
+    ): java.net.Socket? {
+        val (port, token) = helper ?: return null
+        return runCatching {
+            java.net.Socket(java.net.InetAddress.getLoopbackAddress(), port).apply {
+                tcpNoDelay = true
+                val out = OutputStreamWriter(getOutputStream(), Charsets.UTF_8)
+                out.write("$token\nV $width $height $dpi $bitrate $fps - $codec\n")
+                out.flush()
+            }
+        }.onFailure { Log.w(TAG, "can't open Elevated screen mirror", it) }.getOrNull()
     }
 
     private fun send(writer: Writer, line: String): Boolean = try {

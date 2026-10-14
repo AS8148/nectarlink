@@ -43,6 +43,8 @@ pub mod qobject {
         /// Apps that sent notifications, as JSON sorted by name:
         /// [{ "app", "name", "icon", "rule": "show" | "quiet" | "hidden" }].
         #[qproperty(QString, apps, READ, NOTIFY)]
+        /// Non-empty when a recent dismissal can be undone in the feed.
+        #[qproperty(QString, undo_label, cxx_name = "undoLabel", READ, NOTIFY)]
         type NotificationList = super::NotificationListRust;
     }
 
@@ -104,10 +106,26 @@ pub mod qobject {
         /// Dismisses it here and on the phone.
         #[qinvokable]
         fn dismiss(self: &NotificationList, device: &QString, key: &QString);
+        /// Dismisses all notifications from one app on a device (here and on the phone).
+        #[qinvokable]
+        #[cxx_name = "dismissGroup"]
+        fn dismiss_group(self: &NotificationList, device: &QString, app: &QString);
         /// Dismisses all of a device's notifications.
         #[qinvokable]
         #[cxx_name = "dismissAll"]
         fn dismiss_all(self: &NotificationList, device: &QString);
+        /// Toggles whether an app's notification group is expanded in the feed.
+        #[qinvokable]
+        #[cxx_name = "toggleGroup"]
+        fn toggle_group(self: &NotificationList, app: &QString);
+        /// Restores the most recently dismissed notification or group to the PC feed.
+        #[qinvokable]
+        #[cxx_name = "undoDismiss"]
+        fn undo_dismiss(self: &NotificationList);
+        /// Hides the undo banner.
+        #[qinvokable]
+        #[cxx_name = "clearUndo"]
+        fn clear_undo(self: &NotificationList);
         /// Runs one of its actions on the phone.
         #[qinvokable]
         #[cxx_name = "runAction"]
@@ -149,6 +167,14 @@ struct Row {
     image_url: String,
     /// Replies sent from this PC.
     replies: Vec<SentReply>,
+    /// Total notifications in this `(device, app)` group (`1` if ungrouped or live).
+    group_count: i32,
+    /// Index within the `(device, app)` group (`0` is the newest / lead item).
+    group_index: i32,
+    /// Whether this `(device, app)` group is currently expanded.
+    group_expanded: bool,
+    /// Short preview of older notifications in the group when collapsed.
+    group_summary: String,
 }
 
 #[derive(Default)]
@@ -156,6 +182,7 @@ pub struct NotificationListRust {
     count: i32,
     history_enabled: bool,
     apps: QString,
+    undo_label: QString,
     rows: Vec<Row>,
 }
 
@@ -179,6 +206,10 @@ const ROLES: &[&str] = &[
     "replies",
     "otpCode",
     "live",
+    "groupCount",
+    "groupIndex",
+    "groupExpanded",
+    "groupSummary",
 ];
 const USER_ROLE: i32 = 0x0100;
 
@@ -246,6 +277,10 @@ fn role_value(row: &Row, role: &str) -> QVariant {
             ),
             None => text(""),
         },
+        "groupCount" => QVariant::from(&row.group_count),
+        "groupIndex" => QVariant::from(&row.group_index),
+        "groupExpanded" => QVariant::from(&row.group_expanded),
+        "groupSummary" => text(&row.group_summary),
         _ => QVariant::default(),
     }
 }
@@ -277,6 +312,85 @@ fn apps_json(s: &AppState) -> String {
     .to_string()
 }
 
+fn make_row(
+    s: &AppState,
+    view: &NotificationView,
+    group_count: i32,
+    group_index: i32,
+    group_expanded: bool,
+    group_summary: String,
+) -> Row {
+    Row {
+        device_name: s.name_of(&view.device).unwrap_or_default(),
+        icon_url: s.app_icons.get(&view.notification.app).map(|p| icons::file_url(p)).unwrap_or_default(),
+        image_url: s
+            .notification_images
+            .get(&(view.device, view.notification.key.clone()))
+            .map(|p| icons::file_url(p))
+            .unwrap_or_default(),
+        replies: s.replies.get(&(view.device, view.notification.key.clone())).cloned().unwrap_or_default(),
+        view: view.clone(),
+        group_count,
+        group_index,
+        group_expanded,
+        group_summary,
+    }
+}
+
+/// Builds display rows from [`AppState`], keeping Live Updates ungrouped at the top
+/// and grouping regular notifications by `(device, app)` in order of each app's
+/// newest notification. Collapsed groups emit only their lead item (`group_index == 0`).
+fn build_rows(s: &AppState) -> Vec<Row> {
+    let visible: Vec<&NotificationView> =
+        s.notifications.iter().filter(|view| s.app_rule(&view.notification.app) != AppRule::Hidden).collect();
+    let mut rows = Vec::with_capacity(visible.len());
+    let mut seen_groups: std::collections::HashSet<(DeviceId, String)> = std::collections::HashSet::new();
+
+    for view in &visible {
+        if view.notification.live.is_some() {
+            rows.push(make_row(s, view, 1, 0, false, String::new()));
+            continue;
+        }
+        let group_key = (view.device, view.notification.app.clone());
+        if !seen_groups.insert(group_key.clone()) {
+            continue;
+        }
+        let members: Vec<&NotificationView> = visible
+            .iter()
+            .copied()
+            .filter(|v| {
+                v.notification.live.is_none() && v.device == group_key.0 && v.notification.app == group_key.1
+            })
+            .collect();
+        let group_count = members.len() as i32;
+        let group_expanded = group_count > 1 && s.is_app_expanded(&group_key.1);
+        let group_summary = if group_count > 1 {
+            members[1..]
+                .iter()
+                .filter_map(|v| {
+                    v.notification
+                        .title
+                        .as_deref()
+                        .filter(|t| !t.trim().is_empty())
+                        .or_else(|| v.notification.text.as_deref().filter(|t| !t.trim().is_empty()))
+                })
+                .map(str::trim)
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" · ")
+        } else {
+            String::new()
+        };
+        rows.push(make_row(s, members[0], group_count, 0, group_expanded, group_summary));
+        if group_expanded {
+            for (idx, member) in members.iter().enumerate().skip(1) {
+                rows.push(make_row(s, member, group_count, idx as i32, true, String::new()));
+            }
+        }
+    }
+    rows
+}
+
 fn key_of(row: &Row) -> (DeviceId, String) {
     (row.view.device, row.view.notification.key.clone())
 }
@@ -293,35 +407,14 @@ impl cxx_qt::Initialize for qobject::NotificationList {
 
 impl qobject::NotificationList {
     fn refresh(mut self: Pin<&mut Self>) {
-        let (new, apps, history): (Vec<Row>, String, bool) = core_host::host().hub.read(|s| {
-            let rows = s
-                .notifications
-                .iter()
-                .filter(|view| s.app_rule(&view.notification.app) != AppRule::Hidden)
-                .map(|view| Row {
-                    device_name: s.name_of(&view.device).unwrap_or_default(),
-                    icon_url: s
-                        .app_icons
-                        .get(&view.notification.app)
-                        .map(|p| icons::file_url(p))
-                        .unwrap_or_default(),
-                    image_url: s
-                        .notification_images
-                        .get(&(view.device, view.notification.key.clone()))
-                        .map(|p| icons::file_url(p))
-                        .unwrap_or_default(),
-                    replies: s
-                        .replies
-                        .get(&(view.device, view.notification.key.clone()))
-                        .cloned()
-                        .unwrap_or_default(),
-                    view: view.clone(),
-                })
-                .collect();
-            (rows, apps_json(s), s.history_enabled)
-        });
+        let (new, apps, history, undo_label): (Vec<Row>, String, bool, String) = core_host::host()
+            .hub
+            .read(|s| (build_rows(s), apps_json(s), s.history_enabled, s.last_dismissed_label.clone()));
         if String::from(&self.apps) != apps {
             self.as_mut().set_apps(QString::from(&apps));
+        }
+        if String::from(&self.undo_label) != undo_label {
+            self.as_mut().set_undo_label(QString::from(&undo_label));
         }
         self.as_mut().set_history_enabled(history);
         let root = QModelIndex::default();
@@ -352,7 +445,7 @@ impl qobject::NotificationList {
                 }
             }
         }
-        let count = self.rows.len() as i32;
+        let count: i32 = self.rows.iter().filter(|r| r.group_index == 0).map(|r| r.group_count).sum();
         self.set_count(count);
     }
 
@@ -379,18 +472,97 @@ impl qobject::NotificationList {
 
     pub fn count_for(&self, device: &QString) -> i32 {
         let device = String::from(device);
-        self.rows.iter().filter(|r| r.view.device.to_string() == device).count() as i32
+        self.rows
+            .iter()
+            .filter(|r| r.group_index == 0 && r.view.device.to_string() == device)
+            .map(|r| r.group_count)
+            .sum()
     }
 
     pub fn dismiss(&self, device: &QString, key: &QString) {
-        crate::notifications::dismiss(&String::from(device), String::from(key));
+        let dev_str = String::from(device);
+        let key_str = String::from(key);
+        if let Ok(dev_id) = dev_str.parse::<DeviceId>() {
+            let found = core_host::host().hub.read(|s| {
+                s.notifications.iter().find(|n| n.device == dev_id && n.notification.key == key_str).cloned()
+            });
+            if let Some(view) = found {
+                let label = if view.notification.app_name.is_empty() {
+                    "Notification dismissed".to_owned()
+                } else {
+                    format!("Dismissed from {}", view.notification.app_name)
+                };
+                core_host::host().hub.update(|s| s.record_dismissed(vec![view], label));
+            }
+        }
+        crate::notifications::dismiss(&dev_str, key_str);
+    }
+
+    pub fn dismiss_group(&self, device: &QString, app: &QString) {
+        let dev_str = String::from(device);
+        let app_str = String::from(app);
+        let Ok(dev_id) = dev_str.parse::<DeviceId>() else { return };
+        let views: Vec<NotificationView> = core_host::host().hub.read(|s| {
+            s.notifications
+                .iter()
+                .filter(|n| n.device == dev_id && n.notification.app == app_str)
+                .cloned()
+                .collect()
+        });
+        if views.is_empty() {
+            return;
+        }
+        let app_name = views[0].notification.app_name.clone();
+        let count = views.len();
+        let label = if count == 1 {
+            format!("Dismissed from {app_name}")
+        } else {
+            format!("Dismissed {count} from {app_name}")
+        };
+        let keys: Vec<String> = views.iter().map(|v| v.notification.key.clone()).collect();
+        core_host::host().hub.update(|s| s.record_dismissed(views, label));
+        for key in keys {
+            crate::notifications::dismiss(&dev_str, key);
+        }
     }
 
     pub fn dismiss_all(&self, device: &QString) {
-        let device = String::from(device);
-        for row in self.rows.iter().filter(|r| r.view.device.to_string() == device) {
-            crate::notifications::dismiss(&row.view.device.to_string(), row.view.notification.key.clone());
+        let dev_str = String::from(device);
+        let Ok(dev_id) = dev_str.parse::<DeviceId>() else { return };
+        let views: Vec<NotificationView> = core_host::host().hub.read(|s| {
+            s.notifications
+                .iter()
+                .filter(|n| n.device == dev_id && s.app_rule(&n.notification.app) != AppRule::Hidden)
+                .cloned()
+                .collect()
+        });
+        if views.is_empty() {
+            return;
         }
+        let count = views.len();
+        let label = if count == 1 {
+            "Notification dismissed".to_owned()
+        } else {
+            format!("Dismissed {count} notifications")
+        };
+        let keys: Vec<String> = views.iter().map(|v| v.notification.key.clone()).collect();
+        core_host::host().hub.update(|s| s.record_dismissed(views, label));
+        for key in keys {
+            crate::notifications::dismiss(&dev_str, key);
+        }
+    }
+
+    pub fn toggle_group(&self, app: &QString) {
+        let app_str = String::from(app);
+        core_host::host().hub.update(|s| s.toggle_app_expanded(&app_str));
+    }
+
+    pub fn undo_dismiss(&self) {
+        core_host::host().hub.update(AppState::undo_dismiss);
+    }
+
+    pub fn clear_undo(&self) {
+        core_host::host().hub.update(AppState::clear_undo);
     }
 
     pub fn run_action(&self, device: &QString, key: &QString, action: &QString) {
@@ -440,6 +612,11 @@ impl qobject::NotificationList {
         self.apps_changed();
     }
 
+    fn set_undo_label(mut self: Pin<&mut Self>, label: QString) {
+        self.as_mut().rust_mut().undo_label = label;
+        self.undo_label_changed();
+    }
+
     pub fn reply(&self, device: &QString, key: &QString, action: &QString, text: &QString) {
         let text = String::from(text).trim().to_owned();
         if text.is_empty() {
@@ -456,7 +633,7 @@ impl qobject::NotificationList {
 
 #[cfg(test)]
 mod tests {
-    use nectarlink_core::{Notification, NotificationAction};
+    use nectarlink_core::{NodeEvent, Notification, NotificationAction};
 
     use super::*;
 
@@ -498,6 +675,10 @@ mod tests {
             icon_url: String::new(),
             image_url: "file:///C:/data/cache/images/1.jpg".into(),
             replies: vec![SentReply { text: "On my way".into(), pending: true }],
+            group_count: 3,
+            group_index: 0,
+            group_expanded: false,
+            group_summary: "Alex · Taylor".into(),
         };
         let text = |role| role_value(&row, role).value::<QString>().map(String::from).unwrap_or_default();
         assert_eq!(text("title"), "Sam");
@@ -508,5 +689,67 @@ mod tests {
         assert_eq!(role_value(&row, "when").value::<f64>(), Some(1_760_000_000_000.0));
         assert_eq!(text("replies"), r#"[{"pending":true,"text":"On my way"}]"#);
         assert!(text("live").contains(r#""chip":"5 min""#));
+        assert_eq!(role_value(&row, "groupCount").value::<i32>(), Some(3));
+        assert_eq!(role_value(&row, "groupIndex").value::<i32>(), Some(0));
+        assert_eq!(role_value(&row, "groupExpanded").value::<bool>(), Some(false));
+        assert_eq!(text("groupSummary"), "Alex · Taylor");
+    }
+
+    #[test]
+    fn build_rows_groups_by_app_collapses_by_default_and_expands_on_toggle() {
+        let phone = DeviceId([1; 32]);
+        let mut s = AppState::default();
+        let make = |key: &str, app: &str, title: &str, when: i64| Notification {
+            key: key.into(),
+            app: app.into(),
+            app_name: app.into(),
+            title: Some(title.into()),
+            text: Some("body".into()),
+            sub: None,
+            when,
+            actions: Vec::new(),
+            silent: false,
+            icon: None,
+            image: None,
+            live: None,
+            conversation: None,
+        };
+        s.apply(&NodeEvent::NotificationPosted {
+            device: phone,
+            notification: make("c1", "com.chat", "Oldest chat", 10),
+        });
+        s.apply(&NodeEvent::NotificationPosted {
+            device: phone,
+            notification: make("m1", "com.mail", "Mail 1", 20),
+        });
+        s.apply(&NodeEvent::NotificationPosted {
+            device: phone,
+            notification: make("c2", "com.chat", "Middle chat", 30),
+        });
+        s.apply(&NodeEvent::NotificationPosted {
+            device: phone,
+            notification: make("c3", "com.chat", "Newest chat", 40),
+        });
+
+        // Collapsed by default: 2 rows (lead chat + mail), total count 4.
+        let collapsed = build_rows(&s);
+        assert_eq!(collapsed.len(), 2);
+        assert_eq!(collapsed[0].view.notification.key, "c3");
+        assert_eq!(collapsed[0].group_count, 3);
+        assert_eq!(collapsed[0].group_index, 0);
+        assert!(!collapsed[0].group_expanded);
+        assert_eq!(collapsed[0].group_summary, "Middle chat · Oldest chat");
+        assert_eq!(collapsed[1].view.notification.key, "m1");
+        assert_eq!(collapsed[1].group_count, 1);
+
+        // Expanding com.chat reveals all 3 chat notifications in newest-first order before mail.
+        s.toggle_app_expanded("com.chat");
+        let expanded = build_rows(&s);
+        assert_eq!(expanded.len(), 4);
+        let keys: Vec<&str> = expanded.iter().map(|r| r.view.notification.key.as_str()).collect();
+        assert_eq!(keys, ["c3", "c2", "c1", "m1"]);
+        assert!(expanded[0].group_expanded);
+        assert_eq!(expanded[1].group_index, 1);
+        assert_eq!(expanded[2].group_index, 2);
     }
 }

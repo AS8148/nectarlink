@@ -102,6 +102,43 @@ QtObject {
             "weight": 600
           },
           "seeds": {
+            "black": {
+              "dark": {
+                "onPrimary": "#141418",
+                "onPrimaryContainer": "#F0F0F5",
+                "onSecondaryContainer": "#E2E2EA",
+                "onSurface": "#ECECF0",
+                "onSurfaceVariant": "#C2C2CA",
+                "outline": "#8E8E98",
+                "outlineVariant": "#3E3E48",
+                "primary": "#E2E2EA",
+                "primaryContainer": "#2E2E36",
+                "secondaryContainer": "#26262E",
+                "surface": "#0A0A0C",
+                "surfaceContainer": "#141418",
+                "surfaceContainerHigh": "#1E1E24",
+                "surfaceContainerHighest": "#282830",
+                "surfaceContainerLow": "#060608"
+              },
+              "light": {
+                "onPrimary": "#FFFFFF",
+                "onPrimaryContainer": "#141418",
+                "onSecondaryContainer": "#18181C",
+                "onSurface": "#111114",
+                "onSurfaceVariant": "#43434A",
+                "outline": "#73737C",
+                "outlineVariant": "#C7C7D0",
+                "primary": "#18181C",
+                "primaryContainer": "#DCDCE2",
+                "secondaryContainer": "#E5E5EB",
+                "surface": "#FAFAFC",
+                "surfaceContainer": "#EEEEF2",
+                "surfaceContainerHigh": "#E7E7EC",
+                "surfaceContainerHighest": "#E0E0E6",
+                "surfaceContainerLow": "#F4F4F7"
+              },
+              "seed": "#18181C"
+            },
             "honey": {
               "dark": {
                 "onPrimary": "#4A2800",

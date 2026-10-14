@@ -7,19 +7,13 @@ import app.nectarlink
 // voice recordings, and screen mirroring / webcam sessions).
 Item {
     id: page
-    property bool active: false
+    property bool active: true
     property bool confirmClearAll: false
     property bool deviceMenuOpen: false
 
     onActiveChanged: if (!active) deviceMenuOpen = false
 
-    opacity: active ? 1 : 0
-    visible: opacity > 0
-    Behavior on opacity { NumberAnimation { duration: Theme.fadeNormal } }
-    transform: Translate {
-        y: page.active || Theme.reduceMotion ? 0 : 12
-        Behavior on y { enabled: !Theme.reduceMotion; SpringAnimation { spring: Theme.springGentle; damping: Theme.dampingGentle } }
-    }
+    visible: active
 
     Shortcut {
         sequence: "Esc"
@@ -174,7 +168,7 @@ Item {
                     visible: searchInput.text.length === 0
                     role: "body"
                     muted: true
-                    text: qsTr("Search files, clips, links, photos, recordings…")
+                    text: qsTr("Search timeline…")
                 }
                 IconButton {
                     id: clearSearchBtn
@@ -335,7 +329,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     role: "bodySmall"
                     wrapMode: Text.WordWrap
-                    text: qsTr("Clear all timeline entries on this PC? Saved files, photos and recordings on disk are kept.")
+                    text: qsTr("Clear timeline history? Saved files on disk are kept.")
                 }
                 Row {
                     id: confirmBtns
@@ -389,8 +383,8 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             role: "title"
             text: TimelineModel.hasAny
-                  ? qsTr("No matching timeline items")
-                  : qsTr("Nothing in the timeline yet")
+                  ? qsTr("No matching items")
+                  : qsTr("No recent activity")
         }
         Txt {
             width: parent.width
@@ -399,8 +393,8 @@ Item {
             muted: true
             wrapMode: Text.WordWrap
             text: TimelineModel.hasAny
-                  ? qsTr("Try clearing the search or filter to see everything shared with your devices.")
-                  : qsTr("Files, folders, clipboard items, links, saved photos, voice recordings, and screen mirroring or webcam sessions appear here automatically.")
+                  ? qsTr("Clear the search or filter.")
+                  : qsTr("Shared files, clips, links, and photos appear here.")
         }
     }
 
@@ -763,5 +757,17 @@ Item {
                 }
             }
         }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: 10
+        radius: Theme.radiusLg
+        color: "transparent"
+        border.width: 2
+        border.color: Theme.primary
+        visible: opacity > 0
+        opacity: AppController.highlightTarget === "timeline:main" ? 1.0 : 0.0
+        Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
     }
 }

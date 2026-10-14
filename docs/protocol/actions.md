@@ -27,7 +27,7 @@ requests answered with `ok` or `error`; `pc.wake_info` is a one-way event (no
 
 ```
 t = "pc.power"      id = n   b = { action: "lock" | "sleep" }
-t = "link.open"     id = n   b = { url: text }
+t = "link.open"     id = n   b = { url: text, title?: text }
 t = "task.notify"   id = n   b = { id: text, title: text, active: bool, elapsed_ms: uint, exit_code?: int }
 t = "ok"            re = n
 t = "pc.wake_info"           b = { macs: [text, ...], broadcasts?: [text, ...] }
@@ -51,7 +51,10 @@ they're too easy to set off by accident, and lose unsaved work.
 Asks the receiver to open `url`, which **MUST** be an `http`, `https` or
 `geo:` link of at most 4,096 bytes with no whitespace or control characters.
 Receivers **MUST** check this themselves and answer `BAD_MESSAGE` to
-anything else; no other kind of link is ever opened.
+anything else; no other kind of link is ever opened. An optional `title`
+(e.g. the currently playing video's title) may accompany video handoff URLs so
+both devices can record a friendly title alongside the timestamp and raw URL in
+the timeline.
 
 Map handoff uses either `geo:<lat>,<lon>?q=...` URIs or web map URLs (Google
 Maps, Apple Maps, Bing Maps, OpenStreetMap). Video handoff preserves or

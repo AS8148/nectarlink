@@ -31,22 +31,38 @@ FocusScope {
         id: track
         anchors.fill: parent
         radius: Theme.graphite ? Theme.radiusSm : height / 2
-        color: toggle.checked ? Theme.primary : Theme.surfaceContainerHighest
-        border.width: toggle.checked ? 0 : 1.5
-        border.color: Theme.outline
+        color: Theme.glass
+            ? (toggle.checked
+                ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, Theme.dark ? 0.62 : 0.76)
+                : Qt.rgba(1, 1, 1, Theme.dark ? 0.12 : 0.44))
+            : (toggle.checked ? Theme.primary : Theme.surfaceContainerHighest)
+        border.width: Theme.glass ? 1 : (toggle.checked ? 0 : 1.5)
+        border.color: Theme.glass
+            ? (toggle.checked
+                ? Qt.rgba(1, 1, 1, Theme.dark ? 0.18 : 0.42)
+                : Qt.rgba(1, 1, 1, Theme.dark ? 0.12 : 0.34))
+            : Theme.outline
         Behavior on color { ColorAnimation { duration: Theme.fadeFast } }
 
         Rectangle {
             id: thumb
-            property real size: toggle.checked ? 19 : (tap.pressed ? 22 : 15)
-            width: size; height: size
-            radius: Theme.graphite ? Theme.radiusXs : size / 2
+            property real size: mouse.pressed ? 20 : (mouse.containsMouse ? 20 : (toggle.checked ? 18 : 16))
+            width: mouse.pressed ? 22 : size
+            height: size
+            radius: Theme.graphite ? Theme.radiusXs : height / 2
             anchors.verticalCenter: parent.verticalCenter
             x: toggle.checked ? parent.width - width - 4.5 : 6.5
-            color: toggle.checked ? Theme.primaryContent : Theme.outline
+            color: Theme.glass
+                ? (toggle.checked
+                    ? "#FFFFFF"
+                    : (Theme.dark ? Qt.rgba(1, 1, 1, mouse.containsMouse ? 0.90 : 0.78) : Qt.rgba(Theme.surfaceContent.r, Theme.surfaceContent.g, Theme.surfaceContent.b, mouse.containsMouse ? 0.78 : 0.62)))
+                : (toggle.checked ? Theme.primaryContent : (mouse.containsMouse ? Theme.surfaceContentVariant : Theme.outline))
+            border.width: Theme.glass ? 1 : 0
+            border.color: Qt.rgba(1, 1, 1, Theme.dark ? 0.55 : 0.90)
             // Quick and settled, never springy: a switch must feel immediate.
             Behavior on x { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.reduceMotion ? 0 : 140; easing.type: Easing.OutCubic } }
-            Behavior on size { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.reduceMotion ? 0 : 140; easing.type: Easing.OutCubic } }
+            Behavior on width { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast; easing.type: Easing.OutCubic } }
+            Behavior on height { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast; easing.type: Easing.OutCubic } }
             Behavior on color { enabled: !Theme.reduceMotion; ColorAnimation { duration: Theme.fadeFast } }
         }
     }
@@ -59,6 +75,11 @@ FocusScope {
         border.color: Theme.primary
         visible: Theme.focusVisible(toggle)
     }
-    HoverHandler { cursorShape: Qt.PointingHandCursor }
-    TapHandler { id: tap; onTapped: toggle.toggled(!toggle.checked) }
+    MouseArea {
+        id: mouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: toggle.toggled(!toggle.checked)
+    }
 }

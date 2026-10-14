@@ -2,9 +2,11 @@
 // Generated from docs/design/tokens.json by `cargo xtask tokens`. Do not edit.
 package app.nectarlink.android.ui.theme
 
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 
 /** Material color roles of one theme variant. */
+@Immutable
 data class Palette(
     val primary: Color,
     val onPrimary: Color,
@@ -24,12 +26,50 @@ data class Palette(
 )
 
 /** A Bloom color preset: its seed swatch and light and dark palettes. */
+@Immutable
 data class Seed(val color: Color, val light: Palette, val dark: Palette)
 
 object Tokens {
     const val DEFAULT_SEED = "honey"
 
     val bloomSeeds: Map<String, Seed> = linkedMapOf(
+        "black" to Seed(
+            color = Color(0xFF18181C),
+            light = Palette(
+                primary = Color(0xFF18181C),
+                onPrimary = Color(0xFFFFFFFF),
+                primaryContainer = Color(0xFFDCDCE2),
+                onPrimaryContainer = Color(0xFF141418),
+                secondaryContainer = Color(0xFFE5E5EB),
+                onSecondaryContainer = Color(0xFF18181C),
+                surface = Color(0xFFFAFAFC),
+                surfaceContainerLow = Color(0xFFF4F4F7),
+                surfaceContainer = Color(0xFFEEEEF2),
+                surfaceContainerHigh = Color(0xFFE7E7EC),
+                surfaceContainerHighest = Color(0xFFE0E0E6),
+                onSurface = Color(0xFF111114),
+                onSurfaceVariant = Color(0xFF43434A),
+                outline = Color(0xFF73737C),
+                outlineVariant = Color(0xFFC7C7D0),
+            ),
+            dark = Palette(
+                primary = Color(0xFFE2E2EA),
+                onPrimary = Color(0xFF141418),
+                primaryContainer = Color(0xFF2E2E36),
+                onPrimaryContainer = Color(0xFFF0F0F5),
+                secondaryContainer = Color(0xFF26262E),
+                onSecondaryContainer = Color(0xFFE2E2EA),
+                surface = Color(0xFF0A0A0C),
+                surfaceContainerLow = Color(0xFF060608),
+                surfaceContainer = Color(0xFF141418),
+                surfaceContainerHigh = Color(0xFF1E1E24),
+                surfaceContainerHighest = Color(0xFF282830),
+                onSurface = Color(0xFFECECF0),
+                onSurfaceVariant = Color(0xFFC2C2CA),
+                outline = Color(0xFF8E8E98),
+                outlineVariant = Color(0xFF3E3E48),
+            ),
+        ),
         "honey" to Seed(
             color = Color(0xFFB7791F),
             light = Palette(

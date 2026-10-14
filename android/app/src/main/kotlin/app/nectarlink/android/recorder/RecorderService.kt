@@ -19,6 +19,8 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.media.MediaRecorder
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -44,6 +46,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.sqrt
 
+@androidx.compose.runtime.Immutable
 data class RecorderSession(
     val active: Boolean = false,
     val paused: Boolean = false,
@@ -123,8 +126,8 @@ class RecorderService : Service() {
         ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(pcId, paused = false, elapsedMs = 0L), type)
 
         val app = application as NectarlinkApplication
-        val outFile = app.core.recordings.newRecordingFile()
         encodeJob = scope.launch(Dispatchers.IO) {
+            val outFile = app.core.recordings.newRecordingFile()
             val durationMs = recordM4a(outFile, pcId)
             val finalMarkers = _session.value.markers
             val savedId = if (outFile.exists() && outFile.length() > 0L) {
@@ -181,7 +184,7 @@ class RecorderService : Service() {
 
         val pcmShorts = ShortArray(FRAME_SAMPLES)
         var totalSamples = 0L
-        var lastNotifSec = -1L
+        var frameTick = 0
 
         fun drainEncoder(endOfStream: Boolean) {
             if (endOfStream) {
@@ -219,14 +222,40 @@ class RecorderService : Service() {
             }
         }
 
+        val noiseSuppressor = runCatching {
+            val sessionId = audioRecord?.audioSessionId ?: 0
+            if (sessionId != 0 && NoiseSuppressor.isAvailable()) {
+                NoiseSuppressor.create(sessionId)?.apply { enabled = true }
+            } else {
+                null
+            }
+        }.getOrNull()
+
+        val agc = runCatching {
+            val sessionId = audioRecord?.audioSessionId ?: 0
+            if (sessionId != 0 && AutomaticGainControl.isAvailable()) {
+                AutomaticGainControl.create(sessionId)?.apply { enabled = true }
+            } else {
+                null
+            }
+        }.getOrNull()
+
         try {
             if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
                 runCatching { audioRecord.startRecording() }
             }
             while (running || totalSamples < SAMPLE_RATE / 4) {
                 if (paused && running) {
-                    Thread.sleep(30L)
+                    if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        runCatching { audioRecord.stop() }
+                    }
+                    Thread.sleep(60L)
                     continue
+                }
+                if (audioRecord?.state == AudioRecord.STATE_INITIALIZED &&
+                    audioRecord.recordingState != AudioRecord.RECORDSTATE_RECORDING
+                ) {
+                    runCatching { audioRecord.startRecording() }
                 }
                 val read = if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     audioRecord.read(pcmShorts, 0, FRAME_SAMPLES)
@@ -266,14 +295,10 @@ class RecorderService : Service() {
                     }
                 }
                 totalSamples += count
-                val elapsedMs = (totalSamples * 1_000L) / SAMPLE_RATE
-                _session.update { it.copy(elapsedMs = elapsedMs, level = meter) }
-
-                val sec = elapsedMs / 1_000L
-                if (sec != lastNotifSec) {
-                    lastNotifSec = sec
-                    val nm = getSystemService(NotificationManager::class.java)
-                    nm?.notify(NOTIFICATION_ID, buildNotification(pcId, paused = paused, elapsedMs = elapsedMs))
+                frameTick++
+                if (frameTick % 3 == 0) {
+                    val elapsedMs = (totalSamples * 1_000L) / SAMPLE_RATE
+                    _session.update { it.copy(elapsedMs = elapsedMs, level = meter) }
                 }
 
                 drainEncoder(endOfStream = false)
@@ -282,6 +307,8 @@ class RecorderService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "recording interrupted", e)
         } finally {
+            runCatching { noiseSuppressor?.release() }
+            runCatching { agc?.release() }
             runCatching {
                 if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     audioRecord.stop()
@@ -347,7 +374,10 @@ class RecorderService : Service() {
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
-            .setContentText(formatDuration(elapsedMs))
+            .setContentText(if (paused) formatDuration(elapsedMs) else pcName)
+            .setWhen(System.currentTimeMillis() - elapsedMs.coerceAtLeast(0L))
+            .setShowWhen(!paused)
+            .setUsesChronometer(!paused)
             .setContentIntent(openPending)
             .setOngoing(true)
             .setSilent(true)
@@ -382,6 +412,8 @@ class RecorderService : Service() {
 
         private val _session = MutableStateFlow(RecorderSession())
         val session: StateFlow<RecorderSession> = _session.asStateFlow()
+
+        fun currentSession(): RecorderSession = _session.value
 
         fun hasPermission(context: Context): Boolean =
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==

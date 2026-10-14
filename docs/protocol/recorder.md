@@ -43,7 +43,7 @@ and optional `markers`:
   - `files` must contain **exactly 1** entry, and its `folder` must be `None`.
   - `markers` may contain `0..=256` (`MAX_MARKERS`) entries.
   - Each `RecordingMarker` has `at_ms: u64` (elapsed recording milliseconds,
-    excluding paused time) and optional `label: Option<String>` (1–256 UTF-8
+    excluding paused time) and optional `label: Option<String>` (1 to 256 UTF-8
     bytes after trimming, with no control characters).
 - When `recording` is `false` (or omitted):
   - `markers` must be empty.

@@ -35,6 +35,19 @@ object WebcamRequests {
     private const val TAG = "webcam_req"
     private const val REQUEST_TIMEOUT_MS = 2 * 60 * 1000L
 
+    /**
+     * One-time tokens for launches from this app's own request notification. MainActivity
+     * is exported, so any app can send it the webcam extras; only a launch carrying a token
+     * issued here may start the camera without a tap. Kept in memory: after a restart the
+     * screen still opens, and the user starts the camera themselves.
+     */
+    private val autoStartTokens = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    internal fun issueAutoStartToken(): String =
+        java.util.UUID.randomUUID().toString().also { autoStartTokens += it }
+
+    internal fun consumeAutoStartToken(token: String?): Boolean = token != null && autoStartTokens.remove(token)
+
     fun createChannel(context: Context) {
         context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(
             NotificationChannel(
@@ -58,6 +71,7 @@ object WebcamRequests {
             putExtra("webcam_height", request.height)
             putExtra("webcam_camera", request.camera)
             putExtra("webcam_auto_start", true)
+            putExtra("webcam_token", issueAutoStartToken())
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val open = PendingIntent.getActivity(

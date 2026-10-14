@@ -6,7 +6,7 @@ each license sits next to its font and is packaged with it.
 
 | File | Family | Used for |
 |---|---|---|
-| `Figtree.ttf` | Figtree (variable, weights 300–900) | All text in Bloom; body text in Graphite |
+| `Figtree.ttf` | Figtree (variable, weights 300 to 900) | All text in Bloom; body text in Graphite |
 | `InstrumentSerif-Regular.ttf` | Instrument Serif | Graphite headings |
 | `SpaceMono-Regular.ttf`, `SpaceMono-Bold.ttf` | Space Mono | Codes, IDs and Graphite labels |
 

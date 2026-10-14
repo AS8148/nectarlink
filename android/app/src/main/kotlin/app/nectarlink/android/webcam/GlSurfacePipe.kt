@@ -21,9 +21,10 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Renders CameraX frames from an input [SurfaceTexture] into a [MediaCodec]
- * encoder input [Surface], applying sensor-to-display rotation and a 16:9
- * center-crop (`FILL_CENTER`) so the encoded H.264 stream is always upright
- * and fills the frame in both portrait and landscape phone orientations.
+ * encoder input [Surface], accounting for the sensor rotation already present
+ * in `SurfaceTexture.getTransformMatrix(stMatrix)` and applying an
+ * aspect-preserving `FIT_CENTER` quad so the encoded H.264 stream is always
+ * upright and never stretched in either portrait or landscape phone orientations.
  */
 internal class GlSurfacePipe(
     private val srcWidth: Int,
@@ -38,7 +39,8 @@ internal class GlSurfacePipe(
     private val thread = HandlerThread("webcam-gl-${dstWidth}x${dstHeight}").apply { start() }
     private val handler = Handler(thread.looper)
 
-    @Volatile private var rotationDegrees: Int = ((initialRotationDegrees % 360) + 360) % 360
+    @Volatile private var sensorRotationDegrees: Int = ((initialRotationDegrees % 360) + 360) % 360
+    @Volatile private var displayRotationDegrees: Int = 0
     @Volatile private var mirrorHorizontally: Boolean = initialMirror
     @Volatile private var released = false
 
@@ -73,8 +75,17 @@ internal class GlSurfacePipe(
         ready.await(3, TimeUnit.SECONDS)
     }
 
+    fun setTransform(sensorRotationDegrees: Int, displayRotationDegrees: Int) {
+        this.sensorRotationDegrees = ((sensorRotationDegrees % 360) + 360) % 360
+        this.displayRotationDegrees = ((displayRotationDegrees % 360) + 360) % 360
+    }
+
+    fun setRotation(degrees: Int) {
+        setTransform(degrees, 0)
+    }
+
     fun updateTransform(rotationDeg: Int, mirror: Boolean) {
-        rotationDegrees = ((rotationDeg % 360) + 360) % 360
+        sensorRotationDegrees = ((rotationDeg % 360) + 360) % 360
         mirrorHorizontally = mirror
     }
 
@@ -154,30 +165,40 @@ internal class GlSurfacePipe(
             st.getTransformMatrix(stMatrix)
         }.onFailure { return }
 
-        val rot = rotationDegrees
-        val mirror = mirrorHorizontally
-
-        // After rotating the source buffer by `rot`, its upright dimensions are:
-        val uprightW = if (rot % 180 != 0) srcHeight.toFloat() else srcWidth.toFloat()
-        val uprightH = if (rot % 180 != 0) srcWidth.toFloat() else srcHeight.toFloat()
-        val srcAspect = (uprightW / uprightH.coerceAtLeast(1f)).coerceAtLeast(0.01f)
-        val dstAspect = (dstWidth.toFloat() / dstHeight.coerceAtLeast(1).toFloat()).coerceAtLeast(0.01f)
-
-        // FILL_CENTER crop factors in upright output space:
-        val scaleX: Float
-        val scaleY: Float
-        if (srcAspect > dstAspect) {
-            scaleX = dstAspect / srcAspect
-            scaleY = 1f
+        // stMatrix is column-major 4x4: stMatrix[0] is dU/dX, stMatrix[1] is dV/dX.
+        val stSwapsAxes = kotlin.math.abs(stMatrix[1]) > kotlin.math.abs(stMatrix[0])
+        // Dimensions of the image in UV space AFTER stMatrix is applied:
+        val uvWidth = if (stSwapsAxes) srcHeight.toFloat() else srcWidth.toFloat()
+        val uvHeight = if (stSwapsAxes) srcWidth.toFloat() else srcHeight.toFloat()
+        // If stMatrix already rotated the sensor to Surface.ROTATION_0, we only need
+        // to compensate for displayRotationDegrees (0 in portrait, 90 in landscape-left,
+        // 270 in landscape-right, 180 upside-down). Otherwise apply sensorRotationDegrees.
+        val effectiveRot = if (stSwapsAxes) {
+            ((displayRotationDegrees % 360) + 360) % 360
         } else {
-            scaleX = 1f
-            scaleY = srcAspect / dstAspect
+            ((sensorRotationDegrees % 360) + 360) % 360
         }
 
-        updateQuadVertices(rot, scaleX, scaleY, mirror)
+        val uprightWidth = if (effectiveRot % 180 != 0) uvHeight else uvWidth
+        val uprightHeight = if (effectiveRot % 180 != 0) uvWidth else uvHeight
+        val srcAspect = (uprightWidth / uprightHeight.coerceAtLeast(1f)).coerceAtLeast(0.01f)
+        val dstAspect = (dstWidth.toFloat() / dstHeight.coerceAtLeast(1).toFloat()).coerceAtLeast(0.01f)
+
+        // Aspect-preserving FIT_CENTER vertex positions so the camera frame is never stretched:
+        val posScaleX: Float
+        val posScaleY: Float
+        if (srcAspect > dstAspect) {
+            posScaleX = 1f
+            posScaleY = dstAspect / srcAspect
+        } else {
+            posScaleX = srcAspect / dstAspect
+            posScaleY = 1f
+        }
+
+        updateQuadVertices(effectiveRot, posScaleX, posScaleY, mirrorHorizontally && !stSwapsAxes)
 
         GLES20.glViewport(0, 0, dstWidth, dstHeight)
-        GLES20.glClearColor(0f, 0f, 0f, 1f)
+        GLES20.glClearColor(0.07f, 0.075f, 0.09f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         GLES20.glUseProgram(program)
@@ -202,43 +223,54 @@ internal class GlSurfacePipe(
         EGL14.eglSwapBuffers(eglDisplay, eglSurface)
     }
 
-    private fun updateQuadVertices(rot: Int, scaleX: Float, scaleY: Float, mirror: Boolean) {
-        // 4 corners of clip space: (-1,-1), (1,-1), (-1,1), (1,1)
-        val clipX = floatArrayOf(-1f, 1f, -1f, 1f)
-        val clipY = floatArrayOf(-1f, -1f, 1f, 1f)
+    private fun updateQuadVertices(
+        effectiveRot: Int,
+        posScaleX: Float,
+        posScaleY: Float,
+        mirror: Boolean,
+    ) {
+        val sx = if (mirror) -posScaleX else posScaleX
+        val sy = posScaleY
+        val posX = floatArrayOf(-sx, sx, -sx, sx)
+        val posY = floatArrayOf(-sy, -sy, sy, sy)
+
+        // Base UV corners: bl = (0f, 0f), br = (1f, 0f), tl = (0f, 1f), tr = (1f, 1f)
+        // Surface.ROTATION_90 (standard landscape, phone rotated 90° CCW) puts phone's
+        // top edge on the left and right edge on the top: bottom-left is tl, bottom-right
+        // is bl, top-left is tr, top-right is br.
+        val uvs = when (((effectiveRot % 360) + 360) % 360) {
+            90 -> floatArrayOf(
+                0f, 1f, // uv0 = tl
+                0f, 0f, // uv1 = bl
+                1f, 1f, // uv2 = tr
+                1f, 0f, // uv3 = br
+            )
+            180 -> floatArrayOf(
+                1f, 1f, // uv0 = tr
+                0f, 1f, // uv1 = tl
+                1f, 0f, // uv2 = br
+                0f, 0f, // uv3 = bl
+            )
+            270 -> floatArrayOf(
+                1f, 0f, // uv0 = br
+                1f, 1f, // uv1 = tr
+                0f, 0f, // uv2 = bl
+                0f, 1f, // uv3 = tl
+            )
+            else -> floatArrayOf(
+                0f, 0f, // uv0 = bl
+                1f, 0f, // uv1 = br
+                0f, 1f, // uv2 = tl
+                1f, 1f, // uv3 = tr
+            )
+        }
+
         quadBuffer.position(0)
         for (i in 0 until 4) {
-            val vx = clipX[i]
-            val vy = clipY[i]
-            // Centered upright coordinates in [-0.5, +0.5], scaled for aspect-fill crop:
-            val sx = (if (mirror) -vx else vx) * 0.5f * scaleX
-            val sy = vy * 0.5f * scaleY
-            // Map upright output point (sx, sy) back to unrotated buffer coordinates (bx, by)
-            // for a clockwise image rotation of `rot` degrees:
-            val bx: Float
-            val by: Float
-            when (rot) {
-                90 -> {
-                    bx = -sy
-                    by = sx
-                }
-                180 -> {
-                    bx = -sx
-                    by = -sy
-                }
-                270 -> {
-                    bx = sy
-                    by = -sx
-                }
-                else -> {
-                    bx = sx
-                    by = sy
-                }
-            }
-            quadBuffer.put(vx)
-            quadBuffer.put(vy)
-            quadBuffer.put(bx + 0.5f)
-            quadBuffer.put(by + 0.5f)
+            quadBuffer.put(posX[i])
+            quadBuffer.put(posY[i])
+            quadBuffer.put(uvs[i * 2])
+            quadBuffer.put(uvs[i * 2 + 1])
         }
         quadBuffer.position(0)
     }

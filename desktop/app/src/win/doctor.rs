@@ -27,7 +27,7 @@ use windows::{
         System::{
             Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
             Ole::IEnumVARIANT,
-            Threading::{INFINITE, WaitForSingleObject},
+            Threading::WaitForSingleObject,
             Variant::{VARIANT, VariantClear},
         },
         UI::{
@@ -214,15 +214,17 @@ pub fn adapters() -> Adapters {
     found
 }
 
-/// Lets `exe` through the firewall on private and domain networks, removing
+/// Lets `exe` through the firewall on all network profiles, removing any
 /// rules that block it. Asks for administrator rights (the UAC prompt) and
 /// waits until it's done; `Ok(false)` if the user said no.
 pub fn fix_firewall(exe: &Path) -> windows::core::Result<bool> {
-    let exe = exe.to_string_lossy();
+    let raw_exe = exe.to_string_lossy();
+    let clean_exe = raw_exe.strip_prefix(r"\\?\").unwrap_or(&raw_exe);
     let script = format!(
-        "/c netsh advfirewall firewall delete rule name=all dir=in program=\"{exe}\" & \
-         netsh advfirewall firewall add rule name=\"Nectarlink\" dir=in action=allow program=\"{exe}\" \
-         enable=yes profile=private,domain"
+        "/c netsh advfirewall firewall delete rule name=all dir=in program=\"{clean_exe}\" & \
+         netsh advfirewall firewall delete rule name=\"Nectarlink\" dir=in & \
+         netsh advfirewall firewall add rule name=\"Nectarlink\" dir=in action=allow program=\"{clean_exe}\" \
+         enable=yes profile=any"
     );
     let parameters = HSTRING::from(script);
     let mut info = SHELLEXECUTEINFOW {
@@ -242,14 +244,36 @@ pub fn fix_firewall(exe: &Path) -> windows::core::Result<bool> {
             return Ok(false);
         }
         if !info.hProcess.is_invalid() {
-            let waited = WaitForSingleObject(info.hProcess, INFINITE);
+            let waited = WaitForSingleObject(info.hProcess, 15_000);
+            let mut exit_code = 1u32;
+            let _ = windows::Win32::System::Threading::GetExitCodeProcess(info.hProcess, &mut exit_code);
             let _ = CloseHandle(info.hProcess);
-            if waited != WAIT_OBJECT_0 {
+            if waited != WAIT_OBJECT_0 || exit_code != 0 {
                 return Ok(false);
             }
         }
     }
     Ok(true)
+}
+
+/// Opens Windows Defender Firewall's Control Panel / settings page so the user
+/// can inspect or toggle Nectarlink directly.
+pub fn open_firewall_settings() -> bool {
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        lpVerb: w!("open"),
+        lpFile: w!("control.exe"),
+        lpParameters: w!("firewall.cpl"),
+        nShow: windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    // SAFETY: valid SHELLEXECUTEINFOW with static wide strings.
+    if unsafe { ShellExecuteExW(&mut info) }.is_ok() {
+        return true;
+    }
+    crate::win::shell::open_url("firewall.cpl")
+        .or_else(|_| crate::win::shell::open_url("ms-settings:windowsdefender"))
+        .is_ok()
 }
 
 #[cfg(test)]

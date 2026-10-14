@@ -32,9 +32,10 @@ const INDEX_FILE: &str = "clipboard_history.enc";
 const IMAGES_DIR: &str = "clipboard_images";
 
 /// Whether a clipboard history item is text or an image.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ClipboardItemKind {
+    #[default]
     Text,
     Image,
 }
@@ -43,18 +44,25 @@ pub enum ClipboardItemKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClipboardHistoryEntry {
     pub id: String,
+    #[serde(default)]
     pub kind: ClipboardItemKind,
     /// The text for [`ClipboardItemKind::Text`], or empty for [`ClipboardItemKind::Image`].
+    #[serde(default)]
     pub text: String,
     /// `"image/png"` or `"image/jpeg"` for [`ClipboardItemKind::Image`].
+    #[serde(default)]
     pub mime: Option<String>,
     /// Name of the paired device it was sent to or received from.
+    #[serde(default, alias = "peer_name")]
     pub device_name: String,
     /// `true` when received from a peer; `false` when sent from this device.
+    #[serde(default)]
     pub incoming: bool,
     /// Unix timestamp (seconds) when the clip was exchanged.
+    #[serde(default)]
     pub timestamp: i64,
     /// Whether the user pinned this clip so it stays at the top and is not evicted.
+    #[serde(default)]
     pub pinned: bool,
 }
 
@@ -89,6 +97,98 @@ impl Default for StoredState {
     }
 }
 
+/// Parses current `StoredState` JSON or migrates legacy v0.1 clipboard history JSON
+/// (entries missing `kind`/`html`/`rtf`/`pinned` fields or stored as a top-level array).
+fn parse_stored_state(plain: &[u8]) -> Option<StoredState> {
+    let mut state = if let Ok(s) = serde_json::from_slice::<StoredState>(plain) {
+        s
+    } else if let Ok(raw_items) = serde_json::from_slice::<Vec<serde_json::Value>>(plain) {
+        let mut items = Vec::with_capacity(raw_items.len());
+        for (idx, val) in raw_items.into_iter().enumerate() {
+            if let Ok(entry) = serde_json::from_value::<StoredEntry>(val.clone())
+                && (!entry.entry.text.is_empty() || entry.entry.mime.is_some())
+            {
+                items.push(entry);
+                continue;
+            }
+            // Legacy v0.1 format: `{ id: 1, direction: "received", peer_name: "Pixel", timestamp: 123, content: { type: "text", text: "..." }, pinned: false }`
+            let id = match val.get("id") {
+                Some(serde_json::Value::String(s)) if !s.is_empty() => s.clone(),
+                Some(serde_json::Value::Number(n)) => {
+                    format!("clip_{:08}", n.as_u64().unwrap_or((idx + 1) as u64))
+                }
+                _ => format!("clip_{:08}", idx + 1),
+            };
+            let device_name = val
+                .get("device_name")
+                .or_else(|| val.get("peer_name"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let incoming = val.get("incoming").and_then(serde_json::Value::as_bool).unwrap_or_else(|| {
+                val.get("direction")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|d| d.eq_ignore_ascii_case("received"))
+            });
+            let timestamp = val.get("timestamp").and_then(serde_json::Value::as_i64).unwrap_or(0);
+            let pinned = val.get("pinned").and_then(serde_json::Value::as_bool).unwrap_or(false);
+            let mut text = val.get("text").and_then(serde_json::Value::as_str).unwrap_or("").to_owned();
+            let mut mime = val.get("mime").and_then(serde_json::Value::as_str).map(str::to_owned);
+            let mut kind = match val.get("kind").and_then(serde_json::Value::as_str) {
+                Some("image") => ClipboardItemKind::Image,
+                _ => ClipboardItemKind::Text,
+            };
+            if let Some(content) = val.get("content") {
+                if text.is_empty()
+                    && let Some(t) = content.get("text").and_then(serde_json::Value::as_str)
+                {
+                    text = t.to_owned();
+                }
+                if mime.is_none()
+                    && let Some(m) = content.get("mime").and_then(serde_json::Value::as_str)
+                {
+                    mime = Some(m.to_owned());
+                    kind = ClipboardItemKind::Image;
+                }
+            }
+            if text.is_empty() && mime.is_some() {
+                kind = ClipboardItemKind::Image;
+            }
+            items.push(StoredEntry {
+                entry: ClipboardHistoryEntry {
+                    id,
+                    kind,
+                    text,
+                    mime,
+                    device_name,
+                    incoming,
+                    timestamp,
+                    pinned,
+                },
+                image_hash: val.get("image_hash").and_then(serde_json::Value::as_u64),
+                size: val.get("size").and_then(serde_json::Value::as_u64).unwrap_or(0),
+            });
+        }
+        let next_id = (items.len() as u64).saturating_add(1);
+        StoredState { enabled: true, next_id, items }
+    } else {
+        return None;
+    };
+
+    for item in &mut state.items {
+        if item.entry.kind == ClipboardItemKind::Text
+            && item.entry.text.is_empty()
+            && item.entry.mime.is_some()
+        {
+            item.entry.kind = ClipboardItemKind::Image;
+        }
+    }
+    if state.next_id == 0 {
+        state.next_id = (state.items.len() as u64).saturating_add(1);
+    }
+    Some(state)
+}
+
 /// Thread-safe encrypted store for clipboard history.
 pub struct ClipboardHistoryStore {
     data_dir: PathBuf,
@@ -111,7 +211,7 @@ impl ClipboardHistoryStore {
             Ok(sealed) => protector
                 .unprotect(&sealed)
                 .ok()
-                .and_then(|plain| serde_json::from_slice::<StoredState>(&plain).ok())
+                .and_then(|plain| parse_stored_state(&plain))
                 .unwrap_or_default(),
             Err(_) => StoredState::default(),
         };
@@ -218,39 +318,59 @@ impl ClipboardHistoryStore {
         if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
             return None;
         }
-        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if !s.enabled {
-            return None;
-        }
         let hash = fnv1a(bytes);
         let now = now_unix();
+        let (target_id, is_existing, need_write) = {
+            let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            if !s.enabled {
+                return None;
+            }
+            if let Some(existing) = s.items.iter().find(|i| {
+                i.entry.kind == ClipboardItemKind::Image
+                    && i.image_hash == Some(hash)
+                    && i.entry.mime.as_deref() == Some(mime)
+            }) {
+                let existing_id = existing.entry.id.clone();
+                let need_write = !self.image_path(&existing_id).is_file();
+                (existing_id, true, need_write)
+            } else {
+                let id = alloc_id(&mut s.next_id);
+                (id, false, true)
+            }
+        };
+
+        if need_write && self.write_encrypted_image(&target_id, bytes).is_err() {
+            return None;
+        }
+
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if !s.enabled {
+            if !is_existing {
+                let _ = std::fs::remove_file(self.image_path(&target_id));
+            }
+            return None;
+        }
         if let Some(existing) = s.items.iter_mut().find(|i| {
             i.entry.kind == ClipboardItemKind::Image
                 && i.image_hash == Some(hash)
                 && i.entry.mime.as_deref() == Some(mime)
         }) {
             let existing_id = existing.entry.id.clone();
+            if !is_existing && existing_id != target_id {
+                let _ = std::fs::remove_file(self.image_path(&target_id));
+            }
             existing.entry.device_name = device_name.to_owned();
             existing.entry.incoming = incoming;
             existing.entry.timestamp = now;
-            if !self.image_path(&existing_id).is_file()
-                && self.write_encrypted_image(&existing_id, bytes).is_err()
-            {
-                return None;
-            }
             sort_items(&mut s.items);
             let evicted = self.evict_locked(&mut s.items);
             let _ = self.save_locked(&s);
             return Some((existing_id, evicted));
         }
 
-        let id = alloc_id(&mut s.next_id);
-        if self.write_encrypted_image(&id, bytes).is_err() {
-            return None;
-        }
         s.items.push(StoredEntry {
             entry: ClipboardHistoryEntry {
-                id: id.clone(),
+                id: target_id.clone(),
                 kind: ClipboardItemKind::Image,
                 text: String::new(),
                 mime: Some(mime.to_owned()),
@@ -265,7 +385,7 @@ impl ClipboardHistoryStore {
         sort_items(&mut s.items);
         let evicted = self.evict_locked(&mut s.items);
         let _ = self.save_locked(&s);
-        Some((id, evicted))
+        Some((target_id, evicted))
     }
 
     /// Lists clipboard history items (pinned first, then newest first),
@@ -601,5 +721,82 @@ mod tests {
         let (count, bytes) = reopened.count_and_bytes();
         assert_eq!(count, 1);
         assert_eq!(bytes, "old pinned text".len() as u64);
+    }
+
+    #[test]
+    fn migrates_v0_1_clipboard_history_entry_without_kind_html_rtf_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let protector = Arc::new(PlainKeyProtector);
+        let now = now_unix();
+
+        // 1. StoredState JSON with v0.1 entries missing `kind`, `mime`, `pinned`, `html`, and `rtf`,
+        //    plus an image entry inferred from `mime` when `kind` is absent.
+        let v0_1_state_json = format!(
+            r#"{{
+                "enabled": true,
+                "next_id": 3,
+                "items": [
+                    {{
+                        "id": "clip_00000002",
+                        "text": "legacy plain text without kind/html/rtf",
+                        "device_name": "Pixel 8",
+                        "incoming": true,
+                        "timestamp": {now}
+                    }},
+                    {{
+                        "id": "clip_00000001",
+                        "mime": "image/png",
+                        "device_name": "Desktop",
+                        "incoming": false,
+                        "timestamp": {},
+                        "size": 64
+                    }}
+                ]
+            }}"#,
+            now - 10
+        );
+        let sealed = protector.protect(v0_1_state_json.as_bytes()).unwrap();
+        fs::write(dir.path().join(INDEX_FILE), sealed).unwrap();
+
+        let store = ClipboardHistoryStore::open(dir.path(), protector.clone());
+        let list = store.list(None);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, "clip_00000002");
+        assert_eq!(list[0].kind, ClipboardItemKind::Text);
+        assert_eq!(list[0].text, "legacy plain text without kind/html/rtf");
+        assert_eq!(list[0].device_name, "Pixel 8");
+        assert!(list[0].incoming);
+        assert!(!list[0].pinned);
+
+        assert_eq!(list[1].id, "clip_00000001");
+        assert_eq!(list[1].kind, ClipboardItemKind::Image);
+        assert_eq!(list[1].mime.as_deref(), Some("image/png"));
+
+        // 2. Also verify migration from a top-level v0.1 JSON array (`direction`, `peer_name`, `content.text`).
+        let dir2 = tempfile::tempdir().unwrap();
+        let v0_1_array_json = format!(
+            r#"[
+                {{
+                    "id": 1,
+                    "direction": "received",
+                    "peer_name": "Pixel 7",
+                    "timestamp": {now},
+                    "content": {{ "type": "text", "text": "v0.1 array clip" }},
+                    "pinned": true
+                }}
+            ]"#
+        );
+        let sealed2 = protector.protect(v0_1_array_json.as_bytes()).unwrap();
+        fs::write(dir2.path().join(INDEX_FILE), sealed2).unwrap();
+
+        let store2 = ClipboardHistoryStore::open(dir2.path(), protector);
+        let list2 = store2.list(None);
+        assert_eq!(list2.len(), 1);
+        assert_eq!(list2[0].id, "clip_00000001");
+        assert_eq!(list2[0].kind, ClipboardItemKind::Text);
+        assert_eq!(list2[0].text, "v0.1 array clip");
+        assert_eq!(list2[0].device_name, "Pixel 7");
+        assert!(list2[0].incoming);
+        assert!(list2[0].pinned);
     }
 }

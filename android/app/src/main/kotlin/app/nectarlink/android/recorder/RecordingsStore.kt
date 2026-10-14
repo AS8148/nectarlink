@@ -24,6 +24,7 @@ enum class DeliveryState {
     Failed,
 }
 
+@androidx.compose.runtime.Immutable
 data class SavedRecording(
     val id: String,
     val fileName: String,
@@ -43,15 +44,28 @@ data class SavedRecording(
  * delivery status to the chosen PC.
  */
 class RecordingsStore(context: Context) {
-    private val dir: File = context.applicationContext.filesDir.resolve("recordings").apply { mkdirs() }
+    private val dir: File = context.applicationContext.filesDir.resolve("recordings")
     private val indexFile: File = dir.resolve("recordings.json")
     private val lock = Any()
+    private val ioExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "nectarlink-recordings-io").apply { isDaemon = true }
+    }
     private val _recordings = MutableStateFlow<List<SavedRecording>>(emptyList())
     val recordings: StateFlow<List<SavedRecording>> = _recordings.asStateFlow()
 
     init {
-        synchronized(lock) {
-            _recordings.value = loadLocked()
+        ioExecutor.execute {
+            dir.mkdirs()
+            val loaded = loadDisk()
+            synchronized(lock) {
+                val current = _recordings.value
+                if (current.isEmpty()) {
+                    _recordings.value = loaded
+                } else {
+                    val existingIds = current.map { it.id }.toSet()
+                    _recordings.value = current + loaded.filterNot { it.id in existingIds }
+                }
+            }
         }
     }
 
@@ -101,8 +115,8 @@ class RecordingsStore(context: Context) {
                 },
             )
             val updated = listOf(rec) + _recordings.value.filterNot { it.fileName == file.name }
-            saveLocked(updated)
             _recordings.value = updated
+            ioExecutor.execute { saveDisk(updated) }
             return rec
         }
     }
@@ -110,12 +124,14 @@ class RecordingsStore(context: Context) {
     fun delete(id: String) {
         synchronized(lock) {
             val target = _recordings.value.firstOrNull { it.id == id }
-            if (target != null) {
-                runCatching { target.file(dir).delete() }
-            }
             val updated = _recordings.value.filterNot { it.id == id }
-            saveLocked(updated)
             _recordings.value = updated
+            ioExecutor.execute {
+                if (target != null) {
+                    runCatching { target.file(dir).delete() }
+                }
+                saveDisk(updated)
+            }
         }
     }
 
@@ -126,15 +142,17 @@ class RecordingsStore(context: Context) {
         delivery: DeliveryState,
     ) {
         synchronized(lock) {
-            val updated = _recordings.value.map { rec ->
+            val current = _recordings.value
+            val updated = current.map { rec ->
                 if (rec.id == id) {
                     rec.copy(targetPcId = pcId, transferId = transferId, delivery = delivery)
                 } else {
                     rec
                 }
             }
-            saveLocked(updated)
+            if (updated == current) return
             _recordings.value = updated
+            ioExecutor.execute { saveDisk(updated) }
         }
     }
 
@@ -145,7 +163,7 @@ class RecordingsStore(context: Context) {
             val updated = current.map { rec ->
                 if (rec.transferId != transfer.id) return@map rec
                 val nextDelivery = when (val status = transfer.status) {
-                    is TransferStatus.Waiting, is TransferStatus.Requested -> DeliveryState.Waiting
+                    is TransferStatus.Waiting, is TransferStatus.Requested, is TransferStatus.Paused -> DeliveryState.Waiting
                     is TransferStatus.Running -> DeliveryState.Sending
                     is TransferStatus.Done -> DeliveryState.Sent
                     is TransferStatus.Cancelled -> DeliveryState.Idle
@@ -157,8 +175,9 @@ class RecordingsStore(context: Context) {
                 }
                 rec.copy(delivery = nextDelivery)
             }
-            saveLocked(updated)
+            if (updated == current) return
             _recordings.value = updated
+            ioExecutor.execute { saveDisk(updated) }
         }
     }
 
@@ -166,7 +185,7 @@ class RecordingsStore(context: Context) {
     fun waitingForPc(pcId: String): List<SavedRecording> =
         _recordings.value.filter { it.targetPcId == pcId && it.delivery == DeliveryState.Waiting }
 
-    private fun loadLocked(): List<SavedRecording> {
+    private fun loadDisk(): List<SavedRecording> {
         if (!indexFile.exists()) return emptyList()
         return runCatching {
             val arr = JSONArray(indexFile.readText())
@@ -208,7 +227,7 @@ class RecordingsStore(context: Context) {
         }.getOrDefault(emptyList())
     }
 
-    private fun saveLocked(items: List<SavedRecording>) {
+    private fun saveDisk(items: List<SavedRecording>) {
         runCatching {
             dir.mkdirs()
             val arr = JSONArray()

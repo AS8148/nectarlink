@@ -20,6 +20,8 @@ class NativeWindow : public QQuickWindow
 
     // Show Mica behind transparent areas.
     Q_PROPERTY(bool backdrop READ backdrop WRITE setBackdrop NOTIFY backdropChanged)
+    // Use Windows 11 Desktop Acrylic (DWMSBT_TRANSIENTWINDOW) when backdrop is active (for Liquid Glass theme).
+    Q_PROPERTY(bool acrylic READ acrylic WRITE setAcrylic NOTIFY acrylicChanged)
     // Dark backdrop tint and window border.
     Q_PROPERTY(bool darkFrame READ darkFrame WRITE setDarkFrame NOTIFY darkFrameChanged)
     // Height of the draggable title strip, in logical pixels.
@@ -36,6 +38,8 @@ public:
 
     bool backdrop() const { return m_backdrop; }
     void setBackdrop(bool on);
+    bool acrylic() const { return m_acrylic; }
+    void setAcrylic(bool on);
     bool darkFrame() const { return m_darkFrame; }
     void setDarkFrame(bool dark);
     qreal captionHeight() const { return m_captionHeight; }
@@ -63,6 +67,7 @@ public:
 
 signals:
     void backdropChanged();
+    void acrylicChanged();
     void darkFrameChanged();
     void captionHeightChanged();
     void maximizeButtonChanged();
@@ -80,6 +85,7 @@ private:
     void setMaximizeState(bool hovered, bool pressed);
 
     bool m_backdrop = true;
+    bool m_acrylic = false;
     bool m_darkFrame = false;
     qreal m_captionHeight = 48;
     QPointer<QQuickItem> m_maximizeButton;

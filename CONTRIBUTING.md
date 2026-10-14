@@ -1,7 +1,7 @@
 # Contributing to Nectarlink
 
-Thanks for your interest! Nectarlink is in early development, so the codebase
-and these guidelines will change quickly.
+Thank you for helping with Nectarlink. The project is young, so the codebase
+and these guidelines still change often.
 
 ## Before you start
 

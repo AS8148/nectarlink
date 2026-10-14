@@ -17,6 +17,9 @@ pub mod ffi {
 
         /// Must run before `QGuiApplication` is created.
         fn prepare_qt();
+        /// Like `prepare_qt`, without the QML log file: for the installer
+        /// and uninstaller, which mustn't create the app's data folder.
+        fn prepare_qt_without_log();
         fn add_app_icon_image(size: i32, rgba: &[u8]);
         fn apply_app_icon();
         fn keep_running_without_windows();

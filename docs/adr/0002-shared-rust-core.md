@@ -14,5 +14,5 @@ All protocol, pairing, session, transfer and storage logic lives in Rust crates 
 ## Consequences
 
 - One source of truth; interop bugs between our own apps are impossible by construction.
-- Android APK grows by ~5–8 MB per ABI (ship arm64 primarily).
+- Android APK grows by ~5 to 8 MB per ABI (ship arm64 primarily).
 - Contributors need Rust; Rust compile times are slower.

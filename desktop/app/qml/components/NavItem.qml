@@ -8,6 +8,8 @@ FocusScope {
     property string iconPath
     property string text
     property bool selected: false
+    readonly property alias hovered: mouse.containsMouse
+    property bool activeHover: mouse.containsMouse
     signal clicked
 
     implicitWidth: 72
@@ -31,14 +33,50 @@ FocusScope {
         y: 2
         width: 52; height: 30
         radius: Theme.pill(height)
-        color: item.selected ? Theme.indicator : (hover.hovered ? Theme.surfaceContainerHigh : "transparent")
-        Behavior on color { ColorAnimation { duration: Theme.fadeFast } }
-        scale: tap.pressed ? Theme.pressScale : 1
-        Behavior on scale { SpringAnimation { spring: Theme.springSnappy; damping: Theme.dampingSnappy } }
+        color: "transparent"
+        scale: mouse.pressed ? Theme.pressScale : 1.0
+        Behavior on scale { enabled: !Theme.reduceMotion; NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+
+        Rectangle {
+            anchors.centerIn: parent
+            height: parent.height
+            width: item.selected ? parent.width : (item.activeHover ? 42 : 24)
+            radius: parent.radius
+            color: item.selected
+                ? (Theme.glass
+                    ? Qt.tint(Qt.rgba(1, 1, 1, Theme.dark ? 0.14 : 0.62), Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, Theme.dark ? 0.28 : 0.22))
+                    : Theme.indicator)
+                : Theme.surfaceContent
+            opacity: item.selected ? 1.0 : (item.activeHover ? 0.08 : 0.0)
+            border.width: Theme.glass && item.selected ? 1 : 0
+            border.color: Qt.rgba(1, 1, 1, Theme.dark ? 0.28 : 0.78)
+            Behavior on width {
+                enabled: !Theme.reduceMotion
+                NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+            }
+            Behavior on opacity {
+                enabled: !Theme.reduceMotion
+                NumberAnimation { duration: Theme.fadeFast; easing.type: Easing.OutCubic }
+            }
+            Behavior on color {
+                enabled: !Theme.reduceMotion
+                ColorAnimation { duration: Theme.fadeFast }
+            }
+        }
+
         Icon {
             anchors.centerIn: parent
             path: item.iconPath
-            color: item.selected ? Theme.indicatorContent : Theme.surfaceContentVariant
+            color: item.selected ? Theme.indicatorContent : (item.activeHover ? Theme.surfaceContent : Theme.surfaceContentVariant)
+            scale: item.selected ? 1.05 : (item.activeHover ? 1.02 : 1.0)
+            Behavior on scale {
+                enabled: !Theme.reduceMotion
+                NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+            }
+            Behavior on color {
+                enabled: !Theme.reduceMotion
+                ColorAnimation { duration: Theme.fadeFast }
+            }
         }
     }
     Txt {
@@ -47,8 +85,12 @@ FocusScope {
         anchors.topMargin: 4
         text: item.text
         role: "caption"
-        weight: Theme.graphite ? 400 : 600
-        color: item.selected ? Theme.surfaceContent : Theme.surfaceContentVariant
+        weight: Theme.graphite ? 400 : (item.selected ? 600 : 500)
+        color: item.selected || item.activeHover ? Theme.surfaceContent : Theme.surfaceContentVariant
+        Behavior on color {
+            enabled: !Theme.reduceMotion
+            ColorAnimation { duration: Theme.fadeFast }
+        }
     }
     Rectangle {
         anchors.fill: pill
@@ -59,6 +101,11 @@ FocusScope {
         border.color: Theme.primary
         visible: Theme.focusVisible(item)
     }
-    HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
-    TapHandler { id: tap; onTapped: item.clicked() }
+    MouseArea {
+        id: mouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: item.clicked()
+    }
 }

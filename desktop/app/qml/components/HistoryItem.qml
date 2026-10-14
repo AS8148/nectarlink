@@ -39,11 +39,7 @@ Item {
         anchors.fill: parent
         radius: Theme.radiusMd
         color: Theme.surfaceContent
-        opacity: item.canOpenApp && historyHover.hovered ? 0.045 : 0
-        Behavior on opacity {
-            enabled: !Theme.reduceMotion
-            NumberAnimation { duration: Theme.fadeFast }
-        }
+        opacity: item.canOpenApp && historyMouse.pressed ? 0.08 : 0
     }
 
     Rectangle {
@@ -55,14 +51,13 @@ Item {
         visible: Theme.focusVisible(item)
     }
 
-    HoverHandler {
-        id: historyHover
+    MouseArea {
+        id: historyMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        acceptedButtons: item.canOpenApp ? Qt.LeftButton : Qt.NoButton
         cursorShape: item.canOpenApp ? Qt.PointingHandCursor : Qt.ArrowCursor
-    }
-
-    TapHandler {
-        enabled: item.canOpenApp
-        onTapped: item.openAppRequested()
+        onClicked: if (item.canOpenApp) item.openAppRequested()
     }
 
     Item {

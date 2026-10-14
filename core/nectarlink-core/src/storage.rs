@@ -38,6 +38,8 @@ use crate::{
 
 /// Per-device toggle name (off by default on the phone).
 pub const TOGGLE: &str = "storage";
+/// Per-device toggle name for away-mode / relay file access (off by default).
+pub const REMOTE_FILES_TOGGLE: &str = "remote_files";
 
 const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 const CHUNK_SIZE: usize = 64 * 1024;
@@ -148,9 +150,18 @@ fn we_offer(shared: &Shared, cap: &str) -> bool {
     shared.local_capabilities().iter().any(|c| c == cap)
 }
 
-/// Checks if the PC user explicitly turned `storage` off for `peer`.
+/// Checks if the client user explicitly turned `storage` (or `remote_files` when on Relay) off for `peer`.
 fn pc_allows(shared: &Shared, peer: &DeviceId) -> Result<bool> {
-    Ok(shared.store.toggles(peer)?.get(TOGGLE).copied().unwrap_or(true))
+    let toggles = shared.store.toggles(peer)?;
+    if toggles.get(TOGGLE).copied() == Some(false) {
+        return Ok(false);
+    }
+    if shared.session(peer).is_some_and(|s| s.path() == crate::ConnectionPath::Relay)
+        && toggles.get(REMOTE_FILES_TOGGLE).copied() == Some(false)
+    {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 fn check_phone_allowed(
@@ -167,6 +178,14 @@ fn check_phone_allowed(
             shared.emit(NodeEvent::StorageRequested { device: *peer });
         }
         return Err((ErrorCode::Denied, "storage access is turned off for this device".into()));
+    }
+    if shared.session(peer).is_some_and(|s| s.path() == crate::ConnectionPath::Relay)
+        && !shared.toggle_on(peer, REMOTE_FILES_TOGGLE)
+    {
+        return Err((
+            ErrorCode::Denied,
+            "remote file access over away mode is turned off for this device".into(),
+        ));
     }
     Ok(())
 }
@@ -197,6 +216,10 @@ pub(crate) async fn notify_changed(shared: &Arc<Shared>, path: String) {
         if shared.toggle_on(&peer, TOGGLE)
             && let Some(session) = shared.session(&peer)
         {
+            if session.path() == crate::ConnectionPath::Relay && !shared.toggle_on(&peer, REMOTE_FILES_TOGGLE)
+            {
+                continue;
+            }
             let _ = session.send(env.clone()).await;
         }
     }

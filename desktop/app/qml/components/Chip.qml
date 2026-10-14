@@ -14,11 +14,20 @@ Rectangle {
     implicitHeight: 30
     implicitWidth: row.implicitWidth + 24
     radius: Theme.pill(height)
-    color: Theme.graphite ? (selected ? Theme.surfaceContent : "transparent")
-                          : (selected ? Theme.secondaryContainer : Theme.surfaceContainerHigh)
-    border.width: Theme.graphite ? 1 : 0
-    border.color: selected ? Theme.surfaceContent : Theme.outlineVariant
+    color: Theme.graphite
+        ? (selected ? Theme.surfaceContent : "transparent")
+        : (Theme.glass
+            ? (selected
+                ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, Theme.dark ? 0.28 : 0.22)
+                : Qt.rgba(1, 1, 1, Theme.dark ? 0.10 : 0.50))
+            : (selected ? Theme.secondaryContainer : Theme.surfaceContainerHigh))
     Behavior on color { enabled: !Theme.reduceMotion; ColorAnimation { duration: Theme.fadeFast } }
+    border.width: Theme.graphite || Theme.glass ? 1 : 0
+    border.color: Theme.glass
+        ? (selected ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.55) : Qt.rgba(1, 1, 1, Theme.dark ? 0.22 : 0.68))
+        : (selected ? Theme.surfaceContent : Theme.outlineVariant)
+    scale: chip.interactive && mouse.pressed && !Theme.reduceMotion ? Theme.pressScale : 1.0
+    Behavior on scale { enabled: !Theme.reduceMotion; NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
     activeFocusOnTab: interactive && visible && enabled
     Accessible.role: interactive ? Accessible.Button : Accessible.StaticText
@@ -29,6 +38,14 @@ Rectangle {
             chip.clicked()
             event.accepted = true
         }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        radius: chip.radius
+        color: label.color
+        opacity: !chip.interactive ? 0 : (mouse.pressed ? 0.14 : (mouse.containsMouse ? 0.07 : 0))
+        Behavior on opacity { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast } }
     }
 
     Rectangle {
@@ -62,6 +79,12 @@ Rectangle {
         }
     }
 
-    HoverHandler { enabled: chip.interactive; cursorShape: Qt.PointingHandCursor }
-    TapHandler { enabled: chip.interactive; onTapped: chip.clicked() }
+    MouseArea {
+        id: mouse
+        anchors.fill: parent
+        enabled: chip.interactive
+        hoverEnabled: chip.interactive
+        cursorShape: chip.interactive ? Qt.PointingHandCursor : Qt.ArrowCursor
+        onClicked: chip.clicked()
+    }
 }

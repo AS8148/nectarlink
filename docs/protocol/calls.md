@@ -31,7 +31,7 @@ On the control stream.
 
 ```
 t = "call.state"            b = {
-  id:        text,      // The phone's ID for this call: 1–64 bytes, the same in each of its messages
+  id:        text,      // The phone's ID for this call: 1 to 64 bytes, the same in each of its messages
   state:     "ringing" | "active" | "ended",
   ? incoming: bool,     // Default true; false for calls the phone's user made
   ? number:  text,      // At most 256 bytes, when the phone knows it
@@ -51,11 +51,11 @@ t = "call.action"  id = n   b = {
   action:  "answer" | "decline" | "silence"
          | "mute" | "unmute" | "speaker" | "earpiece" | "hold" | "unhold"
          | "dtmf" | "volume_up" | "volume_down",
-  ? digit: text,        // With "dtmf": one of 0–9, * and #
+  ? digit: text,        // With "dtmf": one of 0 to 9, * and #
 }
 t = "ok"           re = n
 
-t = "call.log"          id = n   b = { ? before: int, limit: uint }          // 1–100
+t = "call.log"          id = n   b = { ? before: int, limit: uint }          // 1 to 100
 t = "call.log"          re = n   b = { entries: [ call_entry ] }             // newest first
 
 t = "call.log.changed"           b = {}                                      // phone → PC
@@ -120,7 +120,7 @@ phone doesn't offer `call.log`.
 
 ### 2.4 `call.dial`
 
-`call.dial` asks the phone to call `number` (1–256 bytes, not blank). With
+`call.dial` asks the phone to call `number` (1 to 256 bytes, not blank). With
 `CALL_PHONE` permission the phone places the call directly
 (`Intent.ACTION_CALL`); if that permission isn't granted, it opens the
 dialer (`Intent.ACTION_DIAL`) with the number filled in. Once the call

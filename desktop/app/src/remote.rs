@@ -27,6 +27,7 @@ fn hide_laser() {
 }
 
 pub fn handle_input(peer: &DeviceId, input: RemoteInput) {
+    let _ = crate::input_share::enter_remote(*peer);
     match input {
         RemoteInput::Move { dx, dy } => win::input::move_relative(dx, dy),
         RemoteInput::Button { button, action } => win::input::mouse_button(button, action),
@@ -70,6 +71,7 @@ pub fn handle_input(peer: &DeviceId, input: RemoteInput) {
 /// Clears any active laser pointer and releases held mouse buttons (e.g. when
 /// `remote_input` is turned off).
 pub fn stop_all() {
+    let _ = crate::input_share::leave_remote();
     win::input::release_held_buttons();
     hide_laser();
 }
@@ -77,6 +79,7 @@ pub fn stop_all() {
 pub fn on_event(event: &NodeEvent) {
     match event {
         NodeEvent::LinkChanged { link: LinkState::Offline { .. }, .. } | NodeEvent::DeviceRemoved(_) => {
+            let _ = crate::input_share::leave_remote();
             win::input::release_held_buttons();
         }
         NodeEvent::RemoteInputRequested { .. } => {

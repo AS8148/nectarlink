@@ -70,7 +70,22 @@ if (-not (Test-Path $vcamDll)) { throw "no release build at $vcamDll" }
 Step "Stage"
 $package = Join-Path $root 'target\package'
 $stage = Join-Path $package 'Nectarlink'
-if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+if (Test-Path $stage) {
+    $stagedVcam = Join-Path $stage 'nectarlink_vcam.dll'
+    if (Test-Path $stagedVcam) {
+        & regsvr32.exe /s /u $stagedVcam 2>$null | Out-Null
+        try {
+            Remove-Item $stagedVcam -Force -ErrorAction Stop
+        } catch {
+            # Windows Frame Server (svchost) may keep a mapped handle to the DLL;
+            # NTFS allows moving a mapped file on the same volume so staging stays clean.
+            $trashDir = Join-Path $root 'target\package-locked'
+            New-Item -ItemType Directory -Force $trashDir | Out-Null
+            Move-Item $stagedVcam (Join-Path $trashDir "nectarlink_vcam.$([DateTime]::UtcNow.Ticks).dll") -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Remove-Item $stage -Recurse -Force
+}
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item $exe $stage
 Copy-Item $vcamDll $stage
@@ -103,6 +118,28 @@ Copy-Item (Join-Path $crt.FullName '*.dll') $stage
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'LICENSE.txt')
 Invoke-Native "writing the notices" { cargo xtask notices (Join-Path $stage 'THIRD-PARTY-NOTICES.txt') }
 
+# The icon build.rs drew for the .exe, and Sparse Package assets for Windows Share sheet.
+$icon = Get-ChildItem (Join-Path $root 'target\release\build') -Recurse -Filter 'nectarlink.ico' |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $icon) { throw "the app icon isn't built" }
+$assetsDir = Join-Path $stage 'Assets'
+New-Item -ItemType Directory -Force $assetsDir | Out-Null
+Add-Type -AssemblyName System.Drawing
+foreach ($spec in @(@{ Name = 'Square44x44Logo.png'; Size = 44 }, @{ Name = 'Square150x150Logo.png'; Size = 150 })) {
+    $ico = New-Object System.Drawing.Icon($icon.FullName, $spec.Size, $spec.Size)
+    $bmp = New-Object System.Drawing.Bitmap($spec.Size, $spec.Size)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.DrawIcon($ico, (New-Object System.Drawing.Rectangle(0, 0, $spec.Size, $spec.Size)))
+    $g.Dispose()
+    $bmp.Save((Join-Path $assetsDir $spec.Name), [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose()
+    $ico.Dispose()
+}
+$manifest = Get-Content (Join-Path $root 'desktop\installer\AppxManifest.xml') -Raw
+$manifest = $manifest -replace 'Version="\d+\.\d+\.\d+\.\d+"', "Version=`"$numeric.0`""
+Set-Content -Path (Join-Path $stage 'AppxManifest.xml') -Value $manifest -Encoding UTF8 -NoNewline
+
 $size = (Get-ChildItem $stage -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("Staged {0:N1} MB in {1}" -f $size, $stage)
 if ($StageOnly) { return }
@@ -112,10 +149,6 @@ Step "Installer"
 $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
 if (-not $makensis) { $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe' }
 if (-not (Test-Path $makensis)) { throw "NSIS (makensis) not found" }
-# The icon build.rs drew for the .exe.
-$icon = Get-ChildItem (Join-Path $root 'target\release\build') -Recurse -Filter 'nectarlink.ico' |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if (-not $icon) { throw "the app icon isn't built" }
 $out = Join-Path $package "Nectarlink-$version-x64-setup.exe"
 Invoke-Native "makensis" {
     & $makensis /V2 "/DVERSION=$numeric" "/DDISPLAY_VERSION=$version" /DARCH=x64 "/DSTAGE=$stage" `

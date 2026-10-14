@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -20,6 +21,7 @@ import app.nectarlink.android.R
 import app.nectarlink.android.clipboard.SendActivity
 import app.nectarlink.android.core.CoreState
 import app.nectarlink.android.ui.MainActivity
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -62,6 +64,15 @@ class ConnectionService : LifecycleService() {
                             .notify(ONGOING_ID, ongoingNotification(status))
                     }
                 }
+        }
+        // Updates while the app is in the background (they install by themselves when
+        // allowed). AppUpdater checks at most once a day, so waking now and then is cheap.
+        lifecycleScope.launch {
+            val updater = (application as NectarlinkApplication).updater
+            while (true) {
+                runCatching { updater.updateIfDue() }.onFailure { Log.i(TAG, "update check failed", it) }
+                delay(UPDATE_WAKE_MS)
+            }
         }
         lifecycleScope.launch {
             core.state.map { it.ringingFrom }.distinctUntilChanged().collect { from ->
@@ -122,10 +133,14 @@ class ConnectionService : LifecycleService() {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         if (status.connected.isNotEmpty()) {
-            val send = PendingIntent.getActivity(
+            val sendClip = PendingIntent.getActivity(
                 this, 2, SendActivity.sendClipboardIntent(this), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            builder.addAction(0, getString(R.string.action_send_clipboard), send)
+            val sendFiles = PendingIntent.getActivity(
+                this, 3, SendActivity.sendFilesIntent(this), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            builder.addAction(0, getString(R.string.action_send_clipboard), sendClip)
+            builder.addAction(0, getString(R.string.action_send_files), sendFiles)
         }
         return builder.build()
     }
@@ -153,6 +168,8 @@ class ConnectionService : LifecycleService() {
     )
 
     companion object {
+        private const val TAG = "Nectarlink"
+        private const val UPDATE_WAKE_MS = 6L * 3600 * 1000
         private const val ONGOING_ID = 1
         private const val RINGING_ID = 2
         private const val CHANNEL_CONNECTION = "connection"

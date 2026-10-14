@@ -39,6 +39,8 @@ internal object TransferNotifications {
         )
     }
 
+    private val lastPosted = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Int>>()
+
     private fun idOf(transfer: Transfer) = transfer.id.hashCode()
 
     private fun title(context: Context, transfer: Transfer): String = transferTitle(context.resources, transfer)
@@ -48,36 +50,72 @@ internal object TransferNotifications {
         if (!allowed(context)) return
         val manager = NotificationManagerCompat.from(context)
         val status = transfer.status
-        if (status !is TransferStatus.Running && status !is TransferStatus.Waiting) {
+        if (status !is TransferStatus.Running && status !is TransferStatus.Waiting && status !is TransferStatus.Paused) {
+            lastPosted.remove(transfer.id)
             manager.cancel(idOf(transfer))
             if (status is TransferStatus.Failed) failed(context, transfer, pcName)
             return
         }
-        val incoming = transfer.direction == TransferDirection.INCOMING
-        val text = when {
-            status is TransferStatus.Waiting -> context.getString(R.string.transfer_waiting, pcName)
-            incoming -> context.getString(R.string.transfer_receiving, pcName)
-            else -> context.getString(R.string.transfer_sending, pcName)
+        val percent = if (transfer.total == 0uL) {
+            if (status is TransferStatus.Paused) 0 else 100
+        } else {
+            (transfer.done.toDouble() / transfer.total.toDouble() * 100).toInt().coerceIn(0, 100)
         }
-        val percent = if (transfer.total == 0uL) 100 else (transfer.done.toDouble() / transfer.total.toDouble() * 100).toInt()
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (status is TransferStatus.Running) {
+            val prev = lastPosted[transfer.id]
+            if (prev != null && (now - prev.first) < 250L && (percent == prev.second || (now - prev.first) < 180L)) {
+                return
+            }
+            lastPosted[transfer.id] = now to percent
+        } else {
+            lastPosted.remove(transfer.id)
+        }
+        val incoming = transfer.direction == TransferDirection.INCOMING
+        val sizeProgress = if (transfer.total > 0uL) {
+            "${android.text.format.Formatter.formatShortFileSize(context, transfer.done.toLong())} / ${android.text.format.Formatter.formatShortFileSize(context, transfer.total.toLong())}"
+        } else {
+            ""
+        }
+        val text = when {
+            status is TransferStatus.Paused -> context.getString(
+                R.string.transfer_paused_progress,
+                android.text.format.Formatter.formatShortFileSize(context, transfer.done.toLong()),
+                android.text.format.Formatter.formatShortFileSize(context, transfer.total.toLong()),
+            )
+            status is TransferStatus.Waiting -> context.getString(R.string.transfer_waiting, pcName)
+            incoming -> listOf(context.getString(R.string.transfer_receiving, pcName), sizeProgress).filter { it.isNotEmpty() }.joinToString(" · ")
+            else -> listOf(context.getString(R.string.transfer_sending, pcName), sizeProgress).filter { it.isNotEmpty() }.joinToString(" · ")
+        }
+        val openApp = PendingIntent.getActivity(
+            context,
+            idOf(transfer),
+            Intent(context, app.nectarlink.android.ui.MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
         val cancel = PendingIntent.getBroadcast(
             context,
             idOf(transfer),
             Intent(context, CancelReceiver::class.java).setAction(ACTION_CANCEL).putExtra(EXTRA_ID, transfer.id),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val notification = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+        val builder = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title(context, transfer))
             .setContentText(text)
+            .setSubText(if (status is TransferStatus.Running && transfer.total > 0uL) "$percent%" else pcName)
             .setProgress(100, percent, status is TransferStatus.Waiting)
-            .setOngoing(true)
+            .setContentIntent(openApp)
+            .setOngoing(status !is TransferStatus.Paused)
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setRequestPromotedOngoing(status is TransferStatus.Running)
             .addAction(0, context.getString(R.string.action_cancel), cancel)
-            .build()
-        post(context, idOf(transfer), notification)
+        if (status is TransferStatus.Running && transfer.total > 0uL) {
+            builder.setShortCriticalText("$percent%")
+        }
+        post(context, idOf(transfer), builder.build())
     }
 
     /**
@@ -135,6 +173,7 @@ internal object TransferNotifications {
             "denied" -> context.getString(R.string.transfer_denied, pcName)
             "unreachable" -> context.getString(R.string.transfer_unreachable, pcName)
             "noSpace" -> context.getString(R.string.transfer_no_space)
+            "integrity" -> context.getString(R.string.transfer_failed_integrity)
             else -> context.getString(R.string.transfer_failed)
         }
         val notification = NotificationCompat.Builder(context, CHANNEL_RECEIVED)

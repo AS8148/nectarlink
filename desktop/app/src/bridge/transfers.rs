@@ -45,6 +45,14 @@ pub mod qobject {
         #[qproperty(i32, count)]
         /// Transfers still waiting or running.
         #[qproperty(i32, active)]
+        /// JSON array of items in the persistent outgoing send queue.
+        #[qproperty(QString, send_queue, cxx_name = "sendQueue")]
+        /// Number of active (`waiting` or `sending`) items in the send queue.
+        #[qproperty(i32, waiting_count, cxx_name = "waitingCount")]
+        /// Total number of items in the send queue (including `failed` and `expired`).
+        #[qproperty(i32, queue_count, cxx_name = "queueCount")]
+        /// Whether any item in the send queue is `failed` or `expired`.
+        #[qproperty(bool, has_failed_or_expired_queue, cxx_name = "hasFailedOrExpiredQueue")]
         type TransferList = super::TransferListRust;
     }
 
@@ -111,6 +119,10 @@ pub mod qobject {
         fn accept(self: &TransferList, id: &QString);
         #[qinvokable]
         fn cancel(self: &TransferList, id: &QString);
+        #[qinvokable]
+        fn pause(self: &TransferList, id: &QString);
+        #[qinvokable]
+        fn resume(self: &TransferList, id: &QString);
         /// Opens what a finished incoming transfer saved (its first file).
         #[qinvokable]
         fn open(self: &TransferList, id: &QString);
@@ -120,6 +132,18 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "clearFinished"]
         fn clear_finished(self: &TransferList);
+        #[qinvokable]
+        #[cxx_name = "cancelQueueItem"]
+        fn cancel_queue_item(self: &TransferList, id: &QString);
+        #[qinvokable]
+        #[cxx_name = "cancelAllQueued"]
+        fn cancel_all_queued(self: &TransferList, device: &QString);
+        #[qinvokable]
+        #[cxx_name = "retryQueueItem"]
+        fn retry_queue_item(self: &TransferList, id: &QString);
+        #[qinvokable]
+        #[cxx_name = "clearFinishedQueue"]
+        fn clear_finished_queue(self: &TransferList);
     }
 
     impl cxx_qt::Threading for TransferList {}
@@ -136,6 +160,10 @@ struct Row {
 pub struct TransferListRust {
     count: i32,
     active: i32,
+    send_queue: QString,
+    waiting_count: i32,
+    queue_count: i32,
+    has_failed_or_expired_queue: bool,
     rows: Vec<Row>,
 }
 
@@ -181,6 +209,7 @@ fn role_value(row: &Row, role: &str) -> QVariant {
             TransferState::Requested => "requested",
             TransferState::Waiting => "waiting",
             TransferState::Running => "running",
+            TransferState::Paused => "paused",
             TransferState::Done { .. } => "done",
             TransferState::Failed(_) => "failed",
             TransferState::Cancelled => "cancelled",
@@ -189,6 +218,7 @@ fn role_value(row: &Row, role: &str) -> QVariant {
             TransferState::Failed(TransferFailure::Denied) => "denied",
             TransferState::Failed(TransferFailure::Unreachable) => "unreachable",
             TransferState::Failed(TransferFailure::NoSpace) => "noSpace",
+            TransferState::Failed(TransferFailure::Integrity) => "integrity",
             TransferState::Failed(TransferFailure::Interrupted) => "interrupted",
             TransferState::Failed(TransferFailure::Other(_)) => "other",
             _ => "",
@@ -206,10 +236,11 @@ fn saved_path(row: &Row) -> Option<PathBuf> {
 }
 
 impl cxx_qt::Initialize for qobject::TransferList {
-    fn initialize(self: Pin<&mut Self>) {
+    fn initialize(mut self: Pin<&mut Self>) {
+        self.as_mut().set_send_queue(QString::from("[]"));
         super::subscribe(
             self.qt_thread(),
-            Changes::TRANSFERS | Changes::DEVICES | Changes::LOCALSEND,
+            Changes::TRANSFERS | Changes::DEVICES | Changes::LOCALSEND | Changes::QUEUE,
             Self::refresh,
         );
     }
@@ -265,8 +296,14 @@ impl qobject::TransferList {
         }
         let count = self.rows.len() as i32;
         let active = self.rows.iter().filter(|r| !r.view.transfer.state.is_finished()).count() as i32;
+        let (queue_json, waiting_count, queue_count, has_failed_or_expired) =
+            transfers::send_queue_snapshot();
         self.as_mut().set_count(count);
-        self.set_active(active);
+        self.as_mut().set_active(active);
+        self.as_mut().set_send_queue(QString::from(&queue_json));
+        self.as_mut().set_waiting_count(waiting_count);
+        self.as_mut().set_queue_count(queue_count);
+        self.set_has_failed_or_expired_queue(has_failed_or_expired);
     }
 
     pub fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
@@ -320,6 +357,14 @@ impl qobject::TransferList {
         transfers::cancel(&String::from(id));
     }
 
+    pub fn pause(&self, id: &QString) {
+        transfers::pause(&String::from(id));
+    }
+
+    pub fn resume(&self, id: &QString) {
+        transfers::resume(&String::from(id));
+    }
+
     fn row(&self, id: &QString) -> Option<&Row> {
         let id = String::from(id);
         self.rows.iter().find(|r| r.view.transfer.id == id)
@@ -340,6 +385,22 @@ impl qobject::TransferList {
     pub fn clear_finished(&self) {
         core_host::host().hub.update(|s| s.clear_finished_transfers());
     }
+
+    pub fn cancel_queue_item(&self, id: &QString) {
+        transfers::cancel_queue_item(&String::from(id));
+    }
+
+    pub fn cancel_all_queued(&self, device: &QString) {
+        transfers::cancel_all_queued(super::parse_device(device));
+    }
+
+    pub fn retry_queue_item(&self, id: &QString) {
+        transfers::retry_queue_item(&String::from(id));
+    }
+
+    pub fn clear_finished_queue(&self) {
+        transfers::clear_finished_queue(None);
+    }
 }
 
 #[cfg(test)]
@@ -352,7 +413,7 @@ mod tests {
 
     #[test]
     fn roles_describe_the_transfer() {
-        let row = Row {
+        let mut row = Row {
             view: TransferView {
                 transfer: Transfer {
                     id: "t".into(),
@@ -372,11 +433,20 @@ mod tests {
             },
             device_name: "Pixel".into(),
         };
-        let text = |role| role_value(&row, role).value::<QString>().map(String::from).unwrap_or_default();
-        assert_eq!(text("title"), "a.jpg and 2 more");
-        assert_eq!(text("status"), "done");
-        assert_eq!(text("savedPath"), r"C:\Downloads\a.jpg");
+        let text =
+            |r: &Row, role| role_value(r, role).value::<QString>().map(String::from).unwrap_or_default();
+        assert_eq!(text(&row, "title"), "a.jpg and 2 more");
+        assert_eq!(text(&row, "status"), "done");
+        assert_eq!(text(&row, "savedPath"), r"C:\Downloads\a.jpg");
         assert_eq!(role_value(&row, "progress").value::<f64>(), Some(0.25));
         assert_eq!(role_value(&row, "incoming").value::<bool>(), Some(true));
+
+        row.view.transfer.state = TransferState::Paused;
+        assert_eq!(text(&row, "status"), "paused");
+        assert_eq!(text(&row, "reason"), "");
+
+        row.view.transfer.state = TransferState::Failed(TransferFailure::Integrity);
+        assert_eq!(text(&row, "status"), "failed");
+        assert_eq!(text(&row, "reason"), "integrity");
     }
 }

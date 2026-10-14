@@ -82,6 +82,8 @@ internal class CameraEncoder(
     @Volatile private var cameraFacing: String = if (initialCamera == "front") "front" else "back"
     @Volatile private var activeCodec: ActiveCodec? = null
     @Volatile private var currentSurfaceRotation: Int = readDisplayRotation()
+    @Volatile private var currentSensorRotation: Int = 0
+    @Volatile private var currentDisplayRotation: Int = surfaceRotationToDegrees(currentSurfaceRotation)
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var boundCamera: Camera? = null
@@ -104,7 +106,9 @@ internal class CameraEncoder(
         override fun onDisplayRemoved(displayId: Int) {}
         override fun onDisplayChanged(displayId: Int) {
             if (displayId != Display.DEFAULT_DISPLAY || !running) return
-            applySurfaceRotation(readDisplayRotation())
+            if (!orientationListener.canDetectOrientation()) {
+                applySurfaceRotation(readDisplayRotation())
+            }
         }
     }
 
@@ -112,6 +116,8 @@ internal class CameraEncoder(
         override fun onOrientationChanged(orientation: Int) {
             if (orientation == ORIENTATION_UNKNOWN || !running) return
             val snapped = snapOrientationToSurfaceRotation(orientation, currentSurfaceRotation)
+            currentDisplayRotation = surfaceRotationToDegrees(snapped)
+            activeCodec?.pipe?.setTransform(currentSensorRotation, currentDisplayRotation)
             applySurfaceRotation(snapped)
         }
     }
@@ -119,9 +125,18 @@ internal class CameraEncoder(
     private fun readDisplayRotation(): Int =
         displayManager?.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: Surface.ROTATION_0
 
+    private fun surfaceRotationToDegrees(rotation: Int): Int = when (rotation) {
+        Surface.ROTATION_90 -> 90
+        Surface.ROTATION_180 -> 180
+        Surface.ROTATION_270 -> 270
+        else -> 0
+    }
+
     private fun applySurfaceRotation(rotation: Int) {
         if (rotation == currentSurfaceRotation) return
         currentSurfaceRotation = rotation
+        currentDisplayRotation = surfaceRotationToDegrees(rotation)
+        activeCodec?.pipe?.setTransform(currentSensorRotation, currentDisplayRotation)
         encoderPreview?.targetRotation = rotation
         uiPreview?.targetRotation = rotation
         requestKeyframe()
@@ -131,6 +146,7 @@ internal class CameraEncoder(
         main.post {
             if (!running) return@post
             currentSurfaceRotation = readDisplayRotation()
+            currentDisplayRotation = surfaceRotationToDegrees(currentSurfaceRotation)
             runCatching { displayManager?.registerDisplayListener(displayListener, main) }
             runCatching { if (orientationListener.canDetectOrientation()) orientationListener.enable() }
             val future = ProcessCameraProvider.getInstance(context)
@@ -273,6 +289,9 @@ internal class CameraEncoder(
             }
             activeCodec = started
             request.setTransformationInfoListener(surfaceExecutor) { info ->
+                currentSensorRotation = info.rotationDegrees
+                currentDisplayRotation = surfaceRotationToDegrees(encPreview.targetRotation)
+                started.pipe.setTransform(currentSensorRotation, currentDisplayRotation)
                 started.pipe.updateTransform(info.rotationDegrees, info.isMirroring)
             }
             main.post {
@@ -386,9 +405,11 @@ internal class CameraEncoder(
                 dstWidth = outWidth,
                 dstHeight = outHeight,
                 encoderInputSurface = codecSurface,
-                initialRotationDegrees = 0,
+                initialRotationDegrees = currentSensorRotation,
                 initialMirror = false,
-            )
+            ).also {
+                it.setTransform(currentSensorRotation, currentDisplayRotation)
+            }
             ActiveCodec(codec, codecSurface, pipe, outWidth, outHeight, camera).also { it.startDrain() }
         }.onFailure { e ->
             Log.w(TAG, "can't start H.264 encoder for ${outWidth}x${outHeight}", e)
@@ -524,58 +545,70 @@ internal class CameraEncoder(
             }
         }
 
+        private val flashCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+        private val maxZoomCache = java.util.concurrent.ConcurrentHashMap<String, Float>()
+        private val cachedSupports4k: Boolean by lazy {
+            runCatching {
+                val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+                list.codecInfos.any { info ->
+                    info.isEncoder &&
+                        info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true) } &&
+                        runCatching {
+                            info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                                .videoCapabilities?.isSizeSupported(3840, 2160) == true
+                        }.getOrDefault(false)
+                }
+            }.getOrDefault(false)
+        }
+
         /** Checks whether the requested camera (`front` or `back`) has a flash unit. */
-        fun cameraHasFlash(context: Context, camera: String): Boolean = runCatching {
-            val cm = context.getSystemService(CameraManager::class.java) ?: return false
-            val wantedFacing = if (camera == "front") {
-                CameraCharacteristics.LENS_FACING_FRONT
-            } else {
-                CameraCharacteristics.LENS_FACING_BACK
+        fun cameraHasFlash(context: Context, camera: String): Boolean =
+            flashCache.getOrPut(camera) {
+                runCatching {
+                    val cm = context.getSystemService(CameraManager::class.java) ?: return@runCatching false
+                    val wantedFacing = if (camera == "front") {
+                        CameraCharacteristics.LENS_FACING_FRONT
+                    } else {
+                        CameraCharacteristics.LENS_FACING_BACK
+                    }
+                    cm.cameraIdList.any { id ->
+                        val chars = cm.getCameraCharacteristics(id)
+                        chars.get(CameraCharacteristics.LENS_FACING) == wantedFacing &&
+                            chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                    }
+                }.getOrDefault(false)
             }
-            cm.cameraIdList.any { id ->
-                val chars = cm.getCameraCharacteristics(id)
-                chars.get(CameraCharacteristics.LENS_FACING) == wantedFacing &&
-                    chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
-            }
-        }.getOrDefault(false)
 
         /** Queries the maximum digital zoom ratio supported by the requested camera (`front` or `back`). */
-        fun cameraMaxZoom(context: Context, camera: String): Float = runCatching {
-            val cm = context.getSystemService(CameraManager::class.java) ?: return 4f
-            val wantedFacing = if (camera == "front") {
-                CameraCharacteristics.LENS_FACING_FRONT
-            } else {
-                CameraCharacteristics.LENS_FACING_BACK
-            }
-            for (id in cm.cameraIdList) {
-                val chars = cm.getCameraCharacteristics(id)
-                if (chars.get(CameraCharacteristics.LENS_FACING) == wantedFacing) {
-                    val rangeMax = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper
+        fun cameraMaxZoom(context: Context, camera: String): Float =
+            maxZoomCache.getOrPut(camera) {
+                runCatching {
+                    val cm = context.getSystemService(CameraManager::class.java) ?: return@runCatching 4f
+                    val wantedFacing = if (camera == "front") {
+                        CameraCharacteristics.LENS_FACING_FRONT
                     } else {
-                        null
+                        CameraCharacteristics.LENS_FACING_BACK
                     }
-                    val maxZ = rangeMax
-                        ?: chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)
-                        ?: 4f
-                    return maxZ.coerceIn(2f, 8f)
-                }
+                    for (id in cm.cameraIdList) {
+                        val chars = cm.getCameraCharacteristics(id)
+                        if (chars.get(CameraCharacteristics.LENS_FACING) == wantedFacing) {
+                            val rangeMax = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)?.upper
+                            } else {
+                                null
+                            }
+                            val maxZ = rangeMax
+                                ?: chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)
+                                ?: 4f
+                            return@runCatching maxZ.coerceIn(2f, 8f)
+                        }
+                    }
+                    4f
+                }.getOrDefault(4f)
             }
-            4f
-        }.getOrDefault(4f)
 
         /** Checks whether any hardware AVC encoder on this device supports 3840×2160. */
-        fun supports4kEncoder(): Boolean = runCatching {
-            val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
-            list.codecInfos.any { info ->
-                info.isEncoder &&
-                    info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true) } &&
-                    runCatching {
-                        info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
-                            .videoCapabilities?.isSizeSupported(3840, 2160) == true
-                    }.getOrDefault(false)
-            }
-        }.getOrDefault(false)
+        fun supports4kEncoder(): Boolean = cachedSupports4k
 
         /**
          * Guarantees each H.264 access unit starts with an Annex B Access
