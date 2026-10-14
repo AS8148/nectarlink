@@ -114,6 +114,7 @@ static SHARE_PC_STORAGE: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 static FORWARD_PC_NOTIFICATIONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static AWAY_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static FLOW_FOLLOW_CLIPBOARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static OPEN_SHARED_FILES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 static FOLDER_SYNC_RULES: std::sync::OnceLock<std::sync::Mutex<Vec<crate::folder_sync::FolderSyncRule>>> =
     std::sync::OnceLock::new();
@@ -126,6 +127,15 @@ pub fn clipboard_auto_copy_received_files() -> bool {
 
 pub fn set_clipboard_auto_copy_received_files(on: bool) {
     CLIPBOARD_AUTO_COPY_FILES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a single file shared from the phone opens in its default app on arrival.
+pub fn open_shared_files() -> bool {
+    OPEN_SHARED_FILES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_open_shared_files(on: bool) {
+    OPEN_SHARED_FILES.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[allow(dead_code)]
@@ -335,6 +345,10 @@ pub struct Settings {
     /// Automatically place small incoming received files onto the Windows clipboard (`CF_HDROP`).
     #[serde(default = "default_true", alias = "clipboard_auto_copy_received_files")]
     pub clipboard_auto_copy_received_files: bool,
+    /// Open a single photo or document shared from the phone as soon as it
+    /// arrives. Off by default: it's saved in Downloads\Nectarlink either way.
+    #[serde(default, alias = "open_shared_files")]
+    pub open_shared_files: bool,
     /// Send the PC's clipboard to the phone when control moves to it: the mouse
     /// enters the phone's window, or a remote control session starts.
     #[serde(default = "default_true", alias = "flow_follow_clipboard")]
@@ -421,6 +435,7 @@ impl Default for Settings {
             local_api_enabled: false,
             local_api_port: default_local_api_port(),
             clipboard_auto_copy_received_files: true,
+            open_shared_files: false,
             flow_follow_clipboard: true,
             folder_sync_rules: Vec::new(),
             nectar_island: false,
@@ -467,6 +482,7 @@ impl Settings {
 
     pub fn apply_runtime(&self) {
         set_clipboard_auto_copy_received_files(self.clipboard_auto_copy_received_files);
+        set_open_shared_files(self.open_shared_files);
         set_flow_follow_clipboard(self.flow_follow_clipboard);
         set_folder_sync_rules(self.folder_sync_rules.clone());
         set_obs_settings(
@@ -566,6 +582,7 @@ mod tests {
             local_api_enabled: true,
             local_api_port: 54321,
             clipboard_auto_copy_received_files: false,
+            open_shared_files: true,
             flow_follow_clipboard: false,
             folder_sync_rules: Vec::new(),
             nectar_island: true,

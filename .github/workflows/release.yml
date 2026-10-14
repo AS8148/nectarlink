@@ -126,6 +126,7 @@ jobs:
           sparse-checkout: |
             Cargo.toml
             CHANGELOG.md
+            .github/scripts
       - name: Draft it
         env:
           GH_TOKEN: ${{ github.token }}
@@ -137,9 +138,10 @@ jobs:
           sha256sum *.exe *.apk > SHA256SUMS.txt
           cat SHA256SUMS.txt
           # The notes: this version's section of CHANGELOG.md ("## <version> ..."),
-          # or GitHub's generated notes when there isn't one.
+          # with its wrapped lines joined, or GitHub's generated notes when
+          # there isn't one.
           awk -v v="${GITHUB_REF_NAME#v}" '$1=="##" && $2==v {f=1; next} f && /^## / {exit} f' \
-            ../source/CHANGELOG.md > notes.md || true
+            ../source/CHANGELOG.md | awk -f ../source/.github/scripts/unwrap-notes.awk > notes.md || true
           if [ -s notes.md ]; then notes=(--notes-file notes.md); else notes=(--generate-notes); fi
           gh release create "${{ github.ref_name }}" *.exe *.apk SHA256SUMS.txt \
             --repo "${{ github.repository }}" --draft "${notes[@]}" --title "$title"

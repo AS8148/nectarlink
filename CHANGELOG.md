@@ -4,6 +4,41 @@ All notable changes to Nectarlink. Versions follow
 [semantic versioning](https://semver.org); before 1.0, a minor version may
 change things that need a step from you, and its notes say so.
 
+## 0.1.1 (2026-10-15)
+
+Fewer steps when sharing from the phone, clearer setup on phones that hold
+back permissions, and Graphite as the phone's default look.
+
+### Changed
+
+- **Sharing from the phone sends right away.** Choosing Nectarlink in the
+  Android share sheet starts the transfer immediately, with no Flick to send
+  card or Undo countdown. With more than one PC connected, you pick one first.
+  Progress shows in a notification with a **Cancel** button, followed by a
+  **Sent to** confirmation that clears itself.
+- **Files shared from the phone no longer open on the PC by themselves.** A
+  shared photo or document is saved to `Downloads\Nectarlink` and announced in
+  a notification. To have it open in its default app as it arrives, turn on
+  **Settings › Files & Sync › Open files shared from the phone** (off by
+  default).
+- **Graphite is the phone app's default theme**, in light or dark to match the
+  phone. Bloom and Glass remain in **Settings › Appearance**, and a theme you
+  already picked stays as it is. The Windows app is unchanged.
+
+### Fixed
+
+- **Restricted settings during phone setup.** On Android 13 and newer, an app
+  installed from a file can't get notification access or the accessibility
+  service, and on Android 15 and newer the SMS permission, until the user
+  allows restricted settings. When that happens, setup now explains it and
+  offers **Open app info**: tap ⋮, then **Allow restricted settings**, and
+  come back to grant.
+- **Manage buttons in phone setup.** For a permission that's already granted,
+  **Manage** now opens the screen where it can be changed: notification access,
+  App info, All files access or Accessibility. Before, it did nothing.
+- Release notes on GitHub keep their paragraphs instead of breaking at every
+  line of the changelog.
+
 ## 0.1.0 "Pollen" (2026-10-14)
 
 The first public release of Nectarlink: the Windows app, the Android app and

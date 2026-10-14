@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -982,6 +983,10 @@ private data class WalkthroughPermissionSpec(
     val optional: Boolean,
     val granted: Boolean,
     val onGrant: () -> Unit,
+    /** Opens where the permission can be changed once it's granted. */
+    val onManage: () -> Unit,
+    /** Android may hold it back as a restricted setting for a sideloaded app. */
+    val restrictable: Boolean = false,
 )
 
 @Composable
@@ -993,6 +998,11 @@ private fun PermissionsStepContent(
 ) {
     val context = LocalContext.current
     var activeCardIndex by rememberSaveable { mutableIntStateOf(0) }
+    // Cards whose Grant was tapped, so restricted-settings help shows only
+    // after Android has had its chance (its menu item appears only then).
+    var attempted by rememberSaveable { mutableStateOf("") }
+    val sideloaded = remember { BackgroundAccess.isSideloaded(context) }
+    val appInfo = { runCatching { context.startActivity(BackgroundAccess.appDetailsIntent(context)) } }
 
     val notifRuntimeLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -1038,6 +1048,8 @@ private fun PermissionsStepContent(
                     runCatching { context.startActivity(NotificationListener.settingsIntent(context)) }
                 }
             },
+            onManage = { runCatching { context.startActivity(NotificationListener.settingsIntent(context)) } },
+            restrictable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
         ),
         WalkthroughPermissionSpec(
             id = "battery",
@@ -1049,6 +1061,7 @@ private fun PermissionsStepContent(
             onGrant = {
                 runCatching { context.startActivity(BackgroundAccess.requestIntent(context)) }
             },
+            onManage = { appInfo() },
         ),
         WalkthroughPermissionSpec(
             id = "calls",
@@ -1060,6 +1073,7 @@ private fun PermissionsStepContent(
             onGrant = {
                 callsLauncher.launch(PhoneCalls.permissions)
             },
+            onManage = { appInfo() },
         ),
         WalkthroughPermissionSpec(
             id = "sms_contacts",
@@ -1071,6 +1085,8 @@ private fun PermissionsStepContent(
             onGrant = {
                 smsContactsLauncher.launch(PhoneSms.permissions + PhoneContacts.permissions)
             },
+            onManage = { appInfo() },
+            restrictable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM,
         ),
         WalkthroughPermissionSpec(
             id = "photos",
@@ -1082,6 +1098,7 @@ private fun PermissionsStepContent(
             onGrant = {
                 photosLauncher.launch(RecentPhotos.permissions)
             },
+            onManage = { appInfo() },
         ),
         WalkthroughPermissionSpec(
             id = "storage",
@@ -1093,6 +1110,7 @@ private fun PermissionsStepContent(
             onGrant = {
                 runCatching { context.startActivity(PhoneStorage.allFilesAccessIntent(context)) }
             },
+            onManage = { runCatching { context.startActivity(PhoneStorage.allFilesAccessIntent(context)) } },
         ),
         WalkthroughPermissionSpec(
             id = "accessibility",
@@ -1104,6 +1122,8 @@ private fun PermissionsStepContent(
             onGrant = {
                 runCatching { context.startActivity(InputService.settingsIntent()) }
             },
+            onManage = { runCatching { context.startActivity(InputService.settingsIntent()) } },
+            restrictable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
         ),
     )
 
@@ -1253,15 +1273,12 @@ private fun PermissionsStepContent(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (currentSpec.id == "notifications" &&
+            if (currentSpec.restrictable &&
+                sideloaded &&
                 !currentSpec.granted &&
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                currentSpec.id in attempted.split(',')
             ) {
-                Text(
-                    text = stringResource(R.string.walkthrough_perm_notif_restricted),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                RestrictedSettingsHelp(onOpenAppInfo = { appInfo() })
             }
 
             Row(
@@ -1269,7 +1286,14 @@ private fun PermissionsStepContent(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
-                    onClick = currentSpec.onGrant,
+                    onClick = {
+                        if (currentSpec.granted) {
+                            currentSpec.onManage()
+                        } else {
+                            if (currentSpec.id !in attempted.split(',')) attempted += ",${currentSpec.id}"
+                            currentSpec.onGrant()
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(
@@ -1287,6 +1311,51 @@ private fun PermissionsStepContent(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Android holds some settings back for apps installed from a file. Steps to
+ * allow them from App info (the menu item appears once a grant was tried).
+ */
+@Composable
+private fun RestrictedSettingsHelp(onOpenAppInfo: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(16.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.walkthrough_restricted_title),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+        Text(
+            text = stringResource(R.string.walkthrough_restricted_body),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+        listOf(
+            R.string.walkthrough_restricted_step1,
+            R.string.walkthrough_restricted_step2,
+            R.string.walkthrough_restricted_step3,
+        ).forEachIndexed { i, step ->
+            Text(
+                text = "${i + 1}. " + stringResource(step),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+        }
+        Text(
+            text = stringResource(R.string.walkthrough_restricted_note),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
+        )
+        OutlinedButton(onClick = onOpenAppInfo) {
+            Text(stringResource(R.string.walkthrough_restricted_open))
         }
     }
 }

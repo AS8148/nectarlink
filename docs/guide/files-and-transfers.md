@@ -32,7 +32,7 @@ Received files on your phone are saved to `Download/Nectarlink` (preserving subf
 
 ### Sending Files and Folders from Phone to PC
 
-1. **From any Android app**: Tap **Share**, then tap your PC's Direct Share target at the top of the Android share sheet (or tap **Nectarlink**). You can also flick the preview card upward on the share screen to trigger **Flick to send** with a 3-second **Undo** button.
+1. **From any Android app**: Tap **Share**, then tap your PC's Direct Share target at the top of the Android share sheet (or tap **Nectarlink**). The transfer starts right away; with more than one PC connected, you pick one first. Its progress shows in a notification with a **Cancel** button, followed by a **Sent to** confirmation.
 2. **From the Nectarlink app**: Open Nectarlink on your phone and tap **Send files** or **Send a folder** under **Quick Transfer & Clipboard**.
 
 Received files on your PC are saved to `Downloads\Nectarlink` (avoiding overwrites by adding a numeric suffix if a file with the same name already exists). If **Copy received files** is enabled in **Settings › General**, small received files are also placed on your Windows clipboard so you can paste them anywhere with `Ctrl+V`.

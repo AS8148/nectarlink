@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package app.nectarlink.android
 
-import app.nectarlink.android.clipboard.SendActivity
 import app.nectarlink.android.companion.PcCompanion
 import app.nectarlink.android.ui.Preferences
 import app.nectarlink.android.ui.theme.Appearance
@@ -59,7 +58,7 @@ class CompanionAndMigrationTest {
             seed = "cyberpunk",
             dynamicColor = false,
         )
-        assertEquals("bloom", legacy.theme)
+        assertEquals("graphite", legacy.theme)
         assertEquals("system", legacy.mode)
         assertEquals(Tokens.DEFAULT_SEED, legacy.seed)
         assertFalse(legacy.dynamicColor)
@@ -67,7 +66,7 @@ class CompanionAndMigrationTest {
         val empty = Preferences.sanitizeAppearance(
             Appearance(theme = "", mode = "", seed = "", dynamicColor = true),
         )
-        assertEquals("bloom", empty.theme)
+        assertEquals("graphite", empty.theme)
         assertEquals("system", empty.mode)
         assertEquals(Tokens.DEFAULT_SEED, empty.seed)
         assertTrue(empty.dynamicColor)
@@ -82,41 +81,5 @@ class CompanionAndMigrationTest {
         assertEquals("dark", valid.mode)
         assertEquals("ocean", valid.seed)
         assertFalse(valid.dynamicColor)
-    }
-
-    @Test
-    fun `SendActivity shouldTriggerFlickSend triggers on fast upward flick or deep upward drag`() {
-        // Fast upward flick (< -1000 px/s) triggers even with minimal displacement
-        assertTrue(
-            SendActivity.shouldTriggerFlickSend(
-                velocityYPxPerSec = -1250f,
-                dragOffsetYPx = -24f,
-                density = 2f,
-            ),
-        )
-        // Deep upward drag (> 110 dp = 220 px at density 2.0) triggers even with slow release velocity
-        assertTrue(
-            SendActivity.shouldTriggerFlickSend(
-                velocityYPxPerSec = -150f,
-                dragOffsetYPx = -230f,
-                density = 2f,
-            ),
-        )
-        // Small drag and slow velocity does not trigger send
-        assertFalse(
-            SendActivity.shouldTriggerFlickSend(
-                velocityYPxPerSec = -400f,
-                dragOffsetYPx = -120f,
-                density = 2f,
-            ),
-        )
-        // Downward flick never triggers send
-        assertFalse(
-            SendActivity.shouldTriggerFlickSend(
-                velocityYPxPerSec = 1800f,
-                dragOffsetYPx = 30f,
-                density = 2f,
-            ),
-        )
     }
 }

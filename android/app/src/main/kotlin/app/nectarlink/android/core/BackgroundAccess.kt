@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
@@ -186,5 +187,20 @@ object BackgroundAccess {
     fun appDetailsIntent(context: Context): Intent =
         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /**
+     * Whether Nectarlink was installed other than by an app store (from a
+     * file, a browser download, or another installer). Android 13 and newer
+     * may then hold back some settings ("restricted settings") until the user
+     * allows them from App info. There is no public way to read that state
+     * itself, so callers show help only after a grant didn't go through.
+     */
+    fun isSideloaded(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        val source = runCatching {
+            context.packageManager.getInstallSourceInfo(context.packageName).packageSource
+        }.getOrNull() ?: return true
+        return source != PackageInstaller.PACKAGE_SOURCE_STORE
+    }
 }
 

@@ -639,13 +639,6 @@
     <string name="companion_wake_associate">Associate</string>
 
     <!-- Flick to Send sheet -->
-    <string name="flick_send_title">Send to %1$s</string>
-    <string name="flick_send_hint">Flick up to send to %1$s</string>
-    <string name="flick_send_sending">Sending to %1$s…</string>
-    <string name="flick_send_now">Send now</string>
-    <string name="flick_send_undo">Undo</string>
-    <string name="flick_send_files_count">%1$d files ready to send</string>
-    <string name="flick_send_single_file">1 file ready to send</string>
 
     <!-- PC notifications & Browse PC files -->
     <string name="channel_pc_notifications">PC notifications</string>
@@ -730,7 +723,13 @@
     <string name="walkthrough_perm_notif_title">Notifications</string>
     <string name="walkthrough_perm_notif_does">See, dismiss, and reply to phone notifications and control media on your PC.</string>
     <string name="walkthrough_perm_notif_requires">Android requires Notification Access and notification permission.</string>
-    <string name="walkthrough_perm_notif_restricted">On Android 13+, if Notification Access is grayed out, open App info › menu › Allow restricted settings.</string>
+    <string name="walkthrough_restricted_title">Android blocked this setting</string>
+    <string name="walkthrough_restricted_body">Android holds back some permissions for apps installed from a file instead of an app store. To allow this one:</string>
+    <string name="walkthrough_restricted_step1">Tap Open app info.</string>
+    <string name="walkthrough_restricted_step2">Tap ⋮ at the top right, then Allow restricted settings, and confirm.</string>
+    <string name="walkthrough_restricted_step3">Come back here and tap Grant again.</string>
+    <string name="walkthrough_restricted_note">The menu shows this option only after you have tried to grant the permission once. Some phones word it differently.</string>
+    <string name="walkthrough_restricted_open">Open app info</string>
 
     <string name="walkthrough_perm_battery_title">Unrestricted battery</string>
     <string name="walkthrough_perm_battery_does">Keep your phone reachable when the screen is off.</string>

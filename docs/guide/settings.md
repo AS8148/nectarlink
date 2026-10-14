@@ -127,6 +127,7 @@ Configures File Explorer integration, PC folder sharing, LocalSend, voice record
 | **File Explorer Send to** | **On** (default) | Adds your paired phones to the right-click **Send to** menu in Windows File Explorer. |
 | **Your PC in your pocket** | **Off** (default) | Shares your PC's `Downloads`, `Documents`, `Desktop`, `Pictures`, and `Nectarlink Shared` folders with paired phones that have **File Explorer integration** enabled. |
 | **LocalSend on local network** | **Off** (default) | Enables the built-in LocalSend v2.1 client and server (UDP/TCP port `53317`) to send and receive files with nearby LocalSend devices on your Wi-Fi network without pairing. |
+| **Open files shared from the phone** | **Off** (default) | When you share a single photo or document from the phone, opens it in its default Windows app as soon as it arrives. When off, the file is saved to `Downloads\Nectarlink` without opening anything. |
 | **Voice recordings** | Format: `M4A` (default), `MP3`, `WAV`, `FLAC`; Folder: **Choose folder** / **Reset** | Sets where incoming voice notes from your phone are saved (`Documents\Nectarlink Recordings` or `Downloads\Nectarlink` by default) and automatically converts them to MP3, WAV, or FLAC if selected. |
 | **Synced folders** | **Sync now**, **Add DCIM to Pictures**, per-rule toggle & **Remove** | Configures one-way (**One-way (phone to PC)**) or two-way (**Two-way sync**, keeping conflict copies) automatic folder synchronization rules with BLAKE3 integrity verification. |
 
@@ -204,7 +205,7 @@ On Android, tap **Settings** in the floating bottom dock. You can view all setti
 
 | Setting | Options / Default | What It Does |
 | :--- | :--- | :--- |
-| **Theme** | `Bloom` (default), `Glass`, `Graphite` | Selects the visual style on Android, matching the Windows themes. In **Glass** on Android 13 and newer, the floating Home and Settings dock is Liquid Glass: content scrolling beneath it bends at the rim. |
+| **Theme** | `Graphite` (default), `Bloom`, `Glass` | Selects the visual style on Android, matching the Windows themes. In **Glass** on Android 13 and newer, the floating Home and Settings dock is Liquid Glass: content scrolling beneath it bends at the rim. |
 | **Mode** | `System` (default), `Light`, `Dark` | Follows Android's system dark theme or locks the app to Light or Dark. |
 | **Pure black (AMOLED)** | **Off** (default) | Shown in Graphite Dark or as an inline **AMOLED** pill when the **Black** seed swatch is selected. Uses true `#000000` black surfaces for OLED phone screens. |
 | **Media artwork color** *(Bloom and Glass)* | **Off** (default) | Tints the app to match the artwork of what is playing on the phone or a paired PC. Applies only while this is on. With nothing playing, the app uses the wallpaper or preset colors. |

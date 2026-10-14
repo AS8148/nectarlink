@@ -26,6 +26,7 @@ import app.nectarlink.core.TransferStatus
 internal object TransferNotifications {
     private const val CHANNEL_PROGRESS = "transfers"
     private const val CHANNEL_RECEIVED = "received"
+    private const val SENT_TIMEOUT_MS = 8_000L
     const val ACTION_CANCEL = "app.nectarlink.action.CANCEL_TRANSFER"
     const val EXTRA_ID = "transfer"
 
@@ -54,6 +55,9 @@ internal object TransferNotifications {
             lastPosted.remove(transfer.id)
             manager.cancel(idOf(transfer))
             if (status is TransferStatus.Failed) failed(context, transfer, pcName)
+            if (status is TransferStatus.Done && transfer.direction == TransferDirection.OUTGOING && !transfer.recording) {
+                sent(context, transfer, pcName)
+            }
             return
         }
         val percent = if (transfer.total == 0uL) {
@@ -165,6 +169,20 @@ internal object TransferNotifications {
             builder.addAction(0, context.getString(R.string.clip_action_open), tap)
         }
         post(context, idOf(transfer), builder.build())
+    }
+
+    /** A send from the phone arrived: a quiet confirmation that clears itself. */
+    private fun sent(context: Context, transfer: Transfer, pcName: String) {
+        val to = pcName.ifEmpty { context.getString(R.string.your_pc) }
+        val notification = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title(context, transfer))
+            .setContentText(context.getString(R.string.transfer_sent_to, to))
+            .setSilent(true)
+            .setAutoCancel(true)
+            .setTimeoutAfter(SENT_TIMEOUT_MS)
+            .build()
+        post(context, idOf(transfer), notification)
     }
 
     private fun failed(context: Context, transfer: Transfer, pcName: String) {

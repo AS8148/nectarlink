@@ -1960,6 +1960,19 @@ Item {
                         Divider { width: parent.width }
                         ListRow {
                             width: parent.width
+                            iconPath: Icons.openExternal
+                            title: qsTr("Open files shared from the phone")
+                            description: qsTr("Opens a shared photo or document as soon as it arrives.")
+                            Toggle {
+                                label: qsTr("Open files shared from the phone")
+                                checked: Preferences.openSharedFiles
+                                onToggled: (on) => Preferences.openSharedFiles = on
+                            }
+                        }
+
+                        Divider { width: parent.width }
+                        ListRow {
+                            width: parent.width
                             stackBelow: true
                             iconPath: Icons.mic
                             title: qsTr("Voice recordings")

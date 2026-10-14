@@ -273,6 +273,7 @@ pub fn on_event(event: &NodeEvent) {
         let _ = crate::clipboard::copy_received_files_to_clipboard(saved);
     }
     let auto_open = t.open_on_arrival
+        && crate::settings::open_shared_files()
         && saved.len() == 1
         && first.is_file()
         && first.file_name().and_then(|n| n.to_str()).is_some_and(nectarlink_core::is_safe_handoff_document);
