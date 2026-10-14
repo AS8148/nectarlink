@@ -13,11 +13,12 @@ encrypted, with no account and no cloud service.
 
 ### Downloads
 
-| File | For | Needs |
+| Download | For | Needs |
 |---|---|---|
-| `Nectarlink-0.1.0-x64-setup.exe` | Windows | Windows 11, 64-bit |
-| `Nectarlink-0.1.0-android.apk` | Android | Android 8.0 or newer |
-| `SHA256SUMS.txt` | Checking both downloads | |
+| [Nectarlink-0.1.0-x64-setup.exe](https://github.com/thtbee/nectarlink/releases/download/v0.1.0/Nectarlink-0.1.0-x64-setup.exe) | Windows | Windows 11, 64-bit |
+| [Nectarlink-0.1.0-android.apk](https://github.com/thtbee/nectarlink/releases/download/v0.1.0/Nectarlink-0.1.0-android.apk) | Android | Android 8.0 or newer |
+
+Both are listed with their SHA-256 hashes in [SHA256SUMS.txt](https://github.com/thtbee/nectarlink/releases/download/v0.1.0/SHA256SUMS.txt).
 
 The Android app is signed with the project's release key. The Windows
 installer isn't code-signed yet, so SmartScreen asks once: choose **More
