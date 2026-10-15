@@ -6,7 +6,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.ContentObserver
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
@@ -23,7 +28,9 @@ import io.github.muntashirakon.adb.android.AdbMdns
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,13 +46,13 @@ import java.security.SecureRandom
 
 /**
  * The Elevated level (docs/PLAN.md §4.6) through the phone's own wireless
- * debugging, with nothing else to install: the user pairs Nectarlink once
- * with a pairing code, and from then on Nectarlink connects to the phone's
+ * debugging, with nothing else to install: the user pairs NectarLink once
+ * with a pairing code, and from then on NectarLink connects to the phone's
  * debugging service and runs [InputServer] with the shell's permissions,
  * for real touch and keys on the mirrored screen.
  *
  * Wireless debugging turns itself off on a reboot or a new Wi-Fi network;
- * after the first pairing Nectarlink may turn it back on itself
+ * after the first pairing NectarLink may turn it back on itself
  * (WRITE_SECURE_SETTINGS, which it grants itself through the shell).
  */
 object Elevated {
@@ -104,6 +111,7 @@ object Elevated {
 
     fun init(context: Context) {
         this.context = context.applicationContext
+        watchWirelessDebugging()
         scope.launch(Dispatchers.IO) {
             if (paired() || isRootAvailable()) {
                 _state.value = State.Waiting
@@ -112,9 +120,70 @@ object Elevated {
         }
     }
 
+    // ---- Staying in sync ----
+    //
+    // Wireless debugging turns itself off when Wi-Fi drops or changes, and
+    // comes back (NectarLink turns it on, or the user does) a moment after
+    // the new network is up. A single attempt on the network change is
+    // usually too early, so Elevated retries with a backoff while the phone
+    // is on Wi-Fi, and starts right away when wireless debugging turns on.
+
+    private var retryJob: Job? = null
+    @Volatile private var retryAttempt = 0
+
+    /** The network changed: try now, and keep trying from a short delay. */
+    fun onNetworkChanged() {
+        retryAttempt = 0
+        scope.launch { start() }
+    }
+
+    private fun watchWirelessDebugging() {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                val on = runCatching { Settings.Global.getInt(context.contentResolver, ADB_WIFI, 0) == 1 }.getOrDefault(false)
+                if (on && !running) onNetworkChanged()
+            }
+        }
+        runCatching {
+            context.contentResolver.registerContentObserver(Settings.Global.getUriFor(ADB_WIFI), false, observer)
+        }.onFailure { Log.i(TAG, "can't watch wireless debugging", it) }
+    }
+
+    /** Tries again later, while it can still work: paired, not running, on Wi-Fi. */
+    private fun scheduleRetry() {
+        if (!paired() || running || !onWifi()) return
+        val wait = RETRY_MS[retryAttempt.coerceAtMost(RETRY_MS.lastIndex)]
+        retryAttempt++
+        retryJob?.cancel()
+        retryJob = scope.launch {
+            delay(wait)
+            // So the attempt can schedule the next one without cancelling itself.
+            retryJob = null
+            start()
+        }
+    }
+
+    private fun cancelRetry() {
+        retryJob?.cancel()
+        retryJob = null
+        retryAttempt = 0
+    }
+
+    private fun onWifi(): Boolean = runCatching {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+            ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    }.getOrDefault(false)
+
+    /** Drops the connection to adbd; the next start makes a fresh one. */
+    private fun discardConnection() {
+        runCatching { adb?.close() }
+        adb = null
+    }
+
     private fun paired() = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(PAIRED, false)
 
-    /** The phone's own adbd, as Nectarlink. */
+    /** The phone's own adbd, as NectarLink. */
     private class Connection(context: Context) : AbsAdbConnectionManager() {
         private val key = AdbKey.load(context.noBackupFilesDir.resolve("adb"))
 
@@ -174,39 +243,49 @@ object Elevated {
     /** Connects and starts the input helper (when set up or rooted; again after it stopped). */
     suspend fun start(): Boolean = withContext(Dispatchers.IO) {
         if (!paired() && !isRootAvailable()) return@withContext false
-        lock.withLock {
-            if (running) return@withContext true
+        val started = lock.withLock {
+            if (running) return@withLock true
             _state.value = State.Starting
             if (tryStartWithRootLocked()) {
-                return@withContext true
+                return@withLock true
             }
             if (!paired()) {
                 _state.value = State.NotSetUp
-                return@withContext false
+                return@withLock false
             }
             turnOnWirelessDebugging()
+            // A connection from before is stale once the helper stopped
+            // (wireless debugging went off with the old network): start fresh.
+            discardConnection()
             val adb = connection()
             val connected = try {
-                adb.isConnected || adb.connectTls(context, CONNECT_MS)
+                adb.connectTls(context, CONNECT_MS)
             } catch (e: AdbPairingRequiredException) {
                 // adbd forgot us (the user revoked the authorizations).
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(PAIRED, false) }
                 _state.value = State.Failed(Reason.NotPaired)
-                return@withContext false
+                return@withLock false
             } catch (e: Exception) {
                 Log.i(TAG, "wireless debugging isn't reachable", e)
                 false
             }
             if (!connected) {
+                discardConnection()
                 _state.value = State.Waiting
-                return@withContext false
+                return@withLock false
             }
             runCatching { launch(adb) }.onFailure {
                 Log.w(TAG, "the input helper didn't start", it)
                 stopLocked()
+                discardConnection()
                 _state.value = State.Failed(Reason.Other)
             }.isSuccess
         }
+        when {
+            started -> cancelRetry()
+            _state.value.let { it == State.Waiting || it == State.Failed(Reason.Other) } -> scheduleRetry()
+        }
+        started
     }
 
     /**
@@ -250,6 +329,7 @@ object Elevated {
                 runCatching { socket?.close() }
                 if (_state.value == State.Running) _state.value = if (paired()) State.Waiting else State.NotSetUp
                 onChange()
+                scheduleRetry()
             }.start()
             true
         }.onFailure {
@@ -260,7 +340,7 @@ object Elevated {
         }.getOrDefault(false)
     }
 
-    /** Wireless debugging back on, when Nectarlink may (granted at the first start). */
+    /** Wireless debugging back on, when NectarLink may (granted at the first start). */
     private fun turnOnWirelessDebugging() {
         if (context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) != PackageManager.PERMISSION_GRANTED) return
         runCatching {
@@ -272,7 +352,7 @@ object Elevated {
     }
 
     private fun launch(adb: Connection) {
-        // Turning wireless debugging back on later is Nectarlink's to do.
+        // Turning wireless debugging back on later is NectarLink's to do.
         if (context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) != PackageManager.PERMISSION_GRANTED) {
             run(adb, "pm grant ${context.packageName} ${Manifest.permission.WRITE_SECURE_SETTINGS}")
         }
@@ -317,6 +397,7 @@ object Elevated {
             runCatching { socket?.close() }
             if (_state.value == State.Running) _state.value = if (paired()) State.Waiting else State.NotSetUp
             onChange()
+            scheduleRetry()
         }.start()
     }
 
@@ -358,6 +439,7 @@ object Elevated {
                 runCatching { local.close() }
                 if (_state.value == State.Running) _state.value = if (paired()) State.Waiting else State.NotSetUp
                 onChange()
+                scheduleRetry()
             }
         }.start()
         onChange()
@@ -432,6 +514,7 @@ object Elevated {
 
     /** Forgets the pairing (the user turned Elevated off). */
     suspend fun forget() {
+        cancelRetry()
         screenOffRequested = false
         stop()
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(PAIRED, false) }
@@ -623,4 +706,6 @@ object Elevated {
     private const val ADB_WIFI = "adb_wifi_enabled"
     private const val DISCOVERY_MS = 10_000L
     private const val CONNECT_MS = 10_000L
+    /** Waits between attempts to start again; the last one repeats. */
+    private val RETRY_MS = longArrayOf(2_000L, 5_000L, 10_000L, 20_000L, 40_000L, 60_000L)
 }

@@ -248,7 +248,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                 node?.networkChanged()
             }
             // A new Wi-Fi network turns wireless debugging off; Elevated turns it back on.
-            if (!Elevated.running && lastSignal.wifiBars != null) Elevated.start()
+            if (!Elevated.running && lastSignal.wifiBars != null) Elevated.onNetworkChanged()
         }
     }
 
@@ -1201,7 +1201,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
 
     /**
      * Automatically sends non-sensitive text copied in the background while Elevated mode is running.
-     * Skips clips Nectarlink itself wrote from a PC (`PhoneClipboard.isRecentEcho`).
+     * Skips clips NectarLink itself wrote from a PC (`PhoneClipboard.isRecentEcho`).
      */
     fun onElevatedClipboardChanged(text: String, html: String?) {
         if (text.isBlank() || PhoneClipboard.isRecentEcho(text, html)) return
@@ -1651,7 +1651,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             it.pairingJoin(link)
         } catch (e: NectarlinkException) {
             val failure = when (e) {
-                is NectarlinkException.InvalidPairingLink -> PairingFailure.Other("not a Nectarlink code")
+                is NectarlinkException.InvalidPairingLink -> PairingFailure.Other("not a NectarLink code")
                 is NectarlinkException.Denied -> PairingFailure.Rejected
                 else -> PairingFailure.Unreachable
             }
@@ -1979,7 +1979,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                     } else {
                         current.outputDevices + app.nectarlink.core.AudioOutputDevice(
                             id = "nectarlink:phone_speaker",
-                            name = "Phone speaker (Nectarlink)",
+                            name = "Phone speaker (NectarLink)",
                             isDefault = false,
                         )
                     }

@@ -55,6 +55,10 @@ once; updates after it work from the app.
   the track changes or the card switches between the phone and this PC. The
   same fix covers rounded images in notifications, calls, messages and the
   shelf.
+- Elevated on Android reconnects by itself after Wi-Fi drops or changes. It
+  used to stay on **Try again** until tapped, even with Wireless debugging
+  back on. Now it starts again as soon as Wireless debugging is on, and keeps
+  trying while the phone is on Wi-Fi.
 
 ## 0.1.2 (2026-10-15)
 
