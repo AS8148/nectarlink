@@ -747,7 +747,7 @@ private fun WhatsNewFeaturesGuideCard(
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
         Text(
-            text = "Explore every Nectarlink feature, check live permissions, or tap Show me to jump straight to any control.",
+            text = "Explore every NectarLink feature, check live permissions, or tap Show me to jump straight to any control.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
@@ -851,7 +851,7 @@ private fun NoPairedPcCard(
             color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
         Text(
-            text = "Open Nectarlink on your Windows or Linux PC to pair by QR code or local discovery, or reopen the setup walkthrough.",
+            text = "Open NectarLink on your Windows or Linux PC to pair by QR code or local discovery, or reopen the setup walkthrough.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onPrimaryContainer,
         )

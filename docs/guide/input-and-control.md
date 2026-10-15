@@ -1,6 +1,6 @@
 # Input and Control
 
-Nectarlink lets you control your PC from your phone and control your phone from your PC. Use your phone as a multi-touch trackpad, gyroscope air mouse, remote keyboard, voice dictation mic, presentation clicker with a laser pointer, `Deck` macro pad, or bedside `Desk clock` display. Going the other way, type on your phone from your PC keyboard without screen mirroring, move your PC mouse cursor across the screen edge onto your phone (**Flow**), toggle phone system settings from PC Home, or lock, sleep, and wake your PC remotely.
+NectarLink lets you control your PC from your phone and control your phone from your PC. Use your phone as a multi-touch trackpad, gyroscope air mouse, remote keyboard, voice dictation mic, presentation clicker with a laser pointer, `Deck` macro pad, or bedside `Desk clock` display. Going the other way, type on your phone from your PC keyboard without screen mirroring, move your PC mouse cursor across the screen edge onto your phone (**Flow**), toggle phone system settings from PC Home, or lock, sleep, and wake your PC remotely.
 
 <p align="center">
   <img src="images/type-on-phone.png" alt="Typing on the phone from the PC keyboard and controlling phone settings on Home" width="760">
@@ -33,13 +33,13 @@ Tap **Control PC** on the Android Home screen. The first time you open it, click
 
 #### Air Mouse Mode
 
-- Hold your thumb on the center pad and tilt your phone in the air. Nectarlink reads your phone's gyroscope with hand-tremor filtering to move the PC cursor accurately where you point.
-- Tap the pad while holding to left-click, and release the pad to park the cursor. (If your phone does not have a gyroscope sensor, Nectarlink lets you know and suggests Touchpad mode.)
+- Hold your thumb on the center pad and tilt your phone in the air. NectarLink reads your phone's gyroscope with hand-tremor filtering to move the PC cursor accurately where you point.
+- Tap the pad while holding to left-click, and release the pad to park the cursor. (If your phone does not have a gyroscope sensor, NectarLink lets you know and suggests Touchpad mode.)
 
 #### Keyboard and Voice Dictation
 
 - **Remote Keyboard**: Tap **Keyboard** to open your phone's soft keyboard and type straight into the focused window on your PC. Above the keyboard sits a scrollable bar of PC modifier and special keys: **`Ctrl`**, **`Alt`**, **`Shift`**, **`Win`**, **`Esc`**, **`Tab`**, **Arrow keys**, **`Home`**, **`End`**, **`PgUp`**, **`PgDn`**, **`Del`**, **`Copy`**, and **`Paste`**. Tap a modifier key (`Ctrl`, `Alt`, `Shift`, `Win`) to latch it for the next keystroke.
-- **Voice Dictation**: Tap or hold **Dictate** and speak. Nectarlink uses your phone's speech recognizer (on-device recognition where available) to stream live partial transcripts and type the finished sentence directly into the active text field on your PC.
+- **Voice Dictation**: Tap or hold **Dictate** and speak. NectarLink uses your phone's speech recognizer (on-device recognition where available) to stream live partial transcripts and type the finished sentence directly into the active text field on your PC.
 
 #### Presentation Remote and Laser Pointer
 
@@ -91,7 +91,7 @@ When your phone is resting on a charger or desk stand, tap **Desk clock** on the
 - **Lock or Sleep PC**: Tap **Lock PC** or **Sleep** on your phone (or on the Android **PC quick actions** widget) to lock your Windows session or put the PC to sleep when you walk away.
 - **Wake PC (Wake-on-LAN)**: When your PC is asleep or powered off, tap **Wake** on your phone (or on the Android home-screen widget).
   - On the local network, your phone sends Wake-on-LAN UDP packets to every MAC and broadcast address stored for your PC during prior connections.
-  - If you have another Nectarlink device online on your home LAN while you are on mobile data (**Connect over mobile data**), Nectarlink can also relay the wake request through your online home device.
+  - If you have another NectarLink device online on your home LAN while you are on mobile data (**Connect over mobile data**), NectarLink can also relay the wake request through your online home device.
   - Check **Settings › Connection & About › Wake from your phone** on your PC to verify whether your Windows network adapter has Wake on LAN enabled in Device Manager.
 
 ## What the Options Do

@@ -96,7 +96,7 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: 14
                 Repeater {
-                    model: [qsTr("Install Nectarlink"), qsTr("Tap “Pair with PC”"), qsTr("Scan this code")]
+                    model: [qsTr("Install NectarLink"), qsTr("Tap “Pair with PC”"), qsTr("Scan this code")]
                     delegate: Row {
                         required property int index
                         required property string modelData
@@ -169,7 +169,7 @@ Item {
                     width: parent.width
                     spacing: 6
                     Repeater {
-                        model: [qsTr("Open Nectarlink on your phone"), qsTr("Tap “Pair with PC”"), qsTr("Scan this QR code")]
+                        model: [qsTr("Open NectarLink on your phone"), qsTr("Tap “Pair with PC”"), qsTr("Scan this QR code")]
                         delegate: Row {
                             required property int index
                             required property string modelData
@@ -217,7 +217,7 @@ Item {
                 wrapMode: Text.WordWrap
                 role: "body"
                 muted: true
-                text: qsTr("On your phone, open Nectarlink and choose “Pair nearby”. It shows up here.")
+                text: qsTr("On your phone, open NectarLink and choose “Pair nearby”. It shows up here.")
             }
             Repeater {
                 model: Pairing.nearby

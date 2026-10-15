@@ -1,6 +1,6 @@
 # Cameras and Audio
 
-Nectarlink lets your PC use your phone's cameras and audio hardware in four ways: streaming your phone's camera as a Windows webcam (`Nectarlink Webcam`), snapping photos or scanning documents straight into your PC clipboard (**Continuity Camera**), playing your PC's system audio through your phone (**Phone as speaker**), and recording voice notes on your phone that land automatically on your PC (**Voice recorder**).
+NectarLink lets your PC use your phone's cameras and audio hardware in four ways: streaming your phone's camera as a Windows webcam (`NectarLink Webcam`), snapping photos or scanning documents straight into your PC clipboard (**Continuity Camera**), playing your PC's system audio through your phone (**Phone as speaker**), and recording voice notes on your phone that land automatically on your PC (**Voice recorder**).
 
 <p align="center">
   <img src="images/webcam-live.png" alt="Camera and Audio settings on Windows showing a live webcam preview from the phone" width="760">
@@ -23,11 +23,11 @@ Your phone's main camera sensor offers much better optics and low-light quality 
 
 #### One-Time Virtual Camera Add-On Setup
 
-You can preview your phone's camera inside Nectarlink's **Settings › Camera & Audio** immediately with zero setup. To make **Nectarlink Webcam** appear as a selectable camera inside Zoom, Microsoft Teams, Google Meet, Discord, OBS Studio, and the Windows Camera app:
+You can preview your phone's camera inside NectarLink's **Settings › Camera & Audio** immediately with zero setup. To make **NectarLink Webcam** appear as a selectable camera inside Zoom, Microsoft Teams, Google Meet, Discord, OBS Studio, and the Windows Camera app:
 
 1. On your PC, open **Settings › Camera & Audio**.
 2. Next to **Virtual camera add-on**, click **Set up** and approve the Windows User Account Control (UAC) administrator prompt.
-3. Nectarlink registers `nectarlink_vcam.dll` with Windows 11's Media Foundation `MFCreateVirtualCamera` service. Once registered, the status indicator shows **Ready** (and you can unregister it at any time by clicking **Remove**).
+3. NectarLink registers `nectarlink_vcam.dll` with Windows 11's Media Foundation `MFCreateVirtualCamera` service. Once registered, the status indicator shows **Ready** (and you can unregister it at any time by clicking **Remove**).
 
 #### Starting and Controlling the Webcam Stream
 
@@ -40,7 +40,7 @@ You can preview your phone's camera inside Nectarlink's **Settings › Camera & 
    - **Zoom**: Tap `1x` or `2x` presets or drag the continuous zoom slider on your phone.
    - **Flashlight (Torch)**: Toggle the rear LED flash on or off for fill lighting.
    - **Mirror image**: Horizontally flip the video feed in PC **Settings › Camera & Audio**.
-3. Open your video conferencing app on Windows and select **Nectarlink Webcam** as your camera.
+3. Open your video conferencing app on Windows and select **NectarLink Webcam** as your camera.
 
 ### 2. Continuity Camera: Take a Photo or Scan a Document
 
@@ -54,7 +54,7 @@ When you need to insert a photo of a physical object, whiteboard, or multi-corne
 3. **In Photo mode**: Frame your shot, tap **Capture photo**, inspect the preview, and tap **Use photo** (or **Retake**).
 4. **In Scan mode**:
    - Capture the page or receipt.
-   - Drag the four corner handles (**Adjust corners**) to match the edges of the document. Nectarlink corrects the perspective geometry into a flat rectangle.
+   - Drag the four corner handles (**Adjust corners**) to match the edges of the document. NectarLink corrects the perspective geometry into a flat rectangle.
    - Toggle **Enhance document** to apply high-contrast black-and-white document enhancement for crisp, readable text.
    - Tap **Send scan**.
 5. The captured photo or enhanced scan arrives on your PC in `Downloads\Nectarlink` and is automatically placed onto your Windows clipboard so you can press `Ctrl+V` straight into Word, Notion, Slack, email, or any image editor.
@@ -84,14 +84,14 @@ Use your phone's microphone to record voice notes, interviews, or meeting memos 
 4. When you finish and tap **Send**:
    - If your PC is online, the recording transfers immediately and lands in your chosen recordings folder (`Downloads\Nectarlink` or `Documents\Nectarlink Recordings` by default).
    - If you chose **MP3**, **WAV**, or **FLAC** in PC **Settings › Files & Sync › Voice recordings** (instead of the default **M4A**), your PC automatically converts the audio file upon arrival.
-   - If you added markers during the recording, Nectarlink writes a companion `<filename>.markers.txt` file right beside the audio file listing every marker's timestamp and label.
+   - If you added markers during the recording, NectarLink writes a companion `<filename>.markers.txt` file right beside the audio file listing every marker's timestamp and label.
    - If your PC is offline when you finish recording, the voice note stays saved on your phone and is sent automatically as soon as your PC reconnects.
 
 ## What the Options Do
 
 - **Stream PC audio to phone** (`Settings › Camera & Audio` on PC, default: **Off**): Streams real-time Windows system audio to your connected phone.
 - **Pause media during calls** (`Settings › Camera & Audio` on PC, default: **On**): Auto-pauses PC media playback when your phone rings or is in a call.
-- **Virtual camera add-on** (`Settings › Camera & Audio` on PC): Registers or removes the Windows 11 `Nectarlink Webcam` Media Foundation virtual camera.
+- **Virtual camera add-on** (`Settings › Camera & Audio` on PC): Registers or removes the Windows 11 `NectarLink Webcam` Media Foundation virtual camera.
 - **Phone** (`Settings › Camera & Audio` on PC, shown when multiple phones are paired): Selects which paired phone is used for the webcam.
 - **Camera** (`Settings › Camera & Audio` on PC, default: **Back**): Selects the **Back** or **Front** phone lens.
 - **Mirror image** (`Settings › Camera & Audio` on PC, default: **Off**): Flips the webcam video horizontally.
@@ -101,7 +101,7 @@ Use your phone's microphone to record voice notes, interviews, or meeting memos 
 
 ## Data and Privacy
 
-- **Explicit camera consent on the phone**: A paired PC can never open your phone's camera silently. Whenever you click **Start webcam** or trigger **Continuity Camera** from the PC, your phone displays a notification requiring a physical tap on the phone before the camera opens. While streaming, Android's green camera privacy indicator and Nectarlink's persistent **Streaming camera to `<PC>`** notification remain visible on your phone with a one-tap **Stop** button.
+- **Explicit camera consent on the phone**: A paired PC can never open your phone's camera silently. Whenever you click **Start webcam** or trigger **Continuity Camera** from the PC, your phone displays a notification requiring a physical tap on the phone before the camera opens. While streaming, Android's green camera privacy indicator and NectarLink's persistent **Streaming camera to `<PC>`** notification remain visible on your phone with a one-tap **Stop** button.
 - **Shared memory isolation**: On Windows, decoded webcam frames are passed to the Media Foundation virtual camera DLL through a logon-session-scoped shared memory ring buffer (`Local\NectarlinkVirtualCamera_v2`) with strict atomic bounds checking (`MAX_WIDTH = 3840`, `MAX_HEIGHT = 2160`) so other Windows user accounts cannot read the feed.
 - **Temporary camera cache**: Temporary Continuity Camera captures on the phone are stored in the app's private cache and deleted automatically within 24 hours (or immediately via **Settings › Features & Data › Data & storage › Photo thumbnails & camera cache › Clear**).
 
@@ -109,5 +109,5 @@ Use your phone's microphone to record voice notes, interviews, or meeting memos 
 
 - **4K Webcam Hardware Support**: 4K (`3840 x 2160`) webcam streaming requires a phone camera sensor and hardware encoder that support 4K 30 fps output, plus sufficient Wi-Fi or USB bandwidth. If a phone camera only supports up to 1080p, it streams at its highest supported resolution.
 - **8-Bit SDR Webcam Pipeline**: The webcam pipeline uses 8-bit SDR color (`NV12` / `RGB32` Media Foundation media types) for broad compatibility across Zoom, Teams, Meet, Chrome, and OBS; 10-bit HDR video is not used.
-- **Administrator Prompt for Virtual Camera Registration**: Registering or removing a system-wide Media Foundation virtual camera on Windows 11 (**Virtual camera add-on › Set up**) requires a one-time Administrator (UAC) approval. Previewing the webcam inside Nectarlink's own window works without Administrator privileges.
+- **Administrator Prompt for Virtual Camera Registration**: Registering or removing a system-wide Media Foundation virtual camera on Windows 11 (**Virtual camera add-on › Set up**) requires a one-time Administrator (UAC) approval. Previewing the webcam inside NectarLink's own window works without Administrator privileges.
 - **Continuity Camera Request Expiry**: If you trigger **Take photo** or **Scan document** while your phone is offline, the queued request expires after **2 minutes** so your phone does not unexpectedly prompt for a photo hours later.

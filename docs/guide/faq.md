@@ -2,35 +2,35 @@
 
 ## General and Accounts
 
-### Do I need to create an account or sign in to use Nectarlink?
+### Do I need to create an account or sign in to use NectarLink?
 
-No. Nectarlink has no user accounts, no sign-in screens, and no cloud servers. Each device generates its own cryptographic Ed25519 identity key locally on first launch, and you link your devices directly by scanning a QR code or comparing a 6-digit code.
+No. NectarLink has no user accounts, no sign-in screens, and no cloud servers. Each device generates its own cryptographic Ed25519 identity key locally on first launch, and you link your devices directly by scanning a QR code or comparing a 6-digit code.
 
-### Is Nectarlink free and open source?
+### Is NectarLink free and open source?
 
 Yes. The Windows and Android applications and the CLI are licensed under [GPL-3.0-or-later](../../LICENSES/GPL-3.0-or-later.txt) (with an app-store distribution exception), the shared Rust core crates are licensed under [MPL-2.0](../../LICENSES/MPL-2.0.txt), and the protocol specifications and documentation are licensed under [CC BY 4.0](../../LICENSES/CC-BY-4.0.txt). There are no paid tiers, subscriptions, or advertisements.
 
-### Does Nectarlink only work with Samsung or Pixel phones?
+### Does NectarLink only work with Samsung or Pixel phones?
 
-No. Nectarlink works with any Android phone or tablet running Android 8.0 (API 26) or newer, regardless of manufacturer (Samsung, Google Pixel, Xiaomi, OnePlus, Motorola, Sony, Nothing, Asus, Oppo, Realme, Vivo, Huawei, and others).
+No. NectarLink works with any Android phone or tablet running Android 8.0 (API 26) or newer, regardless of manufacturer (Samsung, Google Pixel, Xiaomi, OnePlus, Motorola, Sony, Nothing, Asus, Oppo, Realme, Vivo, Huawei, and others).
 
 ## Networking and Connectivity
 
 ### Do my phone and PC have to be on the same Wi-Fi network?
 
-By default, yes: Nectarlink connects directly over your local network (Wi-Fi or Ethernet) or over a USB data cable (`On USB`). If you want your phone and PC to stay connected when you leave home on mobile data (LTE/5G) or use a separate Wi-Fi network, turn on **Connect over mobile data** in **Settings › Connection & About** on your PC and **Settings › Devices** on your phone.
+By default, yes: NectarLink connects directly over your local network (Wi-Fi or Ethernet) or over a USB data cable (`On USB`). If you want your phone and PC to stay connected when you leave home on mobile data (LTE/5G) or use a separate Wi-Fi network, turn on **Connect over mobile data** in **Settings › Connection & About** on your PC and **Settings › Devices** on your phone.
 
 ### Does my data pass through a server when I use **Connect over mobile data**?
 
-When **Connect over mobile data** is turned on and a direct peer-to-peer UDP path cannot be established between your networks, encrypted QUIC packets are forwarded through an `iroh` relay. Because the TLS 1.3 session is encrypted end to end between your phone's key and your PC's key, the relay only forwards opaque encrypted packets and can never read your notifications, messages, clipboard, or files. When your devices are on the same local network or connected by USB, all device-to-device traffic goes straight between them without leaving your local network (the only internet request Nectarlink makes by default on installed copies is a periodic HTTPS check to GitHub Releases for app updates, which can be turned off on the PC in **Settings › Connection & About › Automatic updates**).
+When **Connect over mobile data** is turned on and a direct peer-to-peer UDP path cannot be established between your networks, encrypted QUIC packets are forwarded through an `iroh` relay. Because the TLS 1.3 session is encrypted end to end between your phone's key and your PC's key, the relay only forwards opaque encrypted packets and can never read your notifications, messages, clipboard, or files. When your devices are on the same local network or connected by USB, all device-to-device traffic goes straight between them without leaving your local network (the only internet request NectarLink makes by default on installed copies is a periodic HTTPS check to GitHub Releases for app updates, which can be turned off on the PC in **Settings › Connection & About › Automatic updates**).
 
-### Can I use Nectarlink without Wi-Fi at all, using only a USB cable?
+### Can I use NectarLink without Wi-Fi at all, using only a USB cable?
 
-Yes. Enable **USB debugging** in your phone's Developer options and plug your phone into your PC with a USB data cable. Nectarlink automatically detects the USB connection, lets you pair with a 6-digit confirmation code, and runs your entire encrypted session (`On USB`) over the cable.
+Yes. Enable **USB debugging** in your phone's Developer options and plug your phone into your PC with a USB data cable. NectarLink automatically detects the USB connection, lets you pair with a 6-digit confirmation code, and runs your entire encrypted session (`On USB`) over the cable.
 
 ### What happens if I send a file or copy a link while my other device is asleep or offline?
 
-It is not lost. Nectarlink places files, folders, clipboard sends, `Handoff` links, and `notify-when` task alerts into a persistent `Waiting to send` queue stored in SQLite. You can see and cancel queued items on the Home screen of either app, and they are delivered automatically in order as soon as the other device reconnects.
+It is not lost. NectarLink places files, folders, clipboard sends, `Handoff` links, and `notify-when` task alerts into a persistent `Waiting to send` queue stored in SQLite. You can see and cancel queued items on the Home screen of either app, and they are delivered automatically in order as soon as the other device reconnects.
 
 ### Can I pair multiple phones with one PC, or one phone with multiple PCs?
 
@@ -38,37 +38,37 @@ Yes. You can pair two or more phones (for example, a personal phone and a work p
 
 ## Power Levels and Permissions
 
-### Do I need to root my phone to use Nectarlink?
+### Do I need to root my phone to use NectarLink?
 
-No. Nothing in Nectarlink uses or requires root access. Every everyday feature works at the default `Standard` power level using normal Android permissions, and advanced features (`Elevated`) use Android's official built-in Wireless Debugging (`UID 2000` shell user).
+No. Nothing in NectarLink uses or requires root access. Every everyday feature works at the default `Standard` power level using normal Android permissions, and advanced features (`Elevated`) use Android's official built-in Wireless Debugging (`UID 2000` shell user).
 
 ### Why does Android 13+ gray out the Notification access or Accessibility switch ("Restricted settings")?
 
-Android 13 and newer block sideloaded APKs (apps installed outside an app store) from turning on Notification Listener or Accessibility services until you confirm in **App info**. Open **Android Settings › Apps › Nectarlink**, tap the three-dot menu in the top-right corner, tap **Allow restricted settings**, verify with your fingerprint or PIN, and then return to Nectarlink to turn the switch on.
+Android 13 and newer block sideloaded APKs (apps installed outside an app store) from turning on Notification Listener or Accessibility services until you confirm in **App info**. Open **Android Settings › Apps › NectarLink**, tap the three-dot menu in the top-right corner, tap **Allow restricted settings**, verify with your fingerprint or PIN, and then return to NectarLink to turn the switch on.
 
 ### Do I have to re-pair Wireless Debugging (`Elevated`) every time I reboot my phone?
 
-No. You only enter the 6-digit Wireless Debugging pairing code once during initial setup. After that, whenever your phone reboots or reconnects to Wi-Fi, Nectarlink automatically turns Wireless Debugging back on and starts the `Elevated` helper in the background by itself.
+No. You only enter the 6-digit Wireless Debugging pairing code once during initial setup. After that, whenever your phone reboots or reconnects to Wi-Fi, NectarLink automatically turns Wireless Debugging back on and starts the `Elevated` helper in the background by itself.
 
-### Can I use Nectarlink if I do not want to grant SMS, Call, or Photo permissions?
+### Can I use NectarLink if I do not want to grant SMS, Call, or Photo permissions?
 
-Yes. Every Android permission is optional, and Nectarlink's capability matrix adapts the user interface to show only what you have enabled. For example, if you only want clipboard sync, file transfers, and screen mirroring, you can skip SMS, Calls, Contacts, and Photos permissions completely.
+Yes. Every Android permission is optional, and NectarLink's capability matrix adapts the user interface to show only what you have enabled. For example, if you only want clipboard sync, file transfers, and screen mirroring, you can skip SMS, Calls, Contacts, and Photos permissions completely.
 
 ## Battery, Memory, and Performance
 
-### How much battery does Nectarlink use on my phone?
+### How much battery does NectarLink use on my phone?
 
-When connected and idle in the background, Nectarlink maintains a single lightweight QUIC connection with event-driven wakeups and zero polling loops, using less than 1 percent battery per hour in continuous connected soak tests. High-power features such as screen mirroring (`mirror`) and camera streaming (**Phone as webcam**) use hardware video encoders only while actively streaming and stop immediately when you close the window.
+When connected and idle in the background, NectarLink maintains a single lightweight QUIC connection with event-driven wakeups and zero polling loops, using less than 1 percent battery per hour in continuous connected soak tests. High-power features such as screen mirroring (`mirror`) and camera streaming (**Phone as webcam**) use hardware video encoders only while actively streaming and stop immediately when you close the window.
 
 ### How much RAM and CPU does the Windows app use in the background?
 
-When started minimized in the Windows system tray, Nectarlink uses approximately **27 MB** of private commit memory (~5 to 10 MB active working set) and **0.0 percent** idle CPU. When you close the main window (`Stay in system tray`), Nectarlink unloads the QML window tree and image caches to keep background memory usage minimal while staying ready to pop up notifications or open the `Shelf` and `Command Palette` in under 50 milliseconds.
+When started minimized in the Windows system tray, NectarLink uses approximately **27 MB** of private commit memory (~5 to 10 MB active working set) and **0.0 percent** idle CPU. When you close the main window (`Stay in system tray`), NectarLink unloads the QML window tree and image caches to keep background memory usage minimal while staying ready to pop up notifications or open the `Shelf` and `Command Palette` in under 50 milliseconds.
 
 ## Privacy and Data Management
 
-### Does Nectarlink send my clipboard when I copy a password from my password manager?
+### Does NectarLink send my clipboard when I copy a password from my password manager?
 
-No. Password managers on both Windows (such as 1Password, Bitwarden, and KeePassXC) and Android 13+ mark copied passwords with system privacy flags (`ExcludeClipboardContentFromMonitorProcessing` on Windows and `ClipDescription.EXTRA_IS_SENSITIVE` on Android). Nectarlink checks those flags before reading or sending the clipboard and skips any sensitive item. One-time verification codes (OTPs) are also excluded from clipboard history and `Timeline`.
+No. Password managers on both Windows (such as 1Password, Bitwarden, and KeePassXC) and Android 13+ mark copied passwords with system privacy flags (`ExcludeClipboardContentFromMonitorProcessing` on Windows and `ClipDescription.EXTRA_IS_SENSITIVE` on Android). NectarLink checks those flags before reading or sending the clipboard and skips any sensitive item. One-time verification codes (OTPs) are also excluded from clipboard history and `Timeline`.
 
 ### How do I delete my local history or unpair a device?
 

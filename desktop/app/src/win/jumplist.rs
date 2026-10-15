@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Windows Taskbar Jump List: quick user tasks when right-clicking the
-//! Nectarlink icon on the taskbar or Start menu (`ICustomDestinationList`).
+//! NectarLink icon on the taskbar or Start menu (`ICustomDestinationList`).
 
 use std::path::Path;
 
@@ -20,7 +20,7 @@ use windows::{
 
 use super::with_com;
 
-/// The command-line flag Jump List tasks pass back to Nectarlink.
+/// The command-line flag Jump List tasks pass back to NectarLink.
 pub const ARG: &str = "--task";
 
 /// The 5 user tasks shown in the Windows Taskbar Jump List: `(action, title, description)`.

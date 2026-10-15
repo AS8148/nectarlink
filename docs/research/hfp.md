@@ -25,7 +25,7 @@ We evaluated three Windows Bluetooth APIs for using the PC's microphone and spea
 3. **Kernel Profile Driver Requirement (`BTH_PROFILE_DRIVER_INTERFACE`)**:
    - Without access to the inbox `PhoneExperienceHost` broker, opening an HFP RFCOMM service-level connection (AT command channel) plus an eSCO bidirectional voice channel on Windows requires a WHQL-signed kernel-mode Bluetooth profile driver (`bthport.sys` / KMDF) paired with a custom audio miniport driver.
 
-**Conclusion**: Routing two-way cellular call audio through the PC's microphone and speakers is **not possible with public Windows user-mode APIs**. Nectarlink therefore supports incoming call alerts, caller ID, answer/decline/hangup, dialer, call log, and (with Elevated mode) mute/speakerphone/hold/DTMF keypad controls on the PC while call voice audio remains on the phone (or a Bluetooth headset paired directly to the phone).
+**Conclusion**: Routing two-way cellular call audio through the PC's microphone and speakers is **not possible with public Windows user-mode APIs**. NectarLink therefore supports incoming call alerts, caller ID, answer/decline/hangup, dialer, call log, and (with Elevated mode) mute/speakerphone/hold/DTMF keypad controls on the PC while call voice audio remains on the phone (or a Bluetooth headset paired directly to the phone).
 
 ---
 

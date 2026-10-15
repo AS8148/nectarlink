@@ -110,43 +110,43 @@ fn match_oem(raw: &str) -> Option<(&'static str, &'static str)> {
     if lower.contains("samsung") || lower.contains("galaxy") || lower.contains("sm-") {
         Some((
             "Samsung",
-            "On Samsung: open Settings → Apps → Nectarlink → Battery and choose Unrestricted, then in \
-             Device care → Battery → Background usage limits make sure Nectarlink is never put to sleep.",
+            "On Samsung: open Settings → Apps → NectarLink → Battery and choose Unrestricted, then in \
+             Device care → Battery → Background usage limits make sure NectarLink is never put to sleep.",
         ))
     } else if lower.contains("xiaomi") || lower.contains("redmi") || lower.contains("poco") {
         Some((
             "Xiaomi",
-            "On Xiaomi / HyperOS / MIUI: open Settings → Apps → Manage apps → Nectarlink, turn on \
+            "On Xiaomi / HyperOS / MIUI: open Settings → Apps → Manage apps → NectarLink, turn on \
              Autostart, and set Battery saver to No restrictions.",
         ))
     } else if lower.contains("oneplus") {
         Some((
             "OnePlus",
-            "On OnePlus / OxygenOS: open Settings → Apps → App management → Nectarlink → Battery usage and \
+            "On OnePlus / OxygenOS: open Settings → Apps → App management → NectarLink → Battery usage and \
              turn on Allow background activity and Allow auto-launch.",
         ))
     } else if lower.contains("oppo") || lower.contains("realme") || lower.contains("rmx") {
         Some((
             "Oppo / Realme",
-            "On Oppo / Realme: open Settings → Apps → App management → Nectarlink → Battery usage and turn \
+            "On Oppo / Realme: open Settings → Apps → App management → NectarLink → Battery usage and turn \
              on Allow background activity and Allow auto-launch.",
         ))
     } else if lower.contains("vivo") || lower.contains("iqoo") {
         Some((
             "Vivo",
             "On Vivo / OriginOS / Funtouch: open Settings → Battery → Background power consumption \
-             management → Nectarlink and choose Unrestricted, and allow Autostart.",
+             management → NectarLink and choose Unrestricted, and allow Autostart.",
         ))
     } else if lower.contains("huawei") || lower.contains("honor") {
         Some((
             "Huawei",
             "On Huawei / Honor: open Settings → Battery → App launch, turn off Manage automatically for \
-             Nectarlink, and keep Auto-launch, Secondary launch, and Run in background on.",
+             NectarLink, and keep Auto-launch, Secondary launch, and Run in background on.",
         ))
     } else if lower.contains("pixel") || lower.contains("google") {
         Some((
             "Pixel",
-            "On Pixel: open Settings → Apps → See all apps → Nectarlink → App battery usage, tap Allow \
+            "On Pixel: open Settings → Apps → See all apps → NectarLink → App battery usage, tap Allow \
              background usage, and choose Unrestricted.",
         ))
     } else {
@@ -199,14 +199,14 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         Some(f) if f.blocked => checks.push(check(
             "firewall",
             Outcome::Fail,
-            "Windows Firewall blocks Nectarlink",
+            "Windows Firewall blocks NectarLink",
             "Someone chose not to allow it when Windows asked. Allow it, and your phone can connect.",
             Some("firewall"),
         )),
         Some(f) if !f.allowed => checks.push(check(
             "firewall",
             Outcome::Warn,
-            "Nectarlink isn't allowed through Windows Firewall",
+            "NectarLink isn't allowed through Windows Firewall",
             "Your phone may not be able to connect. Allow it once here.",
             Some("firewall"),
         )),
@@ -278,7 +278,7 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
                     Outcome::Warn,
                     format!("{name} isn't connected"),
                     format!(
-                        "{seen} Open Nectarlink on the phone and keep both on the same network. If the phone \
+                        "{seen} Open NectarLink on the phone and keep both on the same network. If the phone \
                          asks to run in the background, allow it."
                     ),
                     Some("reconnect"),

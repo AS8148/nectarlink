@@ -2,7 +2,7 @@
 
 <img src="assets/brand/icon.svg" alt="" width="96" height="96">
 
-# Nectarlink
+# NectarLink
 
 **Your Android phone and your Windows PC, working as one.**
 
@@ -10,7 +10,7 @@ Notifications, messages, calls, clipboard, files, photos, screen mirroring and
 phone apps in windows, between Android and Windows 11. Free and open source.
 Local-first, end-to-end encrypted, no account and no cloud.
 
-Hi, I'm Bee, and yes, a bee built an app called Nectarlink. I build cool stuff
+Hi, I'm Bee, and yes, a bee built an app called NectarLink. I build cool stuff
 in the open on [𝕏 @thtbee_](https://x.com/thtbee_), so come see what's next.
 Feedback, bugs or ideas? DM me directly.
 
@@ -22,12 +22,12 @@ Feedback, bugs or ideas? DM me directly.
 </div>
 
 <p align="center">
-  <img src="docs/screenshots/desktop-glass-home.png" alt="Nectarlink for Windows: Home with the phone's notifications and music playing, Glass theme" width="880">
+  <img src="docs/screenshots/desktop-glass-home.png" alt="NectarLink for Windows: Home with the phone's notifications and music playing, Glass theme" width="880">
 </p>
 
-## Why Nectarlink
+## Why NectarLink
 
-Nectarlink came out of my own frustration. I kept juggling Phone Link for
+NectarLink came out of my own frustration. I kept juggling Phone Link for
 notifications and messages, KDE Connect for the clipboard and LocalSend for
 files, and always wanted one app that did all of it. So I made one.
 
@@ -38,8 +38,8 @@ of new features I wanted that I think you'll enjoy having too.
 
 | | Download | Needs |
 |---|---|---|
-| **Windows** | [Installer (.exe)](https://github.com/thtbee/nectarlink/releases/latest) | Windows 11, 64-bit |
-| **Android** | [App (.apk)](https://github.com/thtbee/nectarlink/releases/latest) | Android 8.0 or newer |
+| **Windows** | [Installer (.exe)](https://github.com/thtbee/nectarlink/releases/download/v0.1.3/Nectarlink-0.1.3-x64-setup.exe) | Windows 11, 64-bit |
+| **Android** | [App (.apk)](https://github.com/thtbee/nectarlink/releases/download/v0.1.3/Nectarlink-0.1.3-android.apk) | Android 8.0 or newer |
 
 Both apps update themselves from GitHub Releases and check every download
 against its SHA-256 sums.
@@ -51,9 +51,9 @@ against its SHA-256 sums.
 
 ## Get started
 
-1. Install Nectarlink on your PC and on your phone.
+1. Install NectarLink on your PC and on your phone.
 2. On the PC, the setup walkthrough shows a QR code. Scan it with the phone
-   (from the Nectarlink app or any camera app), or pick the PC from the phone's
+   (from the NectarLink app or any camera app), or pick the PC from the phone's
    list of nearby devices and compare a 6-digit code. A USB cable works too.
 3. Allow what you want to share. Every feature has its own switch per device,
    and the sensitive ones are off until you turn them on.
@@ -262,5 +262,5 @@ open a public issue.
 - Core libraries: [MPL-2.0](LICENSES/MPL-2.0.txt)
 - Protocol specification and documentation: [CC BY 4.0](LICENSES/CC-BY-4.0.txt)
 
-See [LICENSE](LICENSE) for which license applies where. The Nectarlink name and
+See [LICENSE](LICENSE) for which license applies where. The NectarLink name and
 logo are covered by the [trademark policy](TRADEMARKS.md).

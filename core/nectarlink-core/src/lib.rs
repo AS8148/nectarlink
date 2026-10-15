@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The Nectarlink engine: device identity, pairing, sessions with paired
+//! The NectarLink engine: device identity, pairing, sessions with paired
 //! devices, and storage. Shared by the Windows and Android apps.
 //!
 //! The entry point is [`Node`]. Commands are async methods; everything that

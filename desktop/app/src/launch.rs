@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What another launch of Nectarlink asks the running one to do: show its
+//! What another launch of NectarLink asks the running one to do: show its
 //! window (Start menu, shortcuts), send files (Explorer's "Send to") or
 //! quit (the installer, before replacing or removing the app).
 //!

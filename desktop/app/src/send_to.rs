@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Explorer's "Send to" menu: a shortcut per paired phone, which starts
-//! Nectarlink with `--send-to <device> <files…>`. The running app sends the
+//! NectarLink with `--send-to <device> <files…>`. The running app sends the
 //! files and follows the transfer in a Windows notification with a progress
 //! bar, so nothing else needs to open.
 
@@ -148,8 +148,8 @@ fn reconcile(dir: &Path, desired: &[(DeviceId, String)], exe: &Path) -> io::Resu
                     .any(|(p, _)| p.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase() == lower))
         };
         let candidate = std::iter::once(base.clone())
-            .chain(std::iter::once(format!("{base} (Nectarlink)")))
-            .chain((2..).map(|n| format!("{base} (Nectarlink {n})")))
+            .chain(std::iter::once(format!("{base} (NectarLink)")))
+            .chain((2..).map(|n| format!("{base} (NectarLink {n})")))
             .find(|c| !taken(c))
             .unwrap_or(base);
         planned.push((
@@ -157,7 +157,7 @@ fn reconcile(dir: &Path, desired: &[(DeviceId, String)], exe: &Path) -> io::Resu
             Shortcut {
                 target: exe.to_owned(),
                 arguments: format!("{ARG} {id}"),
-                description: format!("Send to {name} with Nectarlink"),
+                description: format!("Send to {name} with NectarLink"),
             },
         ));
     }
@@ -238,7 +238,7 @@ fn share(files: Vec<PathBuf>, url: Option<String>, text: Option<String>) {
             request_activation();
         }
         let Some((device_id, device_name)) = target else {
-            failed("No phone paired", "Pair your phone in Nectarlink to share with it.");
+            failed("No phone paired", "Pair your phone in NectarLink to share with it.");
             return;
         };
         if !files.is_empty() {
@@ -260,7 +260,7 @@ fn share(files: Vec<PathBuf>, url: Option<String>, text: Option<String>) {
                             key: "share-text".into(),
                             title: format!("Sent to {device_name}"),
                             body: "Copied to your phone's clipboard.".into(),
-                            attribution: "Nectarlink".into(),
+                            attribution: "NectarLink".into(),
                             icon: None,
                             image: None,
                             actions: Vec::new(),
@@ -357,7 +357,7 @@ fn send(device: String, paths: Vec<PathBuf>) {
             }
             Err(Error::Denied) => failed(
                 &format!("Couldn't send to {name}"),
-                "Files are turned off for this device. Turn them on in Nectarlink.",
+                "Files are turned off for this device. Turn them on in NectarLink.",
             ),
             Err(e) => failed(&format!("Couldn't send to {name}"), &describe(&e)),
         }
@@ -370,7 +370,7 @@ fn failed(title: &str, body: &str) {
         key: format!("failed-{title}"),
         title: title.into(),
         body: body.into(),
-        attribution: "Nectarlink".into(),
+        attribution: "NectarLink".into(),
         icon: None,
         image: None,
         actions: Vec::new(),
@@ -399,7 +399,7 @@ fn track(id: String, device_name: String) {
             key: id,
             title,
             body: format!("{device_name} is offline. Will send when it's back."),
-            attribution: "Nectarlink".into(),
+            attribution: "NectarLink".into(),
             icon: None,
             image: None,
             actions: vec![(ACTION_CANCEL.into(), "Cancel".into())],
@@ -429,7 +429,7 @@ fn update(map: &mut HashMap<String, Tracked>, transfer: &Transfer) {
         key: transfer.id.clone(),
         title,
         body,
-        attribution: "Nectarlink".into(),
+        attribution: "NectarLink".into(),
         icon: None,
         image: None,
         actions: Vec::new(),
@@ -556,11 +556,11 @@ mod tests {
         reconcile(dir.path(), &[(a, "Pixel".into()), (b, "Tab".into()), (c, "Pixel".into())], &exe).unwrap();
         assert_eq!(
             names(dir.path()),
-            ["Pixel (Nectarlink).lnk", "Pixel.lnk", "Tab (Nectarlink).lnk", "Tab.lnk"]
+            ["Pixel (NectarLink).lnk", "Pixel.lnk", "Tab (NectarLink).lnk", "Tab.lnk"]
         );
         assert_eq!(shortcut::arguments(&dir.path().join("Pixel.lnk")).unwrap(), format!("{ARG} {a}"));
         assert_eq!(
-            shortcut::arguments(&dir.path().join("Pixel (Nectarlink).lnk")).unwrap(),
+            shortcut::arguments(&dir.path().join("Pixel (NectarLink).lnk")).unwrap(),
             format!("{ARG} {c}")
         );
 

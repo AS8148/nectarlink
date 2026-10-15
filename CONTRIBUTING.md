@@ -1,6 +1,6 @@
-# Contributing to Nectarlink
+# Contributing to NectarLink
 
-Thank you for helping with Nectarlink. The project is young, so the codebase
+Thank you for helping with NectarLink. The project is young, so the codebase
 and these guidelines still change often.
 
 ## Before you start
@@ -13,7 +13,7 @@ and these guidelines still change often.
 
 ## Sign your commits (DCO)
 
-Nectarlink uses the [Developer Certificate of Origin](DCO.txt) instead of a
+NectarLink uses the [Developer Certificate of Origin](DCO.txt) instead of a
 CLA. By signing off, you certify that you wrote the change or otherwise have
 the right to submit it under the project's licenses.
 
@@ -65,5 +65,5 @@ These come from the plan and will grow into a full style guide:
 ## Reporting bugs
 
 Open an issue with your Windows build, phone model, Android version, and the
-Nectarlink versions on both sides. Security problems go through
+NectarLink versions on both sides. Security problems go through
 [SECURITY.md](SECURITY.md) instead, never a public issue.

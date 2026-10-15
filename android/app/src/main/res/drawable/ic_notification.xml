@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The Nectarlink mark for notifications: flat white, inside the 20dp live area. -->
+<!-- The NectarLink mark for notifications: flat white, inside the 20dp live area. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp" android:viewportWidth="100" android:viewportHeight="100">
     <group android:pivotX="50" android:pivotY="50" android:scaleX="0.96" android:scaleY="0.96" android:rotation="-25">

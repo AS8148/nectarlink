@@ -13,7 +13,7 @@ import android.os.Build
 import java.util.concurrent.Executor
 
 /**
- * Companion Device Manager (CDM) integration for waking Nectarlink when a
+ * Companion Device Manager (CDM) integration for waking NectarLink when a
  * paired PC's BLE proximity beacon (`NCTR\x01` + 8-byte device ID prefix) is
  * nearby, and granting OS-level background execution / foreground-service start
  * exemptions while associated.
@@ -56,7 +56,7 @@ object PcCompanion {
     /**
      * Builds the scan filter mask matching [buildBeaconPayload]: 13 `0xFF`
      * bytes when a specific 8-byte device ID prefix is present, or 5 `0xFF`
-     * bytes to match any Nectarlink PC beacon.
+     * bytes to match any NectarLink PC beacon.
      */
     fun buildBeaconMask(hasDeviceId: Boolean): ByteArray =
         ByteArray(if (hasDeviceId) 13 else 5) { 0xFF.toByte() }

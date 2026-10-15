@@ -1,13 +1,13 @@
-# Nectarlink Security Review
+# NectarLink Security Review
 
 **Review Date:** 2026-10-10  
-**Scope:** End-to-end audit of every network, local IPC, elevated privilege, shared-memory, and filesystem surface in Nectarlink (`nectarlink-protocol`, `nectarlink-core`, `nectarlink-adb`, `nectarlink-desktop`, `nectarlink-vcam`, Android app, and `nectarlink-shell` helper).
+**Scope:** End-to-end audit of every network, local IPC, elevated privilege, shared-memory, and filesystem surface in NectarLink (`nectarlink-protocol`, `nectarlink-core`, `nectarlink-adb`, `nectarlink-desktop`, `nectarlink-vcam`, Android app, and `nectarlink-shell` helper).
 
 ---
 
 ## Executive Summary
 
-Nectarlink follows a strict **zero-trust, local-first security architecture**:
+NectarLink follows a strict **zero-trust, local-first security architecture**:
 1. **Mutual Ed25519 + TLS 1.3 / QUIC Authentication:** Every peer has a persistent 256-bit Ed25519 identity key (`iroh::SecretKey`). Post-pairing sessions (`ALPN = "nectarlink/0"`) enforce mutual certificate verification and immediately drop any connection whose remote `EndpointId` is not present in the local SQLite `peers` table (`store.is_paired(&peer)`).
 2. **Out-of-Band / Mutual-Consent Pairing:** Pairing (`ALPN = "nectarlink/pair/0"`) requires either scanning a QR code containing a one-time 128-bit cryptographic token (`tok`) with a 5-minute TTL, or explicit user confirmation of a 6-digit Short Authentication String (SAS) derived via BLAKE3 from the TLS exporter key (`EXPORTER-nectarlink-pair-v0`) and both peers' Ed25519 public keys (`derive_sas` in `core/nectarlink-protocol/src/sas.rs`).
 3. **Strict Wire & Filesystem Boundaries:** Every incoming CBOR/JSON envelope is size-capped BEFORE allocation (`MAX_FRAME_LEN = 1 MiB`), validated via `.is_valid()` and `.sanitized()`, and gated by per-peer feature permissions (`PeerPermissions`). All incoming file and storage paths reject `..`, root prefixes, drive letters, and NUL bytes.
@@ -120,7 +120,7 @@ Nectarlink follows a strict **zero-trust, local-first security architecture**:
 - `desktop/app/src/main.rs`
 
 ### Threat Model
-- **Cross-Session / Multi-User Local Spoofing:** On a multi-user Windows machine, another logged-in user attempts to signal Nectarlink's Win32 event or write a malicious `Request` into the launch queue.
+- **Cross-Session / Multi-User Local Spoofing:** On a multi-user Windows machine, another logged-in user attempts to signal NectarLink's Win32 event or write a malicious `Request` into the launch queue.
 - **Malformed / Oversized Launch Queue File:** Corrupted or adversarial JSON in `<data_dir>/launch/` attempts to crash the running tray process.
 
 ### Security Controls in Place
@@ -268,7 +268,7 @@ Nectarlink follows a strict **zero-trust, local-first security architecture**:
 3. **PC Audio Streaming to Phone (`desktop/app/src/pc_audio_stream.rs`):**
    - Off by default (`Settings::pc_audio_to_phone = false`). Audio loopback capture (`WASAPI`) can only be enabled locally from the PC's Settings UI (`Camera & Audio -> Stream PC audio to phone`) and only streams to connected phones that have the `media` toggle enabled.
 4. **PC Storage Provider (`desktop/app/src/pc_storage.rs`, `core/nectarlink-core/src/storage.rs`):**
-   - Gated by the `storage` toggle (`false` by default), plus `remote_files` (`false` by default) when connected over a non-LAN `ConnectionPath::Relay` path. Sandboxed to the user's non-sensitive `Nectarlink Shared` folder via `FolderStorage` (which rejects `..`, absolute paths, and symlink escapes).
+   - Gated by the `storage` toggle (`false` by default), plus `remote_files` (`false` by default) when connected over a non-LAN `ConnectionPath::Relay` path. Sandboxed to the user's non-sensitive `NectarLink Shared` folder via `FolderStorage` (which rejects `..`, absolute paths, and symlink escapes).
 5. **PC Notifications to Phone (`desktop/app/src/pc_notifications.rs`):**
    - Off by default (`Settings::forward_pc_notifications = false`). Only forwards when explicitly enabled by the PC user in Settings AND Windows `UserNotificationListener` access is granted AND the per-device `notifications` toggle is on.
 

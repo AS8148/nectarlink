@@ -76,7 +76,7 @@ private fun parseSecureOverlaySeed(context: Context): UInt? = runCatching {
 /**
  * Reads the phone's active theme seed color (`0xFFRRGGBB` ARGB):
  * 1. If the user selected "Media artwork color" or a preset seed ("honey",
- *    "lavender", "ocean", "sage") in the Nectarlink Android app's Appearance
+ *    "lavender", "ocean", "sage") in the NectarLink Android app's Appearance
  *    settings, uses that seed so "My phone's colors" on the PC matches the
  *    phone app's chosen theme.
  * 2. When Dynamic Color is enabled on Android 12+ (`API 31+`), reads the
@@ -739,7 +739,7 @@ class NetworkMonitor(context: Context, private val onChange: () -> Unit) {
 }
 
 /**
- * Listens for Nectarlink appearance preference changes, media artwork color
+ * Listens for NectarLink appearance preference changes, media artwork color
  * changes, and Material You wallpaper/configuration color changes without polling.
  */
 class AccentMonitor(private val context: Context, private val onChange: (UInt?) -> Unit) {

@@ -133,7 +133,7 @@ jobs:
         run: |
           # The release's name, if Cargo.toml gives one ([workspace.metadata.release]).
           name=$(awk '/^\[workspace.metadata.release\]/{f=1;next} /^\[/{f=0} f && /^name = /{print $3}' source/Cargo.toml | tr -d '"')
-          title="Nectarlink ${GITHUB_REF_NAME#v}${name:+ $name}"
+          title="NectarLink ${GITHUB_REF_NAME#v}${name:+ $name}"
           cd files
           sha256sum *.exe *.apk > SHA256SUMS.txt
           cat SHA256SUMS.txt

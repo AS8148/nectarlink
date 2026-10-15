@@ -21,7 +21,7 @@ use windows::{
     Storage::Streams::{DataReader, DataWriter},
 };
 
-/// Bluetooth SIG test/internal company identifier used for Nectarlink proximity frames.
+/// Bluetooth SIG test/internal company identifier used for NectarLink proximity frames.
 pub const COMPANY_ID: u16 = 0xFFFF;
 
 /// 5-byte magic header (`"NCTR"` + protocol version `0x01`).
@@ -98,7 +98,7 @@ pub fn build_manufacturer_payload(device_id: &DeviceId) -> [u8; 13] {
     out
 }
 
-/// Starts advertising the Nectarlink BLE proximity beacon for `device_id` and
+/// Starts advertising the NectarLink BLE proximity beacon for `device_id` and
 /// watching for paired phone BLE proximity frames for RSSI walk-away ranging.
 pub fn start(device_id: DeviceId) {
     if let Err(e) = try_start(&device_id) {

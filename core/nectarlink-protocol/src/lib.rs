@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The Nectarlink wire protocol (version 0).
+//! The NectarLink wire protocol (version 0).
 //!
 //! This crate is pure protocol logic with no networking: device IDs, message
 //! types, the CBOR envelope, length-prefixed framing and the pairing

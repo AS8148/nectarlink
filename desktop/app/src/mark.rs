@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The Nectarlink mark, the Waggle Dance (`assets/brand/icon.svg`): two loops,
+//! The NectarLink mark, the Waggle Dance (`assets/brand/icon.svg`): two loops,
 //! the phone and the PC, around a drop of nectar, tilted like a bee's waggle
 //! run, on an espresso tile with a warm glow. Drawn in code at any pixel
 //! size: the tray, window and toast icons at runtime, and the executable's

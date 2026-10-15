@@ -1,12 +1,12 @@
 ; SPDX-License-Identifier: GPL-3.0-or-later
 ;
-; The Nectarlink installer for Windows (built by scripts/package.ps1).
+; The NectarLink installer for Windows (built by scripts/package.ps1).
 ;
 ; Two ways to run it:
 ;
 ; - Opened by the user: no NSIS pages. It unpacks the app to a temporary
 ;   folder and runs it there, as "Nectarlink Setup.exe" with --setup, which
-;   draws Nectarlink's own setup window (desktop/app/src/setup.rs). That
+;   draws NectarLink's own setup window (desktop/app/src/setup.rs). That
 ;   window runs this installer again, elevated, as below.
 ; - With /S (that window, or the app's updater): installs into Program Files
 ;   for every user of the PC, without a window. /PROGRESS=<file> writes each
@@ -32,13 +32,16 @@ SetCompressor /SOLID zlib
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
 
+; APP names the install folder, registry keys and the firewall rule; DISPLAY is
+; the name people see.
 !define APP "Nectarlink"
+!define DISPLAY "NectarLink"
 !define EXE "nectarlink-desktop.exe"
 !define SETUP_EXE "Nectarlink Setup.exe"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP}"
 !define FIREWALL_RULE "Nectarlink"
 
-Name "${APP}"
+Name "${DISPLAY}"
 OutFile "${OUTFILE}"
 ; Elevates itself only when it installs (see .onInit).
 RequestExecutionLevel user
@@ -51,14 +54,14 @@ ShowInstDetails nevershow
 ShowUninstDetails nevershow
 
 VIProductVersion "${VERSION}.0"
-VIAddVersionKey "ProductName" "${APP}"
-VIAddVersionKey "FileDescription" "${APP} Setup"
-VIAddVersionKey "CompanyName" "The Nectarlink contributors"
+VIAddVersionKey "ProductName" "${DISPLAY}"
+VIAddVersionKey "FileDescription" "${DISPLAY} Setup"
+VIAddVersionKey "CompanyName" "The NectarLink contributors"
 VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "ProductVersion" "${DISPLAY_VERSION}"
 
-; 1: show Nectarlink's own setup window. 0: install now (/S).
+; 1: show NectarLink's own setup window. 0: install now (/S).
 Var Interactive
 ; Where each step is written, for the setup window (/PROGRESS=<file>).
 Var ProgressFile
@@ -76,12 +79,12 @@ Var AppDir
 !macro ArchCheck
   ${If} "${ARCH}" == "x64"
     ${IfNot} ${IsNativeAMD64}
-      MessageBox MB_ICONSTOP "This copy of ${APP} is for x64 PCs. Download the ARM64 version for this PC." /SD IDOK
+      MessageBox MB_ICONSTOP "This copy of ${DISPLAY} is for x64 PCs. Download the ARM64 version for this PC." /SD IDOK
       Abort
     ${EndIf}
   ${ElseIf} "${ARCH}" == "arm64"
     ${IfNot} ${IsNativeARM64}
-      MessageBox MB_ICONSTOP "This copy of ${APP} is for ARM64 PCs. Download the x64 version for this PC." /SD IDOK
+      MessageBox MB_ICONSTOP "This copy of ${DISPLAY} is for ARM64 PCs. Download the x64 version for this PC." /SD IDOK
       Abort
     ${EndIf}
   ${EndIf}
@@ -111,7 +114,7 @@ Function .onInit
     ${EndIf}
   ${Else}
     StrCpy $Interactive 1
-    ; No NSIS window: the window is Nectarlink's own.
+    ; No NSIS window: the window is NectarLink's own.
     SetSilent silent
   ${EndIf}
 FunctionEnd
@@ -189,7 +192,7 @@ Section "Install"
   ; Phones reach this PC over UDP (QUIC) and find it with mDNS.
   !insertmacro Progress "step firewall"
   nsExec::Exec 'netsh advfirewall firewall delete rule name="${FIREWALL_RULE}"'
-  nsExec::Exec 'netsh advfirewall firewall add rule name="${FIREWALL_RULE}" dir=in action=allow program="$INSTDIR\${EXE}" enable=yes profile=private,domain description="Lets paired phones connect to Nectarlink."'
+  nsExec::Exec 'netsh advfirewall firewall add rule name="${FIREWALL_RULE}" dir=in action=allow program="$INSTDIR\${EXE}" enable=yes profile=private,domain description="Lets paired phones connect to NectarLink."'
 
   ; Updates without an administrator prompt: a task that runs this app as
   ; SYSTEM to install a newer release, which signed-in users may start but
@@ -200,20 +203,20 @@ Section "Install"
   nsExec::Exec 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\update-task.ps1" -Exe "$INSTDIR\${EXE}"'
 
   !insertmacro Progress "step shortcuts"
-  CreateShortCut "$SMPROGRAMS\${APP}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0 "" "" "Your phone, on your PC"
-  CreateShortCut "$DESKTOP\${APP}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0 "" "" "Your phone, on your PC"
+  CreateShortCut "$SMPROGRAMS\${DISPLAY}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0 "" "" "Your phone, on your PC"
+  CreateShortCut "$DESKTOP\${DISPLAY}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0 "" "" "Your phone, on your PC"
 
   ; Best-effort Sparse Package registration for the Windows Share sheet target.
   nsExec::Exec 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { Add-AppxPackage -Register \"$INSTDIR\AppxManifest.xml\" -ExternalLocation \"$INSTDIR\" -ErrorAction SilentlyContinue } catch {}"'
 
   WriteRegStr HKLM "Software\${APP}" "InstallDir" "$INSTDIR"
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayName" "${APP}"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayName" "${DISPLAY}"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayVersion" "${DISPLAY_VERSION}"
-  WriteRegStr HKLM "${UNINSTALL_KEY}" "Publisher" "The Nectarlink contributors"
+  WriteRegStr HKLM "${UNINSTALL_KEY}" "Publisher" "The NectarLink contributors"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\${EXE}"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "URLInfoAbout" "https://github.com/thtbee/nectarlink"
-  ; Windows Settings > Apps opens Nectarlink's own uninstall window.
+  ; Windows Settings > Apps opens NectarLink's own uninstall window.
   WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\${EXE}" --remove'
   WriteRegStr HKLM "${UNINSTALL_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
@@ -245,8 +248,8 @@ Section "Uninstall"
   nsExec::Exec 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { Get-AppxPackage -Name \"Nectarlink.Desktop\" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue } catch {}"'
   nsExec::Exec 'netsh advfirewall firewall delete rule name="${FIREWALL_RULE}"'
   nsExec::Exec 'schtasks /Delete /TN "Nectarlink Update" /F'
-  Delete "$SMPROGRAMS\${APP}.lnk"
-  Delete "$DESKTOP\${APP}.lnk"
+  Delete "$SMPROGRAMS\${DISPLAY}.lnk"
+  Delete "$DESKTOP\${DISPLAY}.lnk"
   ; Only ever a folder of our own (a silent install can be pointed
   ; anywhere with /D): never everything in, say, C:\.
   ${GetFileName} "$INSTDIR" $0

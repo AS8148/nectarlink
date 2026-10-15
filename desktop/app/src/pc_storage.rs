@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Your PC in Your Pocket (§3.11 P2): exposes the PC's `Downloads`,
 //! `Documents`, `Desktop`, and `Pictures` folders to paired phones over the
-//! Nectarlink storage service when `share_pc_storage` is enabled in Settings.
+//! NectarLink storage service when `share_pc_storage` is enabled in Settings.
 
 use std::{
     path::{Path, PathBuf},

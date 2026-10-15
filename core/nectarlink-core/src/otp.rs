@@ -700,7 +700,7 @@ mod tests {
             ("Use PIN 7391 to sign in to your workspace.", "7391"),
             ("Sign in with one-time code 582019", "582019"),
             ("Your 2FA code for GitHub is 394821.", "394821"),
-            ("Enter 601928 to log in to Nectarlink.", "601928"),
+            ("Enter 601928 to log in to NectarLink.", "601928"),
             // Prefixed & hyphenated formats
             ("G-482193 is your Google verification code.", "482193"),
             ("G-123456 is your Google verification code", "123456"),

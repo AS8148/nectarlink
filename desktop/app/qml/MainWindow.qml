@@ -112,7 +112,7 @@ NativeWindow {
     height: 740
     minimumWidth: Theme.layout.minWindow[0]
     minimumHeight: Theme.layout.minWindow[1]
-    title: "Nectarlink"
+    title: "NectarLink"
 
     property bool resizing: resizeSettleTimer.running
     Timer {

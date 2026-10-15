@@ -17,7 +17,7 @@ $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAcc
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Settings $settings `
-    -Description 'Installs new versions of Nectarlink from its GitHub releases.' -Force | Out-Null
+    -Description 'Installs new versions of NectarLink from its GitHub releases.' -Force | Out-Null
 
 # SYSTEM and administrators: full control. Authenticated users: read and run.
 $service = New-Object -ComObject Schedule.Service

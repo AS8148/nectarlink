@@ -1,6 +1,6 @@
 [package]
 name = "nectarlink-adb"
-description = "Pure-Rust ADB server client for Nectarlink USB transport"
+description = "Pure-Rust ADB server client for NectarLink USB transport"
 license = "MPL-2.0"
 version.workspace = true
 edition.workspace = true

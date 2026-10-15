@@ -257,7 +257,7 @@ pub fn fix_firewall(exe: &Path) -> windows::core::Result<bool> {
 }
 
 /// Opens Windows Defender Firewall's Control Panel / settings page so the user
-/// can inspect or toggle Nectarlink directly.
+/// can inspect or toggle NectarLink directly.
 pub fn open_firewall_settings() -> bool {
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,

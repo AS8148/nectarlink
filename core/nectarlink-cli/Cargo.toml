@@ -1,6 +1,6 @@
 [package]
 name = "nectarlink-cli"
-description = "Nectarlink command-line client for development and scripting"
+description = "NectarLink command-line client for development and scripting"
 license = "GPL-3.0-or-later"
 version.workspace = true
 edition.workspace = true

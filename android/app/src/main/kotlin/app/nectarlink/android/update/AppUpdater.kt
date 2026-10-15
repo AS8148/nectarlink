@@ -73,7 +73,7 @@ class AppUpdater(context: Context) {
         data object UpToDate : State
         data class Available(val update: Update) : State
 
-        /** Waiting for the user to let Nectarlink install apps; continues when they have. */
+        /** Waiting for the user to let NectarLink install apps; continues when they have. */
         data class NeedsPermission(val update: Update) : State
 
         /** `total` is 0 until the size is known. */
@@ -104,7 +104,7 @@ class AppUpdater(context: Context) {
 
     /**
      * For the background: checks when due and, with automatic updates on, installs a newer
-     * release. Android 12 and later install it without asking once Nectarlink has installed
+     * release. Android 12 and later install it without asking once NectarLink has installed
      * itself before; otherwise a notification asks for one tap.
      */
     suspend fun updateIfDue() {
@@ -179,7 +179,7 @@ class AppUpdater(context: Context) {
     /** Whether this app may install apps (the user allows it once, in Settings). */
     fun canInstall(): Boolean = context.packageManager.canRequestPackageInstalls()
 
-    /** Android's screen where the user lets Nectarlink install updates. */
+    /** Android's screen where the user lets NectarLink install updates. */
     fun allowInstallsIntent(): Intent =
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${context.packageName}".toUri())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -421,7 +421,7 @@ class AppUpdater(context: Context) {
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-    /** "Nectarlink 0.2.0 is ready", opening Android's install prompt when tapped. */
+    /** "NectarLink 0.2.0 is ready", opening Android's install prompt when tapped. */
     internal fun notifyReady(confirm: Intent) {
         if (!mayNotify()) return
         val manager = context.getSystemService(NotificationManager::class.java)

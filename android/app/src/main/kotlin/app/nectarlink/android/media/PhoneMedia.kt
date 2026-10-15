@@ -23,7 +23,7 @@ import java.io.ByteArrayOutputStream
  * apps' media sessions, read with notification access, and the PCs'
  * commands for them.
  *
- * Runs on the main thread. Nectarlink's own session (a PC's media, see
+ * Runs on the main thread. NectarLink's own session (a PC's media, see
  * [PcMedia]) is left out, so a PC never gets its own music back.
  */
 class PhoneMedia(context: Context, private val onChange: (List<MediaPlayer>) -> Unit) {

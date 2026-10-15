@@ -1,10 +1,10 @@
 # Contributing
 
-This guide summarizes the repository conventions, module header requirements, protocol change rules, and pre-submission checks for contributing to Nectarlink. See also the root [`CONTRIBUTING.md`](../../CONTRIBUTING.md) and [`LICENSE`](../../LICENSE).
+This guide summarizes the repository conventions, module header requirements, protocol change rules, and pre-submission checks for contributing to NectarLink. See also the root [`CONTRIBUTING.md`](../../CONTRIBUTING.md) and [`LICENSE`](../../LICENSE).
 
 ## License
 
-Nectarlink uses three licenses across the repository (see [`LICENSE`](../../LICENSE)):
+NectarLink uses three licenses across the repository (see [`LICENSE`](../../LICENSE)):
 - **Core libraries** (`core/nectarlink-protocol`, `core/nectarlink-core`, `core/nectarlink-ffi`): [`MPL-2.0`](../../LICENSES/MPL-2.0.txt)
 - **Applications and CLI** (`desktop/app`, `desktop/vcam`, `android`, `cli`): [`GPL-3.0-or-later`](../../LICENSES/GPL-3.0-or-later.txt) with an [`app-store exception`](../../LICENSES/APP-STORE-EXCEPTION.md)
 - **Protocol specification and documentation** (`docs/`): [`CC BY 4.0`](../../LICENSES/CC-BY-4.0.txt)

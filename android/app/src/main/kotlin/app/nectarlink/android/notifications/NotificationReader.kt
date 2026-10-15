@@ -29,7 +29,7 @@ import app.nectarlink.core.NotificationConversation
 import app.nectarlink.core.NotificationLive
 
 /**
- * Turns Android notifications into what Nectarlink mirrors, and decides
+ * Turns Android notifications into what NectarLink mirrors, and decides
  * which ones are worth mirroring at all.
  */
 internal class NotificationReader(private val context: Context) {

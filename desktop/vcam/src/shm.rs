@@ -441,7 +441,7 @@ pub fn bgrx_to_nv12(bgrx: &[u8], width: u32, height: u32, nv12: &mut [u8]) {
 
 const FIGTREE_TTF: &[u8] = include_bytes!("../../../assets/fonts/Figtree.ttf");
 
-/// Honey primary (`docs/design/tokens.json`) and white ink for the Nectarlink mark.
+/// Honey primary (`docs/design/tokens.json`) and white ink for the NectarLink mark.
 const MARK_BG_BGR: [u8; 3] = [0x00, 0x51, 0x8A];
 const MARK_INK_BGR: [u8; 3] = [0xFF, 0xFF, 0xFF];
 const MARK_HEXAGON: [(f32, f32); 6] =
@@ -461,7 +461,7 @@ struct CachedPlaceholderCard {
 
 static PLACEHOLDER_CACHE: std::sync::Mutex<Option<CachedPlaceholderCard>> = std::sync::Mutex::new(None);
 
-/// Renders a clean, calm placeholder frame with the Nectarlink mark and
+/// Renders a clean, calm placeholder frame with the NectarLink mark and
 /// `"Start the webcam on <phone>"` in anti-aliased Figtree into `bgrx` (`width * height * 4`).
 pub fn render_placeholder_bgrx(bgrx: &mut [u8], width: u32, height: u32, phone_name: &str) {
     let w = width as usize;
@@ -513,7 +513,7 @@ fn build_placeholder_card(width: u32, height: u32, phone_name: &str) -> CachedPl
     } else {
         format!("Start the webcam on {phone_name}")
     };
-    let caption = "Nectarlink Camera";
+    let caption = "NectarLink Camera";
 
     let font = TrueTypeFont::parse(FIGTREE_TTF);
     let head_px = (22.0 * scale).clamp(12.0, 38.0);
@@ -787,7 +787,7 @@ mod tests {
             .0
             .iter()
             .any(|px| px[0] == 0x00 && px[1] == 0x51 && px[2] == 0x8A && px[3] == 0xFF);
-        assert!(has_honey_mark, "placeholder should include the Nectarlink honey mark");
+        assert!(has_honey_mark, "placeholder should include the NectarLink honey mark");
         let has_text_ink =
             frame.as_chunks::<4>().0.iter().any(|px| px[0] > 0xD0 && px[1] > 0xD0 && px[2] > 0xD0);
         assert!(has_text_ink, "placeholder should include bright headline text ink");

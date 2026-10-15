@@ -3119,7 +3119,7 @@ pub struct NodeOptions {
     pub usb_port: Option<u16>,
 }
 
-/// The Nectarlink engine. One per app process.
+/// The NectarLink engine. One per app process.
 #[derive(uniffi::Object)]
 pub struct NectarlinkNode {
     runtime: Runtime,

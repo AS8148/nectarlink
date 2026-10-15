@@ -3,7 +3,7 @@
 //! and writing what a phone sent (docs/protocol/clipboard.md).
 //!
 //! A hidden message-only window on its own thread listens for clipboard
-//! changes and owns what Nectarlink writes, so text that came from a phone
+//! changes and owns what NectarLink writes, so text that came from a phone
 //! is never sent back. Content that password managers mark as private is
 //! never read for sending. Images are read as PNG when the app offers it,
 //! or else as a bitmap (converted to PNG off the clipboard thread), and
@@ -110,7 +110,7 @@ static ON_COPY: OnceLock<OnCopy> = OnceLock::new();
 /// A fingerprint of the last content reported, so one copy reported several
 /// times (apps often write the clipboard in steps) is sent once.
 static LAST_REPORTED: Mutex<Option<u64>> = Mutex::new(None);
-/// The last rich-text clip written by Nectarlink, so if a host-clipboard bridge
+/// The last rich-text clip written by NectarLink, so if a host-clipboard bridge
 /// (such as the Android emulator's QEMU clipboard pipe) immediately echoes the
 /// same plain text without rich formats, we preserve the rich formats.
 static LAST_WRITTEN_RICH: Mutex<Option<WrittenRich>> = Mutex::new(None);
@@ -126,7 +126,7 @@ fn fingerprint(clip: &Clip) -> Option<u64> {
 }
 
 /// Starts watching the clipboard; `on_copy` gets each newly copied text or
-/// image that isn't private and didn't come from Nectarlink, on the watcher
+/// image that isn't private and didn't come from NectarLink, on the watcher
 /// thread.
 pub fn start(on_copy: impl Fn(Clip) + Send + Sync + 'static) {
     if ON_COPY.set(Box::new(on_copy)).is_err() {
@@ -158,7 +158,7 @@ fn run() -> windows::core::Result<()> {
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
             w!("Nectarlink.Clipboard"),
-            w!("Nectarlink clipboard"),
+            w!("NectarLink clipboard"),
             WINDOW_STYLE(0),
             0,
             0,
@@ -193,7 +193,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
 }
 
 fn on_clipboard_changed(hwnd: HWND) {
-    // What Nectarlink wrote (a phone's text) isn't sent back.
+    // What NectarLink wrote (a phone's text) isn't sent back.
     // SAFETY: GetClipboardOwner has no preconditions.
     if unsafe { GetClipboardOwner() }.is_ok_and(|owner| owner == hwnd) {
         return;
@@ -725,7 +725,7 @@ mod tests {
 
     #[test]
     fn cf_html_and_rtf_round_trip() {
-        let frag = "<p><b>Hello</b> <i>Nectarlink</i> 🐝</p>";
+        let frag = "<p><b>Hello</b> <i>NectarLink</i> 🐝</p>";
         let encoded = encode_cf_html(frag);
         assert_eq!(decode_cf_html(&encoded).as_deref(), Some(frag));
 

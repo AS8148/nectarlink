@@ -1,6 +1,6 @@
-# Nectarlink Local Authenticated Automation API (`docs/api.md`)
+# NectarLink Local Authenticated Automation API (`docs/api.md`)
 
-Nectarlink for Windows includes an opt-in, loopback-only HTTP/JSON API (`127.0.0.1:<port>`, default port `53320`) designed for local desktop automation tools:
+NectarLink for Windows includes an opt-in, loopback-only HTTP/JSON API (`127.0.0.1:<port>`, default port `53320`) designed for local desktop automation tools:
 
 - **PowerToys Command Palette / PowerToys Run** (`tools/powertoys-extension`)
 - **AutoHotkey / Raycast for Windows / Flow Launcher**
@@ -12,7 +12,7 @@ Nectarlink for Windows includes an opt-in, loopback-only HTTP/JSON API (`127.0.0
 
 The Local API is **off by default**. Enable it in **Settings → Local automation API** (or set `"localApiEnabled": true` in `%LOCALAPPDATA%\Nectarlink\desktop-settings.json`).
 
-When enabled, Nectarlink binds strictly to `127.0.0.1:<localApiPort>` (default `53320`) and writes `<data-dir>\api-token.json` (`%LOCALAPPDATA%\Nectarlink\api-token.json`):
+When enabled, NectarLink binds strictly to `127.0.0.1:<localApiPort>` (default `53320`) and writes `<data-dir>\api-token.json` (`%LOCALAPPDATA%\Nectarlink\api-token.json`):
 
 ```json
 {

@@ -1,4 +1,4 @@
-# Nectarlink Performance Budgets & Measurements
+# NectarLink Performance Budgets & Measurements
 
 This document records the release performance budgets, root-cause regression audits, and measured BEFORE/AFTER results across the Windows Desktop app (`nectarlink-desktop`), the Rust core engine (`nectarlink-core`), and the Android companion app (`app.nectarlink.android`).
 

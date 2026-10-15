@@ -1,9 +1,9 @@
 # Clipboard
 
-Nectarlink shares your clipboard between your Windows 11 PC and your Android phone. Copy plain text, rich HTML text, an image, or a file on one device and paste it on the other, with smart action chips for links and addresses, an optional encrypted 50-item clipboard history, and automatic filtering for passwords and one-time verification codes.
+NectarLink shares your clipboard between your Windows 11 PC and your Android phone. Copy plain text, rich HTML text, an image, or a file on one device and paste it on the other, with smart action chips for links and addresses, an optional encrypted 50-item clipboard history, and automatic filtering for passwords and one-time verification codes.
 
 <p align="center">
-  <img src="images/clipboard-autopaste.png" alt="Clipboard sync and smart context chips in Nectarlink" width="760">
+  <img src="images/clipboard-autopaste.png" alt="Clipboard sync and smart context chips in NectarLink" width="760">
 </p>
 
 ## What You Need
@@ -20,37 +20,37 @@ Nectarlink shares your clipboard between your Windows 11 PC and your Android pho
 ### Copying on Your PC to Paste on Your Phone
 
 1. On your PC, copy any plain text, formatted HTML text, or image (`Ctrl+C`, right-click **Copy**, or `Win+Shift+S` screen snip).
-2. With **Sync clipboard to phone** turned on in **Settings › General** (the default), Nectarlink sends the copied content to your connected phone automatically in the background.
+2. With **Sync clipboard to phone** turned on in **Settings › General** (the default), NectarLink sends the copied content to your connected phone automatically in the background.
 3. On your phone, tap **Paste** in any text field or image editor.
 4. You can also send your current PC clipboard manually at any time by clicking **Send clipboard** on the PC Home screen or running **Send clipboard to phone** in the `Command Palette` (`Ctrl+Alt+Space`).
 
 ### Copying on Your Phone to Paste on Your PC
 
-Android 10 and newer block background apps from reading the system clipboard unless they run with shell privileges. Nectarlink gives you two ways to send your phone's clipboard to your PC:
+Android 10 and newer block background apps from reading the system clipboard unless they run with shell privileges. NectarLink gives you two ways to send your phone's clipboard to your PC:
 
-- **Automatic in the background (with `Elevated`)**: Once you enable `Elevated` (via Wireless Debugging in **Settings › Permissions › Control from your PC** or **Settings › Features & Data › Clipboard › Background clipboard access**), Nectarlink's local shell helper listens for clipboard changes and sends copied text and images to your PC automatically as soon as you tap **Copy** in any app.
+- **Automatic in the background (with `Elevated`)**: Once you enable `Elevated` (via Wireless Debugging in **Settings › Permissions › Control from your PC** or **Settings › Features & Data › Clipboard › Background clipboard access**), NectarLink's local shell helper listens for clipboard changes and sends copied text and images to your PC automatically as soon as you tap **Copy** in any app.
 - **One-tap manual send (at `Standard` or `Assist`)**: Without `Elevated`, you can send what you copied on your phone using any of four quick surfaces:
   1. **Quick Settings tile**: Pull down your phone's notification shade and tap the **Send clipboard** tile.
   2. **Android share sheet**: Select text or an image in any app, tap **Share**, and choose **Send to PC** (or tap your PC's Direct Share icon).
-  3. **Home screen widget**: Tap **Send clip** on the Nectarlink **PC quick actions** widget on your Android home screen.
-  4. **Inside the Nectarlink app**: Tap **Send clipboard** on the Android Home screen (or in the persistent connection notification).
+  3. **Home screen widget**: Tap **Send clip** on the NectarLink **PC quick actions** widget on your Android home screen.
+  4. **Inside the NectarLink app**: Tap **Send clipboard** on the Android Home screen (or in the persistent connection notification).
 
 ### Copying and Pasting Files (`Ctrl+C` / `Ctrl+V`)
 
-Nectarlink bridges Windows file clipboard drops (`CF_HDROP`) with file transfers:
+NectarLink bridges Windows file clipboard drops (`CF_HDROP`) with file transfers:
 
-- **PC to phone**: If you copy one or more files in Windows File Explorer (`Ctrl+C`) and click **Send clipboard** in Nectarlink, those files are transferred straight to your phone.
+- **PC to phone**: If you copy one or more files in Windows File Explorer (`Ctrl+C`) and click **Send clipboard** in NectarLink, those files are transferred straight to your phone.
 - **Phone to PC**: When **Copy received files** is enabled in **Settings › General** (the default), small files and photos you send from your phone to your PC are saved to `Downloads\Nectarlink` and automatically placed onto your Windows clipboard as file drops so you can press `Ctrl+V` straight into an email, chat window, document, or folder.
 
 ### Smart Context Chips
 
-When a text clip arrives from a paired device and matches a recognizable pattern, Nectarlink displays a context chip on the confirmation banner so you can act on it with one click or tap:
+When a text clip arrives from a paired device and matches a recognizable pattern, NectarLink displays a context chip on the confirmation banner so you can act on it with one click or tap:
 
 | Detected Content | Context Chip Action |
 | :--- | :--- |
 | **Web URL (`https://...`)** | **Open**: Opens the link in your default web browser. |
 | **Street Address or Coordinates** | **Open in Maps**: Opens the address in your default maps app. |
-| **Phone Number** | **Call**: Opens the number in the Nectarlink dialer (on PC) or phone dialer (on Android). |
+| **Phone Number** | **Call**: Opens the number in the NectarLink dialer (on PC) or phone dialer (on Android). |
 | **Parcel Tracking Number** (UPS, FedEx, USPS, DHL) | **Track**: Opens the carrier tracking page for that package. |
 | **Email Address** | **Email**: Starts a new email to that address in your default mail client. |
 

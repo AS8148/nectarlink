@@ -2466,7 +2466,7 @@ async fn remote_input_needs_toggle_and_delivers_motion_keys_and_slides() {
         RemoteInput::Button { button: MouseButton::Left, action: ButtonAction::Down },
         RemoteInput::Button { button: MouseButton::Left, action: ButtonAction::Up },
         RemoteInput::Scroll { dx: 0.0, dy: -3.0 },
-        RemoteInput::Text { text: "Hello Nectarlink 🐝".into() },
+        RemoteInput::Text { text: "Hello NectarLink 🐝".into() },
         RemoteInput::Key { key: remote_keys::ENTER.into(), mods: vec![] },
         RemoteInput::Key { key: "c".into(), mods: vec![KeyMod::Ctrl] },
         RemoteInput::Key { key: remote_keys::COPY.into(), mods: vec![] },
@@ -4253,7 +4253,7 @@ async fn localsend_coexists_when_port_is_already_bound() {
     assert!(dev.node.localsend_enabled());
     assert!(
         !dev.node.localsend_receiving(),
-        "when port is occupied by standalone LocalSend, Nectarlink must leave receiving to it without failing"
+        "when port is occupied by standalone LocalSend, NectarLink must leave receiving to it without failing"
     );
 
     dev.node.shutdown().await;

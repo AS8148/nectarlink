@@ -171,7 +171,7 @@ class NotificationListener : NotificationListenerService() {
 
         fun component(context: Context) = ComponentName(context, NotificationListener::class.java)
 
-        /** Android's notification access screen, on Nectarlink's own switch where possible. */
+        /** Android's notification access screen, on NectarLink's own switch where possible. */
         fun settingsIntent(context: Context): Intent =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).putExtra(

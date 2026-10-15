@@ -1145,7 +1145,7 @@ private fun WriteSettingsAccess(granted: Boolean) {
     }
 }
 
-/** Control from the PC: Nectarlink's accessibility service, turned on in Android's settings. */
+/** Control from the PC: NectarLink's accessibility service, turned on in Android's settings. */
 @Composable
 private fun ControlAccess(on: Boolean) {
     val context = LocalContext.current

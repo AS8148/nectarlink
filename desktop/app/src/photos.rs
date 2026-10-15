@@ -154,7 +154,7 @@ fn show(device: DeviceId, photo: &Photo) {
         key: format!("{device} {}", photo.id),
         title: if photo.screenshot { "New screenshot".into() } else { "New photo".into() },
         body: format!("From {name}"),
-        attribution: "Nectarlink".into(),
+        attribution: "NectarLink".into(),
         icon: None,
         image: preview,
         actions: vec![(ACTION_SAVE.into(), "Save".into()), (ACTION_COPY.into(), "Copy".into())],

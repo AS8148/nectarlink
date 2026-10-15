@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Windows 11 Virtual Camera (`MFCreateVirtualCamera`) registration and
-//! session management for `"Nectarlink Webcam"`.
+//! session management for `"NectarLink Webcam"`.
 
 use std::path::{Path, PathBuf};
 
@@ -31,7 +31,7 @@ use windows::{
 };
 
 pub const CLSID_STR: &str = "{8E6C3B74-5D4A-4B9E-9A12-7C8F1E2D3A40}";
-pub const FRIENDLY_NAME: &str = "Nectarlink Webcam";
+pub const FRIENDLY_NAME: &str = "NectarLink Webcam";
 pub const REGISTER_ARG: &str = "--register-vcam";
 pub const UNREGISTER_ARG: &str = "--unregister-vcam";
 
@@ -137,7 +137,7 @@ pub fn register_under(
     let inproc_key = format!(r"{clsid_key}\InprocServer32");
     let fs_key = format!(r"{frameserver_prefix}\{CLSID_STR}");
 
-    create_and_set(root, &clsid_key, &[(None, "Nectarlink Virtual Camera Media Source")])?;
+    create_and_set(root, &clsid_key, &[(None, "NectarLink Virtual Camera Media Source")])?;
     create_and_set(root, &inproc_key, &[(None, dll_str.as_ref()), (Some("ThreadingModel"), "Both")])?;
     create_and_set(root, &fs_key, &[(Some("FriendlyName"), FRIENDLY_NAME)])?;
     Ok(())
@@ -215,7 +215,7 @@ impl std::fmt::Debug for VirtualCameraHandle {
 }
 
 impl VirtualCameraHandle {
-    /// Creates and starts the `"Nectarlink Webcam"` session-lifetime virtual camera.
+    /// Creates and starts the `"NectarLink Webcam"` session-lifetime virtual camera.
     /// Succeeds when `nectarlink_vcam.dll` is registered in `HKLM`.
     pub fn start() -> Result<Self, String> {
         unsafe {

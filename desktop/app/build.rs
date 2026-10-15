@@ -212,13 +212,13 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "CompanyName", "The Nectarlink contributors"
-      VALUE "FileDescription", "Nectarlink"
+      VALUE "CompanyName", "The NectarLink contributors"
+      VALUE "FileDescription", "NectarLink"
       VALUE "FileVersion", "{version}"
       VALUE "InternalName", "nectarlink-desktop"
       VALUE "LegalCopyright", "GPL-3.0-or-later"
       VALUE "OriginalFilename", "nectarlink-desktop.exe"
-      VALUE "ProductName", "Nectarlink"
+      VALUE "ProductName", "NectarLink"
       VALUE "ProductVersion", "{version}"
     END
   END

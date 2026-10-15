@@ -1,9 +1,9 @@
 # Desktop Surfaces and Automation
 
-Beyond the main window, Nectarlink integrates into Windows 11 with fast, low-overhead desktop surfaces and automation tools: the slide-out **`Shelf`** edge panel, **`Nectar Island`** at the top of your screen, the searchable cross-device **`Timeline`**, the global **`Command Palette`** (`Ctrl+Alt+Space`), rich **`Handoff`** for links, maps, videos, and documents, **`notify-when`** process completion alerts, a trigger-action **Rules Engine**, a local authenticated **HTTP API**, a **PowerToys Command Palette** extension, and the `nectarlink` command-line client.
+Beyond the main window, NectarLink integrates into Windows 11 with fast, low-overhead desktop surfaces and automation tools: the slide-out **`Shelf`** edge panel, **`Nectar Island`** at the top of your screen, the searchable cross-device **`Timeline`**, the global **`Command Palette`** (`Ctrl+Alt+Space`), rich **`Handoff`** for links, maps, videos, and documents, **`notify-when`** process completion alerts, a trigger-action **Rules Engine**, a local authenticated **HTTP API**, a **PowerToys Command Palette** extension, and the `nectarlink` command-line client.
 
 <p align="center">
-  <img src="images/command-palette.png" alt="Global Command Palette open over the Nectarlink window on Windows 11" width="760">
+  <img src="images/command-palette.png" alt="Global Command Palette open over the NectarLink window on Windows 11" width="760">
 </p>
 
 ## What You Need
@@ -72,7 +72,7 @@ The `Timeline` gives you one searchable local log of everything that has moved b
 
 ### 4. Global `Command Palette` (`Ctrl+Alt+Space`)
 
-Press **`Ctrl+Alt+Space`** from anywhere in Windows to open Nectarlink's `Command Palette` over your current window:
+Press **`Ctrl+Alt+Space`** from anywhere in Windows to open NectarLink's `Command Palette` over your current window:
 
 1. Start typing to fuzzy-search every action, paired device, recent file, or setting:
    - **Mirror phone screen**
@@ -93,8 +93,8 @@ Press **`Ctrl+Alt+Space`** from anywhere in Windows to open Nectarlink's `Comman
 
 - **Web links**: Share any URL from your phone's browser to your PC via the Android share sheet (or send a URL from your PC via the `Command Palette` or `nectarlink send <url>`). The link opens immediately in the default browser on the receiving device.
 - **Maps and street addresses**: Share a Google Maps link or `geo:` location URI between devices to open that location directly in Maps.
-- **Video links with playback timestamp**: When you share a YouTube, Vimeo, or Twitch link (or run `nectarlink send <url> --at-seconds 142`), Nectarlink attaches the current playback position so the receiving device offers a **Continue watching** action that resumes the video at the exact second you left off.
-- **Documents (`--open` / `Shift+Drop`)**: Hold **`Shift`** while dropping a document onto Nectarlink (or run `nectarlink send report.pdf --open`) to transfer the file and open it automatically in the default viewer on the receiving device as soon as the transfer finishes.
+- **Video links with playback timestamp**: When you share a YouTube, Vimeo, or Twitch link (or run `nectarlink send <url> --at-seconds 142`), NectarLink attaches the current playback position so the receiving device offers a **Continue watching** action that resumes the video at the exact second you left off.
+- **Documents (`--open` / `Shift+Drop`)**: Hold **`Shift`** while dropping a document onto NectarLink (or run `nectarlink send report.pdf --open`) to transfer the file and open it automatically in the default viewer on the receiving device as soon as the transfer finishes.
 
 ### 6. Task Completion Alerts (`nectarlink notify-when`)
 
@@ -123,10 +123,10 @@ You can automate routine actions between your phone and PC without writing scrip
 
 ### 8. Local Authenticated HTTP API and PowerToys Extension
 
-For power users who use **PowerToys Command Palette**, **AutoHotkey**, **Raycast**, **Flow Launcher**, or custom PowerShell/Python scripts, Nectarlink includes an opt-in local HTTP/JSON API:
+For power users who use **PowerToys Command Palette**, **AutoHotkey**, **Raycast**, **Flow Launcher**, or custom PowerShell/Python scripts, NectarLink includes an opt-in local HTTP/JSON API:
 
 1. Open PC **Settings › Connection & About** and turn on **Local automation API** (default port `53320`).
-2. Nectarlink binds strictly to loopback (`127.0.0.1:53320`, never exposed on LAN) and writes a random 256-bit Bearer token to `%LOCALAPPDATA%\Nectarlink\api-token.json`.
+2. NectarLink binds strictly to loopback (`127.0.0.1:53320`, never exposed on LAN) and writes a random 256-bit Bearer token to `%LOCALAPPDATA%\Nectarlink\api-token.json`.
 3. Every request must include `Authorization: Bearer <token>`, and any request carrying a browser `Origin` header is rejected with `403 Forbidden` to prevent cross-site browser attacks.
 4. Available endpoints (see [`docs/api.md`](../api.md) for full request/response schemas and PowerShell/`curl` examples):
    - `GET /v1/devices`: List paired devices, connection status, and battery level.
@@ -136,7 +136,7 @@ For power users who use **PowerToys Command Palette**, **AutoHotkey**, **Raycast
    - `POST /v1/ring`: Trigger Find my phone.
    - `POST /v1/camera`: Trigger Continuity Camera (`"photo"` or `"scan"`).
    - `GET /v1/timeline`: Query recent cross-device `Timeline` entries.
-5. A companion **PowerToys Command Palette** extension in `tools/powertoys-cmdpal/` connects to this API so you can invoke Nectarlink actions directly from PowerToys.
+5. A companion **PowerToys Command Palette** extension in `tools/powertoys-cmdpal/` connects to this API so you can invoke NectarLink actions directly from PowerToys.
 
 ## What the Options Do
 
@@ -154,4 +154,4 @@ For power users who use **PowerToys Command Palette**, **AutoHotkey**, **Raycast
 ## Limits
 
 - **Global Hotkey Conflicts**: If another Windows application has already registered `Ctrl+Alt+Space`, `Ctrl+Alt+S`, `Ctrl+Alt+C`, or `Ctrl+Alt+D` as a system-wide hotkey, you can assign any non-conflicting `Ctrl`/`Alt`/`Shift`/`Win` key combination in **Settings › Shortcuts & Rules**.
-- **Windows Widgets Board Provider (`NectarlinkPhoneStatus`)**: Nectarlink includes a Windows App SDK Widget Provider (`desktop/app/src/win/widget.rs`), plus the taskbar **Jump List** that works on all installs. Appearing inside the Windows 11 `Win+W` Widgets board requires the app's sparse package manifest to be registered with a trusted code-signing certificate or Windows Developer Mode enabled. On Android, the **PC quick actions** home-screen widget works on all devices out of the box.
+- **Windows Widgets Board Provider (`NectarlinkPhoneStatus`)**: NectarLink includes a Windows App SDK Widget Provider (`desktop/app/src/win/widget.rs`), plus the taskbar **Jump List** that works on all installs. Appearing inside the Windows 11 `Win+W` Widgets board requires the app's sparse package manifest to be registered with a trusted code-signing certificate or Windows Developer Mode enabled. On Android, the **PC quick actions** home-screen widget works on all devices out of the box.

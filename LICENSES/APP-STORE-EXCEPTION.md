@@ -1,13 +1,13 @@
 # Additional permission under GNU GPL version 3, section 7
 
-This additional permission applies to every part of Nectarlink that is licensed
+This additional permission applies to every part of NectarLink that is licensed
 under the GNU General Public License version 3 or later ("the GPL"), as listed
 in the top-level `LICENSE` file.
 
 ## Permission
 
 As an additional permission under section 7 of the GPL, the copyright holders
-of Nectarlink give you permission to convey a covered work, or a work based on
+of NectarLink give you permission to convey a covered work, or a work based on
 it, through an application store or similar distribution platform (for example
 the Apple App Store, the Mac App Store, the Microsoft Store or Google Play),
 even if that platform's terms of service or technical measures add
@@ -33,7 +33,7 @@ This permission applies only if all of the following are true:
 This permission only relaxes the restrictions described above. It does not
 remove or reduce any right that the GPL grants to recipients. You may remove
 this additional permission from your own copies or modified versions, as
-allowed by section 7 of the GPL. Contributions to Nectarlink are accepted under
+allowed by section 7 of the GPL. Contributions to NectarLink are accepted under
 the GPL together with this additional permission.
 
 _Note: this text was drafted for the project and has not yet been reviewed by a

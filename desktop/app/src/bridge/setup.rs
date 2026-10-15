@@ -80,7 +80,7 @@ pub struct SetupRust {
 }
 
 static MODE: OnceLock<Mode> = OnceLock::new();
-/// Where the app ended up, for Open Nectarlink.
+/// Where the app ended up, for Open NectarLink.
 static INSTALLED_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Sets what the window is for, before QML loads.
@@ -208,7 +208,7 @@ impl qobject::Setup {
         if let Some(dir) = dir
             && let Err(e) = setup::open_app(&dir)
         {
-            tracing::warn!(error = %e, "can't open Nectarlink");
+            tracing::warn!(error = %e, "can't open NectarLink");
         }
     }
 

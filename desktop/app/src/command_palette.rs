@@ -396,7 +396,7 @@ fn open_voice_recordings(device: DeviceId) {
     let phone_name =
         core_host::host().hub.read(|s| s.name_of(&device)).unwrap_or_else(|| "your phone".into());
     show_message(format!(
-        "Opened Recordings folder. Start a voice note in Nectarlink on {phone_name} to send it here."
+        "Opened Recordings folder. Start a voice note in NectarLink on {phone_name} to send it here."
     ));
 }
 
@@ -664,7 +664,7 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         out.push(PaletteCandidate {
             id: format!("action:webcam:{dev_id}"),
             title: if webcam_streaming { "Stop phone webcam".into() } else { "Use phone as webcam".into() },
-            subtitle: format!("Stream {dev_name}'s camera into the Nectarlink virtual webcam"),
+            subtitle: format!("Stream {dev_name}'s camera into the NectarLink virtual webcam"),
             category: "Actions".into(),
             icon: "video".into(),
             badge: dev_name.clone(),

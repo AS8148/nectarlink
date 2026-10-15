@@ -10,7 +10,7 @@ travel on a dedicated bidirectional QUIC stream (`{ svc: "webcam", op: "video", 
 |---|---|---|
 | `camera.stream` | Phone | Streams a camera for webcam use (when `CAMERA` permission is granted) |
 | `camera.virtual` | PC | Receives and decodes a phone's webcam stream |
-| `addon.vcam` | PC | The Windows virtual camera COM add-on is registered in `HKLM`, so apps (Teams, Meet, Zoom, Windows Camera) see `"Nectarlink - <Phone name>"` |
+| `addon.vcam` | PC | The Windows virtual camera COM add-on is registered in `HKLM`, so apps (Teams, Meet, Zoom, Windows Camera) see `"NectarLink - <Phone name>"` |
 
 Both devices have a `webcam` per-device toggle (on by default). When turned off
 for a peer, `webcam.start` is refused with `denied` (`4`), incoming `webcam`

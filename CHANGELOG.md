@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Nectarlink. Versions follow
+All notable changes to NectarLink. Versions follow
 [semantic versioning](https://semver.org); before 1.0, a minor version may
 change things that need a step from you, and its notes say so.
 
@@ -18,7 +18,7 @@ slow or unsteady connections and show how far they are.
 
 Both are listed with their SHA-256 hashes in [SHA256SUMS.txt](https://github.com/thtbee/nectarlink/releases/download/v0.1.3/SHA256SUMS.txt).
 Installed copies update themselves. If **Update** in 0.1.2 or earlier closes
-Nectarlink and nothing happens, install this version from the link above
+NectarLink and nothing happens, install this version from the link above
 once; updates after it work from the app.
 
 ### New
@@ -41,13 +41,13 @@ once; updates after it work from the app.
 
 ### Fixed
 
-- **Updating the Windows app.** Clicking **Update** closed Nectarlink right
+- **Updating the Windows app.** Clicking **Update** closed NectarLink right
   away, and the download that followed in the background could time out on a
   slow connection to GitHub's download server. The update then failed with no
-  sign of it, and Nectarlink reopened only minutes later. Now Nectarlink stays
+  sign of it, and NectarLink reopened only minutes later. Now NectarLink stays
   open while it downloads, shows the progress in **Settings › Connection &
   About**, resumes a download that was cut off, and closes only once the
-  update is downloaded and checked. If an update doesn't install, Nectarlink
+  update is downloaded and checked. If an update doesn't install, NectarLink
   reopens and says so.
 - Slow responses from GitHub no longer fail update checks or downloads: the
   Windows app waits longer and tries again.
@@ -74,16 +74,16 @@ Installed copies update themselves.
 ### Fixed
 
 - **The phone reconnects after an update or a restart.** Android closes an
-  app while it updates, and nothing brought Nectarlink's connection back until
+  app while it updates, and nothing brought NectarLink's connection back until
   the app was opened again, so the PC showed the phone as gone. The connection
   now comes back on its own, after an update and after the phone restarts. A
   notification says the update is done; tapping it opens the app.
 - **Check for updates in the phone's Settings shows what it found**: that
-  Nectarlink is up to date, or the update with its **Update** button and
+  NectarLink is up to date, or the update with its **Update** button and
   progress, or why it couldn't check. Before, the button greyed out and nothing
   appeared.
 - **Allowing installs continues the update.** When Android first asks to let
-  Nectarlink install updates, coming back from that screen now carries on with
+  NectarLink install updates, coming back from that screen now carries on with
   the update instead of staying on **Allow**.
 - **Phone downloads resume.** A dropped or changed connection no longer fails
   the update: the download waits for the network and continues where it
@@ -93,7 +93,7 @@ Installed copies update themselves.
   leaves the update ready to install instead of reporting an error.
 - **The PC app comes to the front after updating.** It reopened behind other
   windows; now it comes forward and a notification says it's updated. The same
-  fix brings the window forward when Nectarlink is opened while already
+  fix brings the window forward when NectarLink is opened while already
   running.
 
 ## 0.1.1 (2026-10-15)
@@ -113,7 +113,7 @@ Installed copies update themselves.
 
 ### Changed
 
-- **Sharing from the phone sends right away.** Choosing Nectarlink in the
+- **Sharing from the phone sends right away.** Choosing NectarLink in the
   Android share sheet starts the transfer immediately, with no Flick to send
   card or Undo countdown. With more than one PC connected, you pick one first.
   Progress shows in a notification with a **Cancel** button, followed by a
@@ -143,8 +143,8 @@ Installed copies update themselves.
 
 ## 0.1.0 "Pollen" (2026-10-14)
 
-The first public release of Nectarlink: the Windows app, the Android app and
-the `nectarlink` command-line client. Nectarlink connects an Android phone and
+The first public release of NectarLink: the Windows app, the Android app and
+the `nectarlink` command-line client. NectarLink connects an Android phone and
 a Windows 11 PC directly over your network or a USB cable, end-to-end
 encrypted, with no account and no cloud service.
 
@@ -166,7 +166,7 @@ info**, then **Run anyway**.
 - **Installer.** A setup window of its own, light or dark to match Windows.
   One click installs, with one administrator prompt. Setup adds the Windows
   Firewall rule for local connections, Start menu and desktop shortcuts,
-  **Send to** in File Explorer and the update task, and starts Nectarlink
+  **Send to** in File Explorer and the update task, and starts NectarLink
   with Windows. **What this installs** on the
   first screen lists all of it. The last screen shows a QR code that opens the
   Android app's download page.
@@ -180,7 +180,7 @@ info**, then **Run anyway**.
 - **Features Guide** in both apps: every feature, whether it works with your
   paired phone right now, what would enable it, and a **Show me** button that
   goes to its control.
-- **Pairing** by QR code (from the Nectarlink app or any camera app), by
+- **Pairing** by QR code (from the NectarLink app or any camera app), by
   picking a nearby device and comparing a 6-digit code, or automatically over
   a USB cable. Pairing links opened from other apps ask before pairing.
 - **Power levels** on Android:
@@ -278,7 +278,7 @@ info**, then **Run anyway**.
 
 ### Camera and sound
 
-- **Phone as a webcam** through the Nectarlink Webcam virtual camera, in
+- **Phone as a webcam** through the NectarLink Webcam virtual camera, in
   Zoom, Teams, Meet, OBS and the Camera app, at up to 4K where the phone
   supports it, with lens and zoom controls.
 - **Continuity Camera**: take a photo or scan a document with the phone, with
@@ -337,7 +337,7 @@ testing. It builds on Windows and Linux.
 ### Privacy and security
 
 - Local-first: devices connect directly over the local network or USB.
-  Nothing passes through a Nectarlink server, and there is no account.
+  Nothing passes through a NectarLink server, and there is no account.
 - Every connection is QUIC with TLS 1.3, authenticated with Ed25519 device
   keys exchanged at pairing. Keys are protected by Windows DPAPI and the
   Android Keystore.

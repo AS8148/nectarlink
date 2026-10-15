@@ -34,7 +34,7 @@ import java.nio.file.Files
  * Security invariants:
  * - Paths are relative to the shared root; `..`, `.`, leading/trailing `/`,
  *   `\`, NUL, and control characters are rejected.
- * - Never exposes `/data`, `Android/data`, `Android/obb`, or Nectarlink's own
+ * - Never exposes `/data`, `Android/data`, `Android/obb`, or NectarLink's own
  *   private directories.
  * - Symlinks resolving outside the canonical storage root (or into a blocked
  *   directory) are rejected.
@@ -551,7 +551,7 @@ class PhoneStorage(
         fun capabilities(context: Context): List<String> =
             if (hasAnyAccess(context)) listOf("storage.read", "storage.write") else emptyList()
 
-        /** Intent to open Android's "All files access" settings screen for Nectarlink. */
+        /** Intent to open Android's "All files access" settings screen for NectarLink. */
         fun allFilesAccessIntent(context: Context): Intent {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val perApp = Intent(

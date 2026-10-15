@@ -51,11 +51,11 @@ pub fn run(args: &[&str]) -> Result<()> {
     let crates = shipped_crates(&metadata)?;
 
     let mut text = String::new();
-    writeln!(text, "Nectarlink for Windows: third-party notices")?;
+    writeln!(text, "NectarLink for Windows: third-party notices")?;
     writeln!(text, "{}", "=".repeat(43))?;
     writeln!(
         text,
-        "\nNectarlink is free software under the GNU General Public License, version 3\n\
+        "\nNectarLink is free software under the GNU General Public License, version 3\n\
          or later (LICENSE.txt). It includes the software below, under these terms.\n"
     )?;
     write_qt(&mut text, &root)?;
@@ -84,7 +84,7 @@ fn env_cargo() -> String {
 }
 
 /// The crates in the app's normal dependency graph, workspace crates left
-/// out (they're Nectarlink's own).
+/// out (they're NectarLink's own).
 fn shipped_crates(metadata: &Value) -> Result<Vec<Crate>> {
     let packages: BTreeMap<&str, &Value> = metadata["packages"]
         .as_array()
