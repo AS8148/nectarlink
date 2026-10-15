@@ -161,6 +161,7 @@ class MainActivity : ComponentActivity() {
             NectarlinkTheme(
                 appearance = appearance,
                 mediaSeedColor = state.activeMediaColor,
+                backdrop = true,
             ) {
                 // Every screen sits on the theme's background, not the
                 // window's (which can't follow the app's own light/dark choice).
@@ -780,6 +781,7 @@ private fun App(
                     val recorderSession by recorderFlow.collectAsStateWithLifecycle(recorderInitial)
                     val touchpadSensitivity by preferences.touchpadSensitivity.collectAsStateWithLifecycle()
                     val suggestClipboardActions by preferences.suggestClipboardActions.collectAsStateWithLifecycle()
+                    val hiveInviteShown by preferences.hiveInviteShown.collectAsStateWithLifecycle()
                     val saveableStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
 
                     // Only apply top scaffold padding here so LazyColumns in HomeScreen/SettingsScreen
@@ -888,6 +890,12 @@ private fun App(
                                     onOpenRecorder = { pcId -> recordPcId = pcId },
                                     onStopRecorder = { RecorderService.stop(context) },
                                     showWhatsNewGuideBanner = startupWalkthrough.showWhatsNewGuideBanner,
+                                    showHiveInvite = hiveInviteShown && appearance.theme != "hive",
+                                    onTryHive = {
+                                        preferences.answerHiveInvite()
+                                        preferences.update { it.copy(theme = "hive") }
+                                    },
+                                    onDismissHiveInvite = preferences::answerHiveInvite,
                                     onDismissWhatsNewGuide = {
                                         preferences.updateWalkthrough { it.dismissWhatsNewGuide() }
                                     },

@@ -27,6 +27,17 @@ FocusScope {
         }
     }
 
+    // Hive: a soft honey halo around a switch that's on.
+    Rectangle {
+        visible: Theme.hive
+        anchors.fill: track
+        anchors.margins: -3
+        radius: track.radius + 3
+        color: Theme.glow
+        opacity: toggle.checked ? (mouse.containsMouse ? 1 : 0.55) : 0
+        Behavior on opacity { enabled: !Theme.reduceMotion; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+    }
+
     Rectangle {
         id: track
         anchors.fill: parent

@@ -24,6 +24,21 @@ class Preferences(context: Context) {
     private val _suggestClipboardActions = MutableStateFlow(prefs.getBoolean(SUGGEST_CLIPBOARD_ACTIONS, true))
     val suggestClipboardActions: StateFlow<Boolean> = _suggestClipboardActions.asStateFlow()
 
+    /**
+     * The invitation to try Hive shows until it's answered, and again after
+     * an update (a reinstall clears this anyway): it remembers the version
+     * that answered it.
+     */
+    private val _hiveInviteShown = MutableStateFlow(
+        prefs.getLong(HIVE_INVITE_ANSWERED, -1L) != app.nectarlink.android.BuildConfig.VERSION_CODE.toLong(),
+    )
+    val hiveInviteShown: StateFlow<Boolean> = _hiveInviteShown.asStateFlow()
+
+    fun answerHiveInvite() {
+        prefs.edit { putLong(HIVE_INVITE_ANSWERED, app.nectarlink.android.BuildConfig.VERSION_CODE.toLong()) }
+        _hiveInviteShown.value = false
+    }
+
     private val _walkthrough = MutableStateFlow(loadWalkthrough())
     val walkthrough: StateFlow<WalkthroughPersistence> = _walkthrough.asStateFlow()
 
@@ -35,6 +50,7 @@ class Preferences(context: Context) {
             seed = prefs.getString(SEED, defaults.seed),
             dynamicColor = prefs.getBoolean(DYNAMIC, defaults.dynamicColor),
             amoled = prefs.getBoolean(AMOLED, defaults.amoled),
+            combMotion = prefs.getBoolean(COMB_MOTION, defaults.combMotion),
         )
     }
 
@@ -58,6 +74,7 @@ class Preferences(context: Context) {
             putString(SEED, next.seed)
             putBoolean(DYNAMIC, next.dynamicColor)
             putBoolean(AMOLED, next.amoled)
+            putBoolean(COMB_MOTION, next.combMotion)
         }
         _appearance.value = next
     }
@@ -98,6 +115,8 @@ class Preferences(context: Context) {
         private const val SEED = "seed"
         private const val DYNAMIC = "dynamic_color"
         private const val AMOLED = "amoled_black"
+        private const val COMB_MOTION = "comb_motion"
+        private const val HIVE_INVITE_ANSWERED = "hive_invite_answered_version"
         private const val TOUCHPAD_SENSITIVITY = "touchpad_sensitivity"
         private const val SUGGEST_CLIPBOARD_ACTIONS = "suggest_clipboard_actions"
         private const val AWAY_MODE = "away_mode"
@@ -105,7 +124,7 @@ class Preferences(context: Context) {
         private const val WALKTHROUGH_STEP = "walkthrough_step"
         private const val WHATS_NEW_GUIDE_DISMISSED = "whats_new_guide_dismissed"
 
-        val VALID_THEMES = setOf("bloom", "graphite", "glass")
+        val VALID_THEMES = setOf("hive", "bloom", "graphite", "glass")
         val VALID_MODES = setOf("system", "light", "dark")
 
         fun sanitizeAppearance(
@@ -114,6 +133,7 @@ class Preferences(context: Context) {
             seed: String?,
             dynamicColor: Boolean = true,
             amoled: Boolean = false,
+            combMotion: Boolean = true,
         ): Appearance {
             val defaults = Appearance()
             val safeTheme = theme?.takeIf { it in VALID_THEMES } ?: defaults.theme
@@ -125,6 +145,7 @@ class Preferences(context: Context) {
                 seed = safeSeed,
                 dynamicColor = dynamicColor,
                 amoled = amoled,
+                combMotion = combMotion,
             )
         }
 
@@ -135,6 +156,7 @@ class Preferences(context: Context) {
                 seed = appearance.seed,
                 dynamicColor = appearance.dynamicColor,
                 amoled = appearance.amoled,
+                combMotion = appearance.combMotion,
             )
 
         fun isSuggestClipboardActionsEnabled(context: Context): Boolean =

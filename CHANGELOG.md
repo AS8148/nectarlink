@@ -6,8 +6,8 @@ change things that need a step from you, and its notes say so.
 
 ## 0.1.3 (2026-10-15)
 
-Updating the Windows app works on slow or unsteady connections, and shows
-how far it is.
+Hive, a new theme for both apps, and updates to the Windows app that work on
+slow or unsteady connections and show how far they are.
 
 ### Downloads
 
@@ -20,6 +20,24 @@ Both are listed with their SHA-256 hashes in [SHA256SUMS.txt](https://github.com
 Installed copies update themselves. If **Update** in 0.1.2 or earlier closes
 Nectarlink and nothing happens, install this version from the link above
 once; updates after it work from the app.
+
+### New
+
+- **Hive**, a theme for the Windows and Android apps: honey on charcoal in
+  dark mode and on warm wax in light mode, with a living honeycomb behind the
+  whole app. The comb grows from the logo, breathes slowly, and sends a soft
+  pulse of light outward every few seconds, the same on the PC and the phone.
+  On the PC the phone on Home shows it too. Its colors are fixed, so the
+  wallpaper, artwork and phone color options are hidden while it's on.
+  - Choose it in **Settings › Appearance**, or from the **Try Hive** card on
+    Home. Dismissed, the card returns only after an update or a reinstall.
+  - **Animated comb** (on by default) turns the motion off. The comb also
+    holds still with reduced motion or battery saver on, and while the app
+    isn't in front.
+  - Light on resources: one GPU shader draws the comb, updated about 30
+    times a second and only while the window is in front. On Android 12 and
+    older, a still comb breathes.
+- The installer and uninstaller share Hive's comb.
 
 ### Fixed
 

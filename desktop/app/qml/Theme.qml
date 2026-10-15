@@ -3,19 +3,52 @@ pragma Singleton
 import QtQuick
 import app.nectarlink
 
-// The active theme: Bloom (Material You, seed presets) or Graphite (paper and
-// slate), light or dark, resolved from Preferences and the system. Colors
+// The active theme: Bloom (Material You, seed presets, the default), Hive
+// (honey on charcoal or wax), Glass, or Graphite (paper and slate), light
+// or dark, resolved from Preferences and the system. Colors
 // come from Tokens (generated from docs/design/tokens.json); Material's
 // "onX" roles are named "xContent" because QML reserves the "on" prefix.
 QtObject {
     id: theme
 
+    readonly property bool hive: Preferences.theme === "hive"
     readonly property bool graphite: Preferences.theme === "graphite"
     readonly property bool glass: Preferences.theme === "glass" || Preferences.theme === "blurry"
     readonly property bool dark: Preferences.colorMode === "dark"
                                  || (Preferences.colorMode === "system" && AppController.systemDark)
     readonly property bool amoled: dark && Preferences.amoled && (graphite || Preferences.seed === "black")
     readonly property bool reduceMotion: AppController.reduceMotion
+
+    // ---- Hive's comb ----
+    readonly property var comb: Tokens.data.themes.hive.comb
+    // Breathes and pulses: the user's setting, never with reduced motion or
+    // battery saver (it holds still then).
+    readonly property bool combMotion: hive && Preferences.combMotion && !reduceMotion && !AppController.powerSaver
+    readonly property color combLine: Qt.rgba(primary.r, primary.g, primary.b,
+                                              dark ? comb.lineAlphaDark : comb.lineAlphaLight)
+    readonly property color combGlow: dark ? Qt.rgba(1.0, 0.62, 0.18, comb.glowAlphaDark)
+                                           : Qt.rgba(1.0, 0.72, 0.37, comb.glowAlphaLight)
+    // One clock for every comb in the app (seconds), so two combs never draw
+    // twice as often. The main window runs it while it's in front.
+    property real combTime: 0
+    property bool combClockRunning: false
+    // A comb is on screen outside Hive (the invitation to try it).
+    property bool combPreviewShown: false
+    property double _combSince: 0
+    property real _combBase: 0
+    readonly property Timer _combClock: Timer {
+        interval: theme.comb.frameMs
+        repeat: true
+        running: theme.combClockRunning
+                 && (theme.combMotion || (theme.combPreviewShown && !theme.reduceMotion && !AppController.powerSaver))
+        onRunningChanged: {
+            if (running)
+                theme._combSince = Date.now()
+            else
+                theme._combBase = theme.combTime
+        }
+        onTriggered: theme.combTime = theme._combBase + (Date.now() - theme._combSince) / 1000
+    }
 
     readonly property var bloomSeeds: Tokens.data.themes.bloom.seeds
     // Colors made from the desktop wallpaper (or null until they're known),
@@ -77,10 +110,12 @@ QtObject {
         : (seed === "phone" || seed.startsWith("phone:"))
           ? activePhoneSeed
           : (seed === "wallpaper" ? wallpaperSeed : bloomSeeds[seed])
-    readonly property var palette: graphite
-        ? Tokens.data.themes.graphite.variants[dark ? "slate" : "paper"]
-        : seedColors[dark ? "dark" : "light"]
-    readonly property var status: graphite ? palette : Tokens.data.themes.bloom.status[dark ? "dark" : "light"]
+    readonly property var palette: hive
+        ? Tokens.data.themes.hive.variants[dark ? "comb" : "wax"]
+        : (graphite
+            ? Tokens.data.themes.graphite.variants[dark ? "slate" : "paper"]
+            : seedColors[dark ? "dark" : "light"])
+    readonly property var status: graphite || hive ? palette : Tokens.data.themes.bloom.status[dark ? "dark" : "light"]
 
     // ---- Color roles ----
     readonly property color primary: palette.primary
@@ -106,7 +141,14 @@ QtObject {
     readonly property color errorContent: status.onError
 
     // ---- Component colors (docs/design/assets/nl.css) ----
-    readonly property color cardColor: graphite ? "transparent"
+    // Hive: nearly opaque, so the comb shows through as texture without
+    // ever crossing text.
+    readonly property color cardColor: hive
+        ? (function() {
+            const c = Qt.tint(surfaceContainer, Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, dark ? 0.12 : 0.18))
+            return Qt.rgba(c.r, c.g, c.b, dark ? 0.90 : 0.92)
+        })()
+        : graphite ? "transparent"
         : (glass
             ? Qt.tint(
                 Qt.rgba(surfaceContainer.r, surfaceContainer.g, surfaceContainer.b, amoled ? 0.56 : (dark ? 0.36 : 0.52)),
@@ -120,13 +162,18 @@ QtObject {
                         surfaceContainer,
                         Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, isPhoneSeed ? (dark ? 0.28 : 0.36) : (dark ? 0.16 : 0.22))
                     ))))
-    readonly property color cardBorder: graphite ? outlineVariant
+    // Hive: a faint honey edge, like wax around a cell.
+    readonly property color cardBorder: hive
+        ? Qt.rgba(primary.r, primary.g, primary.b, dark ? 0.14 : 0.16)
+        : graphite ? outlineVariant
         : (glass
             ? (dark ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.28))
             : (artworkAmbientActive
                 ? Qt.rgba(outlineVariant.r, outlineVariant.g, outlineVariant.b, dark ? 0.36 : 0.45)
                 : (amoled ? "#1D1F27" : "transparent")))
-    readonly property color tileColor: graphite ? "transparent"
+    readonly property color tileColor: hive
+        ? Qt.tint(surfaceContainerHigh, Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, dark ? 0.14 : 0.20))
+        : graphite ? "transparent"
         : (glass
             ? Qt.tint(
                 Qt.rgba(1, 1, 1, dark ? 0.08 : 0.48),
@@ -140,7 +187,9 @@ QtObject {
                         surfaceContainerHigh,
                         Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, isPhoneSeed ? (dark ? 0.32 : 0.42) : (dark ? 0.18 : 0.24))
                     ))))
-    readonly property color heroColor: graphite ? "transparent"
+    readonly property color heroColor: hive
+        ? Qt.tint(surface, Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, dark ? 0.55 : 0.62))
+        : graphite ? "transparent"
         : Qt.tint(
             ambientBlurActive
                 ? Qt.rgba(surface.r, surface.g, surface.b, glass ? (amoled ? 0.54 : (dark ? 0.34 : 0.48)) : (dark ? 0.65 : 0.72))
@@ -148,7 +197,8 @@ QtObject {
             Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, glass ? (dark ? 0.30 : 0.38) : (artworkAmbientActive ? 0.52 : (amoled ? 0.32 : 0.68)))
         )
     readonly property color heroContent: graphite ? surfaceContent : primaryContainerContent
-    readonly property color railColor: graphite ? "transparent"
+    // Hive's rail is the comb itself.
+    readonly property color railColor: graphite || hive ? "transparent"
         : (glass
             ? Qt.rgba(surfaceLow.r, surfaceLow.g, surfaceLow.b, amoled ? 0.48 : (dark ? 0.28 : 0.42))
             : (artworkAmbientActive
@@ -159,13 +209,16 @@ QtObject {
                         surfaceLow,
                         Qt.rgba(primaryContainer.r, primaryContainer.g, primaryContainer.b, isPhoneSeed ? (dark ? 0.24 : 0.32) : (dark ? 0.14 : 0.18))
                     ))))
-    readonly property color indicator: graphite ? surfaceContent : secondaryContainer
-    readonly property color indicatorContent: graphite ? surface : secondaryContainerContent
+    readonly property color indicator: graphite ? surfaceContent : (hive ? primaryContainer : secondaryContainer)
+    readonly property color indicatorContent: graphite ? surface : (hive ? primaryContainerContent : secondaryContainerContent)
+    // Hive: the honey halo around a primary control on hover.
+    readonly property color glow: Qt.rgba(primary.r, primary.g, primary.b, dark ? 0.30 : 0.22)
     readonly property color buttonShadow: graphite ? palette.buttonShadow : "transparent"
     readonly property color scrim: Qt.rgba(0, 0, 0, dark ? 0.5 : 0.32)
 
     // ---- Shape ----
-    readonly property var shape: graphite ? Tokens.data.themes.graphite.shape : Tokens.data.themes.bloom.shape
+    readonly property var shape: graphite ? Tokens.data.themes.graphite.shape
+        : (hive ? Tokens.data.themes.hive.shape : Tokens.data.themes.bloom.shape)
     readonly property int radiusXs: shape.xs
     readonly property int radiusSm: shape.sm
     readonly property int radiusMd: shape.md
@@ -180,7 +233,8 @@ QtObject {
     readonly property string fontDisplay: graphite ? "Instrument Serif" : "Figtree"
     readonly property string fontMono: "Space Mono"
     readonly property var typography: Tokens.data.typography
-    readonly property var labelStyle: graphite ? Tokens.data.themes.graphite.label : Tokens.data.themes.bloom.label
+    readonly property var labelStyle: graphite ? Tokens.data.themes.graphite.label
+        : (hive ? Tokens.data.themes.hive.label : Tokens.data.themes.bloom.label)
 
     // ---- Layout and spacing ----
     readonly property var layout: Tokens.data.layout.desktop

@@ -256,6 +256,57 @@ object Tokens {
         outlineVariant = Color(0xFF26272A),
     )
 
+    val hiveWax = Palette(
+        primary = Color(0xFF8A5100),
+        onPrimary = Color(0xFFFFFFFF),
+        primaryContainer = Color(0xFFFFDDB3),
+        onPrimaryContainer = Color(0xFF2C1600),
+        secondaryContainer = Color(0xFFF4E3CD),
+        onSecondaryContainer = Color(0xFF2A1F14),
+        surface = Color(0xFFFFF8F3),
+        surfaceContainerLow = Color(0xFFFCF2E9),
+        surfaceContainer = Color(0xFFF8ECE1),
+        surfaceContainerHigh = Color(0xFFF3E5D7),
+        surfaceContainerHighest = Color(0xFFEDDDCD),
+        onSurface = Color(0xFF1F1B16),
+        onSurfaceVariant = Color(0xFF5C4F43),
+        outline = Color(0xFF85766A),
+        outlineVariant = Color(0xFFDDCBBA),
+    )
+
+    val hiveComb = Palette(
+        primary = Color(0xFFFFB95F),
+        onPrimary = Color(0xFF2C1600),
+        primaryContainer = Color(0xFF5A3A0E),
+        onPrimaryContainer = Color(0xFFFFDDB3),
+        secondaryContainer = Color(0xFF2F2A24),
+        onSecondaryContainer = Color(0xFFF0E0CC),
+        surface = Color(0xFF121214),
+        surfaceContainerLow = Color(0xFF151517),
+        surfaceContainer = Color(0xFF1A1A1D),
+        surfaceContainerHigh = Color(0xFF212124),
+        surfaceContainerHighest = Color(0xFF29292D),
+        onSurface = Color(0xFFEDE6DD),
+        onSurfaceVariant = Color(0xFFABA195),
+        outline = Color(0xFF8D8379),
+        outlineVariant = Color(0xFF34312D),
+    )
+
+    val hiveWaxWarning = Color(0xFF7A4A00)
+    val hiveWaxError = Color(0xFF9E2B25)
+    val hiveCombWarning = Color(0xFFF5D58A)
+    val hiveCombError = Color(0xFFF0A39C)
+
+    /** The honeycomb backdrop (themes.hive.comb). */
+    const val COMB_CELL_DP = 24f
+    const val COMB_LINE_ALPHA_DARK = 0.27f
+    const val COMB_LINE_ALPHA_LIGHT = 0.11f
+    const val COMB_GLOW_ALPHA_DARK = 0.7f
+    const val COMB_GLOW_ALPHA_LIGHT = 0.75f
+    const val COMB_BREATH_SECONDS = 6f
+    const val COMB_PULSE_SECONDS = 4.5f
+    const val COMB_FRAME_MS = 33L
+
     val warningLight = Color(0xFF7D5200)
     val warningDark = Color(0xFFF2C14E)
     val errorLight = Color(0xFFBA1A1A)

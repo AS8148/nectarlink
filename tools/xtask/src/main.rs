@@ -109,14 +109,17 @@ fn validate(tokens: &Value) -> Result<()> {
             check_contrast(def.get(mode), status.get(mode), &name)?;
         }
     }
-    let variants = themes
-        .pointer("/graphite/variants")
-        .and_then(Value::as_object)
-        .context("missing graphite variants")?;
-    for (variant, palette) in variants {
-        let name = format!("graphite.{variant}");
-        check_palette(Some(palette), &name)?;
-        check_contrast(Some(palette), Some(palette), &name)?;
+    // Fixed-palette themes carry their own status colors.
+    for theme in ["graphite", "hive"] {
+        let variants = themes
+            .pointer(&format!("/{theme}/variants"))
+            .and_then(Value::as_object)
+            .with_context(|| format!("missing {theme} variants"))?;
+        for (variant, palette) in variants {
+            let name = format!("{theme}.{variant}");
+            check_palette(Some(palette), &name)?;
+            check_contrast(Some(palette), Some(palette), &name)?;
+        }
     }
     Ok(())
 }
@@ -315,6 +318,35 @@ fn render_kotlin(tokens: &Value) -> Result<String> {
     out.push(format!("    val graphitePaper = {}", kotlin_palette(&variants["paper"], 4)?));
     out.push(String::new());
     out.push(format!("    val graphiteSlate = {}", kotlin_palette(&variants["slate"], 4)?));
+    out.push(String::new());
+    let hive = tokens.pointer("/themes/hive/variants").context("missing hive variants")?;
+    out.push(format!("    val hiveWax = {}", kotlin_palette(&hive["wax"], 4)?));
+    out.push(String::new());
+    out.push(format!("    val hiveComb = {}", kotlin_palette(&hive["comb"], 4)?));
+    out.push(String::new());
+    for (name, mode) in [("Wax", "wax"), ("Comb", "comb")] {
+        for key in ["warning", "error"] {
+            let hex = hive
+                .pointer(&format!("/{mode}/{key}"))
+                .and_then(Value::as_str)
+                .context("missing hive status")?;
+            let field = format!("hive{name}{}", if key == "warning" { "Warning" } else { "Error" });
+            out.push(format!("    val {field} = {}", kotlin_color(hex)));
+        }
+    }
+    let comb = tokens.pointer("/themes/hive/comb").context("missing hive comb")?;
+    let number =
+        |key: &str| comb.get(key).and_then(Value::as_f64).with_context(|| format!("missing comb.{key}"));
+    out.push(String::new());
+    out.push("    /** The honeycomb backdrop (themes.hive.comb). */".into());
+    out.push(format!("    const val COMB_CELL_DP = {}f", number("cell")?));
+    out.push(format!("    const val COMB_LINE_ALPHA_DARK = {}f", number("lineAlphaDark")?));
+    out.push(format!("    const val COMB_LINE_ALPHA_LIGHT = {}f", number("lineAlphaLight")?));
+    out.push(format!("    const val COMB_GLOW_ALPHA_DARK = {}f", number("glowAlphaDark")?));
+    out.push(format!("    const val COMB_GLOW_ALPHA_LIGHT = {}f", number("glowAlphaLight")?));
+    out.push(format!("    const val COMB_BREATH_SECONDS = {}f", number("breathSeconds")?));
+    out.push(format!("    const val COMB_PULSE_SECONDS = {}f", number("pulseSeconds")?));
+    out.push(format!("    const val COMB_FRAME_MS = {}L", number("frameMs")? as i64));
     out.push(String::new());
     out.push(format!("    val warningLight = {}", status_color("light", "warning")?));
     out.push(format!("    val warningDark = {}", status_color("dark", "warning")?));

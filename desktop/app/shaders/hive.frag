@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The installer's backdrop: a honeycomb that grows outward from the logo,
-// breathes slowly, and sends a soft pulse of light outward every few seconds.
+// The Hive theme's backdrop (and the installer's): a honeycomb that grows
+// outward from the logo, breathes slowly, and sends a soft pulse of light
+// outward every few seconds.
 // Samples no textures. Output is premultiplied.
 //
 // Compiled to hive.frag.qsb with Qt's qsb (see shaders.qrc).
@@ -19,6 +20,11 @@ layout(std140, binding = 0) uniform buf {
     float cell;       // hexagon size, in pixels
     float pulse;      // 0: still (reduced motion), 1: pulsing
     float strength;   // overall intensity
+    float breathPeriod; // seconds per breath
+    float pulsePeriod;  // seconds between pulses
+    float corner;       // rounded-rectangle mask radius in pixels (0: none)
+    float reach;        // how far the comb carries (fraction of the diagonal)
+    float pulseReach;   // how far a pulse travels (fraction of the diagonal)
     vec4 lineColor;
     vec4 glowColor;
 };
@@ -55,15 +61,14 @@ void main() {
     // Grows from the logo; the front is soft.
     float grown = 1.0 - smoothstep(reveal - 90.0, reveal, d);
     // Fades towards the corners so the content stays calm.
-    float falloff = exp(-d / (far * 0.62));
+    float falloff = exp(-d / (far * reach));
 
     // Breathing: a slow rise and fall of the whole comb.
-    float breathe = 0.78 + 0.22 * sin(time * 6.2831853 / 6.0) * pulse;
+    float breathe = 0.78 + 0.22 * sin(time * 6.2831853 / breathPeriod) * pulse;
 
-    // A pulse of light travelling outward every 4.5 seconds.
-    float period = 4.5;
-    float t = fract(time / period);
-    float ringRadius = t * far * 0.75;
+    // A pulse of light travelling outward every few seconds.
+    float t = fract(time / pulsePeriod);
+    float ringRadius = t * far * pulseReach;
     float ring = exp(-pow((d - ringRadius) / 70.0, 2.0)) * (1.0 - t) * pulse;
 
     // A little variation from cell to cell, like light on real comb.
@@ -75,6 +80,14 @@ void main() {
 
     vec3 rgb = lineColor.rgb * lineA * lineColor.a + glowColor.rgb * (glowA + fillA) * glowColor.a;
     float a = clamp(lineA * lineColor.a + (glowA + fillA) * glowColor.a, 0.0, 1.0);
-    float k = strength * qt_Opacity;
+    // Inside a rounded rectangle when asked (the phone preview's screen).
+    float inside = 1.0;
+    if (corner > 0.0) {
+        vec2 q = abs(px - itemSize * 0.5) - (itemSize * 0.5 - vec2(corner));
+        float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - corner;
+        inside = 1.0 - smoothstep(-0.75, 0.75, sd);
+    }
+
+    float k = strength * qt_Opacity * inside;
     fragColor = vec4(rgb * k, a * k);
 }

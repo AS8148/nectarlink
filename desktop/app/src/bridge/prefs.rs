@@ -45,6 +45,8 @@ pub mod qobject {
         #[qproperty(bool, amoled)]
         /// Mica behind the window.
         #[qproperty(bool, backdrop)]
+        /// Hive's comb breathes and pulses.
+        #[qproperty(bool, comb_motion)]
         #[qproperty(bool, close_to_tray)]
         /// Send what's copied on this PC to connected phones.
         #[qproperty(bool, auto_clipboard)]
@@ -122,6 +124,8 @@ pub mod qobject {
         #[qproperty(i32, walkthrough_step)]
         /// Whether the gentle "What's new" card on Home has been dismissed.
         #[qproperty(bool, whats_new_dismissed)]
+        /// Whether the card on Home inviting to try Hive has been answered.
+        #[qproperty(bool, hive_invite_dismissed)]
         /// JSON array of configured `FolderSyncRule` items.
         #[qproperty(QString, folder_sync_rules_json)]
         /// JSON array of configured `AutomationRule` items.
@@ -248,6 +252,7 @@ pub struct PreferencesRust {
     color_mode: QString,
     amoled: bool,
     backdrop: bool,
+    comb_motion: bool,
     close_to_tray: bool,
     auto_clipboard: bool,
     clipboard_history: bool,
@@ -287,6 +292,7 @@ pub struct PreferencesRust {
     walkthrough_completed: bool,
     walkthrough_step: i32,
     whats_new_dismissed: bool,
+    hive_invite_dismissed: bool,
     folder_sync_rules_json: QString,
     automation_rules_json: QString,
     /// What the user chose (`start_with_windows` shows the default until then).
@@ -300,6 +306,7 @@ impl cxx_qt::Initialize for qobject::Preferences {
         let settings = Settings::load(&core_host::host().data_dir);
         settings.apply_runtime();
         self.as_mut().set_theme(QString::from(match settings.theme {
+            Theme::Hive => "hive",
             Theme::Bloom => "bloom",
             Theme::Glass => "glass",
             Theme::Graphite => "graphite",
@@ -312,6 +319,7 @@ impl cxx_qt::Initialize for qobject::Preferences {
         }));
         self.as_mut().set_amoled(settings.amoled);
         self.as_mut().set_backdrop(settings.backdrop);
+        self.as_mut().set_comb_motion(settings.comb_motion);
         self.as_mut().set_close_to_tray(settings.close_to_tray);
         self.as_mut().set_auto_clipboard(settings.auto_clipboard);
         crate::clipboard::set_auto_send(settings.auto_clipboard);
@@ -362,6 +370,7 @@ impl cxx_qt::Initialize for qobject::Preferences {
         self.as_mut().set_walkthrough_completed(settings.walkthrough_completed);
         self.as_mut().set_walkthrough_step(i32::from(settings.walkthrough_step.min(6)));
         self.as_mut().set_whats_new_dismissed(settings.whats_new_dismissed);
+        self.as_mut().set_hive_invite_dismissed(settings.hive_invite_dismissed);
         let folder_rules_json =
             serde_json::to_string(&settings.folder_sync_rules).unwrap_or_else(|_| "[]".into());
         self.as_mut().set_folder_sync_rules_json(QString::from(&folder_rules_json));
@@ -383,6 +392,7 @@ impl cxx_qt::Initialize for qobject::Preferences {
         self.as_mut().on_color_mode_changed(|p| p.save()).release();
         self.as_mut().on_amoled_changed(|p| p.save()).release();
         self.as_mut().on_backdrop_changed(|p| p.save()).release();
+        self.as_mut().on_comb_motion_changed(|p| p.save()).release();
         self.as_mut().on_close_to_tray_changed(|p| p.save()).release();
         self.as_mut()
             .on_auto_clipboard_changed(|p| {
@@ -612,6 +622,7 @@ impl cxx_qt::Initialize for qobject::Preferences {
             })
             .release();
         self.as_mut().on_whats_new_dismissed_changed(|p| p.save()).release();
+        self.as_mut().on_hive_invite_dismissed_changed(|p| p.save()).release();
 
         super::subscribe(self.qt_thread(), crate::state::Changes::PREFS, Self::refresh_runtime_flags);
     }
@@ -625,6 +636,7 @@ impl qobject::Preferences {
         }
         let disk = Settings::load(&core_host::host().data_dir);
         let disk_theme = QString::from(match disk.theme {
+            Theme::Hive => "hive",
             Theme::Bloom => "bloom",
             Theme::Glass => "glass",
             Theme::Graphite => "graphite",
@@ -833,6 +845,7 @@ impl qobject::Preferences {
         let p = self.rust();
         Settings {
             theme: match String::from(&p.theme).as_str() {
+                "hive" => Theme::Hive,
                 "graphite" => Theme::Graphite,
                 "glass" | "blurry" => Theme::Glass,
                 _ => Theme::Bloom,
@@ -845,6 +858,7 @@ impl qobject::Preferences {
             },
             amoled: p.amoled,
             backdrop: p.backdrop,
+            comb_motion: p.comb_motion,
             close_to_tray: p.close_to_tray,
             auto_clipboard: p.auto_clipboard,
             clipboard_history: p.clipboard_history,
@@ -890,6 +904,7 @@ impl qobject::Preferences {
             walkthrough_completed: p.walkthrough_completed,
             walkthrough_step: p.walkthrough_step.clamp(0, 6) as u8,
             whats_new_dismissed: p.whats_new_dismissed,
+            hive_invite_dismissed: p.hive_invite_dismissed,
             obs_port: crate::settings::obs_settings().0,
             obs_password: crate::settings::obs_settings().1,
         }

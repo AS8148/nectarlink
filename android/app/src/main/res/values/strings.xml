@@ -205,6 +205,13 @@
     <string name="battery_guide_pixel">On Pixel: open App info › App battery usage › tap Allow background usage and select Unrestricted.</string>
     <string name="action_manage">Manage</string>
     <string name="action_app_info">App info</string>
+    <string name="theme_hive">Hive</string>
+    <string name="hive_invite_title">Try Hive, the new theme</string>
+    <string name="hive_invite_text">Honey on charcoal or warm wax, with a living honeycomb behind the app. Change it any time in Settings.</string>
+    <string name="hive_invite_try">Try Hive</string>
+    <string name="hive_invite_dismiss">Not now</string>
+    <string name="settings_comb_motion">Animated comb</string>
+    <string name="settings_comb_motion_hint">The honeycomb breathes and pulses. It holds still with Remove animations or battery saver on.</string>
     <string name="theme_bloom">Bloom</string>
     <string name="theme_graphite">Graphite</string>
     <string name="mode_system">System</string>

@@ -46,7 +46,7 @@ Rectangle {
             ? Theme.surfaceContent
             : (Theme.glass
                 ? Qt.tint(Qt.rgba(1, 1, 1, Theme.dark ? 0.16 : 0.78), Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, Theme.dark ? 0.24 : 0.14))
-                : Theme.surface)
+                : (Theme.hive ? Theme.primaryContainer : Theme.surface))
         border.width: Theme.glass ? 1 : 0
         border.color: Qt.rgba(1, 1, 1, Theme.dark ? 0.28 : 0.85)
         Behavior on x {
@@ -109,7 +109,7 @@ Rectangle {
                     text: option.modelData.label
                     role: "label"
                     color: option.selected
-                        ? (Theme.graphite ? Theme.surface : Theme.surfaceContent)
+                        ? (Theme.graphite ? Theme.surface : (Theme.hive ? Theme.primaryContainerContent : Theme.surfaceContent))
                         : (segMouse.containsMouse ? Theme.surfaceContent : Theme.surfaceContentVariant)
                     Behavior on color { enabled: !Theme.reduceMotion; ColorAnimation { duration: Theme.fadeFast } }
                 }

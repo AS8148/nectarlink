@@ -56,6 +56,8 @@ pub mod qobject {
         #[qproperty(QString, ringing_from)]
         #[qproperty(bool, system_dark)]
         #[qproperty(bool, reduce_motion)]
+        /// Battery saver is on: decorative animation rests.
+        #[qproperty(bool, power_saver)]
         /// Bloom colors from the desktop wallpaper, as JSON in the shape of
         /// a tokens.json seed (`{ seed, light, dark }`); "" until known.
         #[qproperty(QString, wallpaper_colors)]
@@ -408,6 +410,7 @@ pub struct AppControllerRust {
     ringing_from: QString,
     system_dark: bool,
     reduce_motion: bool,
+    power_saver: bool,
     wallpaper_colors: QString,
     phone_colors: QString,
     toasts_enabled: bool,
@@ -915,20 +918,21 @@ fn dispatch_jump_task(qt: &CxxQtThread<qobject::AppController>, action: String) 
             let mode = &s["theme:".len()..];
             let dir = &core_host::host().data_dir;
             let mut st = crate::settings::Settings::load(dir);
-            match mode {
-                "graphite" => {
-                    st.theme = crate::settings::Theme::Graphite;
-                    st.color_mode = crate::settings::ColorMode::Dark;
-                }
-                "bloom-dark" => {
-                    st.theme = crate::settings::Theme::Bloom;
-                    st.color_mode = crate::settings::ColorMode::Dark;
-                }
-                _ => {
-                    st.theme = crate::settings::Theme::Bloom;
-                    st.color_mode = crate::settings::ColorMode::Light;
-                }
-            }
+            // `<theme>` or `<theme>-dark` / `<theme>-light`; plain "graphite" is dark.
+            use crate::settings::{ColorMode, Theme};
+            let (name, color) = match mode.rsplit_once('-') {
+                Some((name, "dark")) => (name, Some(ColorMode::Dark)),
+                Some((name, "light")) => (name, Some(ColorMode::Light)),
+                _ => (mode, None),
+            };
+            st.theme = match name {
+                "graphite" => Theme::Graphite,
+                "glass" => Theme::Glass,
+                "hive" => Theme::Hive,
+                _ => Theme::Bloom,
+            };
+            st.color_mode =
+                color.unwrap_or(if name == "graphite" { ColorMode::Dark } else { ColorMode::Light });
             let _ = st.save(dir);
             core_host::host().hub.changed(Changes::PREFS);
             object.activate_requested();
@@ -1340,6 +1344,7 @@ impl qobject::AppController {
     fn refresh_appearance(mut self: Pin<&mut Self>) {
         self.as_mut().set_system_dark(win::system_dark());
         self.as_mut().set_reduce_motion(win::reduce_motion());
+        self.as_mut().set_power_saver(win::power_saver());
         refresh_wallpaper_colors(self.qt_thread());
         self.refresh_toasts_enabled();
     }
@@ -1489,7 +1494,10 @@ impl qobject::AppController {
         }
     }
 
-    pub fn refresh_toasts_enabled(self: Pin<&mut Self>) {
+    pub fn refresh_toasts_enabled(mut self: Pin<&mut Self>) {
+        // Also when the window comes back to the front: battery saver may
+        // have changed meanwhile.
+        self.as_mut().set_power_saver(win::power_saver());
         self.set_toasts_enabled(win::toast::enabled());
         core_host::spawn(core_host::refresh_wake());
     }

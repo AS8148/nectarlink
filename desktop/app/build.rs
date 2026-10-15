@@ -64,7 +64,7 @@ const QML: &[&str] = &[
     "qml/pages/TimelinePage.qml",
     "qml/pages/WalkthroughPage.qml",
     "qml/pages/WelcomePage.qml",
-    "qml/setup/HiveBackdrop.qml",
+    "qml/components/HiveBackdrop.qml",
     "qml/setup/SadBee.qml",
     "qml/setup/SetupButton.qml",
     "qml/setup/SetupWindow.qml",

@@ -268,6 +268,98 @@ Item {
                 }
             }
 
+            // A one-time invitation to try Hive, after the What's new card.
+            Card {
+                id: hiveInvite
+                width: column.width
+                visible: Preferences.walkthroughCompleted && Preferences.whatsNewDismissed
+                         && !Preferences.hiveInviteDismissed && !Theme.hive
+                padding: 14
+                Binding {
+                    target: Theme
+                    property: "combPreviewShown"
+                    value: hiveInvite.visible
+                }
+                Item {
+                    width: parent.width
+                    height: Math.max(hiveSample.height, hiveInviteText.implicitHeight, hiveInviteButtons.implicitHeight)
+
+                    // A small window onto the comb, in Hive's own colors.
+                    Rectangle {
+                        id: hiveSample
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 56; height: 56
+                        radius: 14
+                        color: Theme.dark ? "#121214" : "#FFF8F3"
+                        border.width: 1
+                        border.color: Theme.dark ? Qt.rgba(1.0, 0.73, 0.37, 0.24) : Qt.rgba(0.54, 0.32, 0.0, 0.20)
+                        HiveBackdrop {
+                            anchors.fill: parent
+                            corner: parent.radius
+                            ownClock: false
+                            growIn: false
+                            time: Theme.combTime
+                            animate: !Theme.reduceMotion && !AppController.powerSaver
+                            cell: 9
+                            lineColor: Theme.dark ? Qt.rgba(1.0, 0.73, 0.37, 0.28) : Qt.rgba(0.54, 0.32, 0.0, 0.16)
+                            glowColor: Theme.dark ? Qt.rgba(1.0, 0.62, 0.18, 0.70) : Qt.rgba(1.0, 0.72, 0.37, 0.75)
+                            origin: Qt.point(width / 2, height / 2)
+                        }
+                        Icon {
+                            anchors.centerIn: parent
+                            width: 22; height: 22
+                            path: Icons.mark
+                            stroke: 2.2
+                            color: Theme.dark ? "#FFB95F" : "#8A5100"
+                        }
+                    }
+                    Column {
+                        id: hiveInviteText
+                        anchors.left: hiveSample.right
+                        anchors.leftMargin: 14
+                        anchors.right: hiveInviteButtons.left
+                        anchors.rightMargin: 16
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 4
+                        Txt {
+                            width: parent.width
+                            role: "title"
+                            text: qsTr("Try Hive, the new theme")
+                            wrapMode: Text.WordWrap
+                        }
+                        Txt {
+                            width: parent.width
+                            role: "bodySmall"
+                            muted: true
+                            text: qsTr("Honey on charcoal or warm wax, with a living honeycomb behind the app. Change it any time in Settings › Appearance.")
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                    Row {
+                        id: hiveInviteButtons
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 8
+                        Button {
+                            variant: "text"
+                            size: "sm"
+                            text: qsTr("Not now")
+                            onClicked: Preferences.hiveInviteDismissed = true
+                        }
+                        Button {
+                            variant: "tonal"
+                            size: "sm"
+                            iconPath: Icons.sparkle
+                            text: qsTr("Try Hive")
+                            onClicked: {
+                                Preferences.hiveInviteDismissed = true
+                                Preferences.theme = "hive"
+                            }
+                        }
+                    }
+                }
+            }
+
             // Card shown when no phone is paired yet (for example after skipping first-run setup).
             Card {
                 width: column.width
@@ -616,22 +708,33 @@ Item {
                         readonly property real rBl: home.screenData && home.screenData.corners
                             ? Math.max(3, home.screenData.corners.bl * width) : defaultCorner
                         readonly property var phonePalette: Theme.phonePalette(home.deviceId)
-                        readonly property color seedColor: phonePalette
+                        // Hive keeps its own honey here too, whatever the phone's colors.
+                        readonly property color seedColor: Theme.hive
+                            ? Theme.primary
+                            : phonePalette
                             ? Qt.color(phonePalette.primary)
                             : (home.accent && home.accent.length > 0 ? Qt.color(home.accent) : Theme.primary)
-                        readonly property color frameFill: Theme.graphite
+                        readonly property color frameFill: Theme.hive
+                            ? (Theme.dark ? "#0E0E10" : "#2A2420")
+                            : Theme.graphite
                             ? (Theme.dark ? "#1B1D21" : "#282B30")
                             : Qt.darker(seedColor, Theme.dark ? 2.8 : 2.3)
                         readonly property color frameStroke: Theme.graphite
                             ? Theme.outline
                             : Qt.rgba(Theme.heroContent.r, Theme.heroContent.g, Theme.heroContent.b, 0.42)
-                        readonly property color screenTop: Theme.graphite
+                        readonly property color screenTop: Theme.hive
+                            ? (Theme.dark ? "#3A2709" : "#FFE2BC")
+                            : Theme.graphite
                             ? (Theme.dark ? "#262930" : "#E4E7EC")
                             : (Theme.dark ? Qt.darker(seedColor, 1.85) : Qt.lighter(seedColor, 1.35))
-                        readonly property color screenBottom: Theme.graphite
+                        readonly property color screenBottom: Theme.hive
+                            ? (Theme.dark ? "#141210" : "#F1C27F")
+                            : Theme.graphite
                             ? (Theme.dark ? "#17191D" : "#CFD4DC")
                             : (Theme.dark ? Qt.darker(seedColor, 2.55) : Qt.darker(seedColor, 1.25))
-                        readonly property color screenInk: Theme.graphite && !Theme.dark ? "#1E2025" : "#FFFFFF"
+                        readonly property color screenInk: Theme.hive
+                            ? (Theme.dark ? "#FFDDB3" : "#2C1600")
+                            : (Theme.graphite && !Theme.dark ? "#1E2025" : "#FFFFFF")
                         readonly property string cutoutSvg: {
                             const s = home.screenData
                             if (!s) return ""
@@ -703,11 +806,39 @@ Item {
                                 }
                             }
 
-                            // 3. Measured front camera cutout (SVG path or bounding rects; empty when plain/unknown).
+                        }
+
+                        // Hive: the comb on the phone's screen, in step with the app's.
+                        HiveBackdrop {
+                            visible: Theme.hive
+                            x: phoneArt.bezel
+                            y: phoneArt.bezel
+                            width: phoneArt.innerW
+                            height: phoneArt.innerH
+                            corner: Math.max(2, Math.min(phoneArt.rTl, phoneArt.rTr) - phoneArt.bezel)
+                            ownClock: false
+                            growIn: false
+                            time: Theme.combTime
+                            animate: Theme.combMotion
+                            cell: 7
+                            strength: home.online ? 1 : 0.6
+                            frameMs: Theme.comb.frameMs
+                            breathSeconds: Theme.comb.breathSeconds
+                            pulseSeconds: Theme.comb.pulseSeconds
+                            lineColor: Theme.dark ? Qt.rgba(1.0, 0.73, 0.37, 0.26) : Qt.rgba(0.54, 0.32, 0.0, 0.16)
+                            glowColor: Theme.combGlow
+                            origin: Qt.point(width / 2, height * 0.42)
+                        }
+
+                        // 3. Measured front camera cutout (SVG path or bounding rects; empty when plain/unknown).
+                        Shape {
+                            anchors.fill: parent
+                            visible: phoneArt.cutoutSvg.length > 0
+                            preferredRendererType: Shape.CurveRenderer
                             ShapePath {
-                                strokeWidth: phoneArt.cutoutSvg.length > 0 ? 0.8 : -1
+                                strokeWidth: 0.8
                                 strokeColor: Qt.rgba(1, 1, 1, Theme.dark ? 0.16 : 0.22)
-                                fillColor: phoneArt.cutoutSvg.length > 0 ? phoneArt.frameFill : "transparent"
+                                fillColor: phoneArt.frameFill
                                 PathSvg { path: phoneArt.cutoutSvg }
                             }
                         }

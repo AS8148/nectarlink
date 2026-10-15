@@ -102,6 +102,7 @@ const CMD_SCAN_DOCUMENT: u32 = 6;
 const CMD_COMMAND_PALETTE: u32 = 7;
 const CMD_SHELF: u32 = 8;
 const PBT_APMRESUMEAUTOMATIC: usize = 0x12;
+const PBT_APMPOWERSTATUSCHANGE: usize = 0x0A;
 /// NIN_SELECT | NINF_KEY (shellapi.h): the icon was activated with the keyboard.
 const NIN_KEYSELECT: u32 = NIN_SELECT | 0x1;
 const SPI_SETCLIENTAREAANIMATION: usize = 0x1043;
@@ -722,6 +723,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         WM_POWERBROADCAST => {
             if wparam.0 == PBT_APMRESUMEAUTOMATIC {
                 emit(TrayEvent::Resumed);
+            }
+            // Plugged in or out, or battery saver turned on or off.
+            if wparam.0 == PBT_APMPOWERSTATUSCHANGE {
+                emit(TrayEvent::AppearanceChanged);
             }
             LRESULT(1)
         }

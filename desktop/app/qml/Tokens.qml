@@ -393,6 +393,90 @@ QtObject {
               "warning": "#E2C47A"
             }
           }
+        },
+        "hive": {
+          "comb": {
+            "breathSeconds": 6.0,
+            "cell": 24,
+            "frameMs": 33,
+            "glowAlphaDark": 0.7,
+            "glowAlphaLight": 0.75,
+            "lineAlphaDark": 0.27,
+            "lineAlphaLight": 0.11,
+            "pulseSeconds": 4.5
+          },
+          "description": "Honey on charcoal (Comb, dark) and on warm wax (Wax, light), with a living honeycomb behind the app that grows from the logo, breathes and pulses. Colors are fixed: no wallpaper, artwork or phone colors.",
+          "dynamicColor": false,
+          "fonts": {
+            "display": "Figtree",
+            "label": "Figtree",
+            "mono": "Space Mono",
+            "ui": "Figtree"
+          },
+          "label": {
+            "case": "none",
+            "size": 12.5,
+            "tracking": 0,
+            "weight": 600
+          },
+          "rules": [
+            "The installer and uninstaller always use Hive. In the apps it's a choice, offered by a card on Home that returns after an update or a reinstall once dismissed.",
+            "The comb holds still with reduced motion, in battery or energy saver, when Animated comb is off, and while the window isn't in front.",
+            "The comb is drawn by one shader behind everything; cards stay opaque so text never sits on moving lines.",
+            "Primary buttons are honey with a soft honey glow on hover; outlines and focus rings use honey at low alpha."
+          ],
+          "shape": {
+            "full": 999,
+            "lg": 18,
+            "md": 14,
+            "sm": 10,
+            "xl": 24,
+            "xs": 6
+          },
+          "variants": {
+            "comb": {
+              "error": "#F0A39C",
+              "onError": "#3B0B07",
+              "onPrimary": "#2C1600",
+              "onPrimaryContainer": "#FFDDB3",
+              "onSecondaryContainer": "#F0E0CC",
+              "onSurface": "#EDE6DD",
+              "onSurfaceVariant": "#ABA195",
+              "outline": "#8D8379",
+              "outlineVariant": "#34312D",
+              "primary": "#FFB95F",
+              "primaryContainer": "#5A3A0E",
+              "secondaryContainer": "#2F2A24",
+              "success": "#FFB95F",
+              "surface": "#121214",
+              "surfaceContainer": "#1A1A1D",
+              "surfaceContainerHigh": "#212124",
+              "surfaceContainerHighest": "#29292D",
+              "surfaceContainerLow": "#151517",
+              "warning": "#F5D58A"
+            },
+            "wax": {
+              "error": "#9E2B25",
+              "onError": "#FFFFFF",
+              "onPrimary": "#FFFFFF",
+              "onPrimaryContainer": "#2C1600",
+              "onSecondaryContainer": "#2A1F14",
+              "onSurface": "#1F1B16",
+              "onSurfaceVariant": "#5C4F43",
+              "outline": "#85766A",
+              "outlineVariant": "#DDCBBA",
+              "primary": "#8A5100",
+              "primaryContainer": "#FFDDB3",
+              "secondaryContainer": "#F4E3CD",
+              "success": "#8A5100",
+              "surface": "#FFF8F3",
+              "surfaceContainer": "#F8ECE1",
+              "surfaceContainerHigh": "#F3E5D7",
+              "surfaceContainerHighest": "#EDDDCD",
+              "surfaceContainerLow": "#FCF2E9",
+              "warning": "#7A4A00"
+            }
+          }
         }
       },
       "typography": {

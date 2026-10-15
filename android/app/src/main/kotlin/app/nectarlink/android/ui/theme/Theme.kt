@@ -5,7 +5,9 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.graphics.Color as AndroidColor
 import android.os.Build
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -70,6 +72,8 @@ data class Appearance(
     val dynamicColor: Boolean = true,
     /** True #000000 OLED black surfaces when in dark mode. */
     val amoled: Boolean = false,
+    /** Hive's comb breathes and pulses (still with reduced motion or battery saver). */
+    val combMotion: Boolean = true,
 )
 
 private fun hslTone(hue: Float, sat: Float, lightness: Float): Color {
@@ -321,8 +325,15 @@ private fun ColorScheme.toAmoledScheme(glass: Boolean): ColorScheme = copy(
     outlineVariant = if (glass) Color.White.copy(alpha = 0.12f) else Color(0xFF22252E),
 )
 
-/** Shapes from the tokens: Glass and Bloom are smoothly rounded, Graphite is crisp and architectural. */
-private fun shapes(graphite: Boolean, glass: Boolean) = when {
+/** Shapes from the tokens: Glass and Bloom are smoothly rounded, Hive a little firmer, Graphite crisp. */
+private fun shapes(graphite: Boolean, glass: Boolean, hive: Boolean) = when {
+    hive -> Shapes(
+        extraSmall = RoundedCornerShape(6.dp),
+        small = RoundedCornerShape(10.dp),
+        medium = RoundedCornerShape(14.dp),
+        large = RoundedCornerShape(18.dp),
+        extraLarge = RoundedCornerShape(24.dp),
+    )
     graphite -> Shapes(
         extraSmall = RoundedCornerShape(2.dp),
         small = RoundedCornerShape(3.dp),
@@ -365,10 +376,16 @@ fun nectarSwitchColors(): androidx.compose.material3.SwitchColors {
     }
 }
 
+/**
+ * The app's theme. `backdrop`: this is the app's main window, which draws the
+ * theme's background itself (and Hive's comb on it); other screens keep a
+ * plain opaque background.
+ */
 @Composable
 fun NectarlinkTheme(
     appearance: Appearance = Appearance(),
     mediaSeedColor: UInt? = null,
+    backdrop: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val dark = when (appearance.mode) {
@@ -378,16 +395,24 @@ fun NectarlinkTheme(
     }
     val graphite = appearance.theme == "graphite"
     val glass = appearance.theme == "glass"
+    // Hive keeps its own honey: no wallpaper, artwork or phone colors.
+    val hive = appearance.theme == "hive"
     val isBlackSwatch = !appearance.dynamicColor && appearance.seed == "black"
     val amoledActive = dark && appearance.amoled && (graphite || isBlackSwatch)
-    val error = if (dark) Tokens.errorDark else Tokens.errorLight
+    val error = when {
+        hive -> if (dark) Tokens.hiveCombError else Tokens.hiveWaxError
+        else -> if (dark) Tokens.errorDark else Tokens.errorLight
+    }
     val context = LocalContext.current
     // The settings alone pick the color source. Artwork applies only when the user turned
     // "Media artwork color" on; with nothing playing, it falls back to the wallpaper or preset.
-    val artworkSeed = if (!graphite && appearance.seed == "artwork") mediaSeedColor else null
-    val wallpaper = !graphite && appearance.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val artworkSeed = if (!graphite && !hive && appearance.seed == "artwork") mediaSeedColor else null
+    val wallpaper = !graphite && !hive && appearance.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val wallpaperSeed = rememberWallpaperSeed(enabled = wallpaper && artworkSeed == null)
     val baseScheme = when {
+        hive -> remember(dark, error) {
+            (if (dark) Tokens.hiveComb else Tokens.hiveWax).toScheme(dark, error)
+        }
         graphite -> remember(dark, error) {
             (if (dark) Tokens.graphiteSlate else Tokens.graphitePaper).toScheme(dark, error)
         }
@@ -402,11 +427,15 @@ fun NectarlinkTheme(
             (if (dark) seed.dark else seed.light).toScheme(dark, error)
         }
     }
-    val targetScheme = remember(baseScheme, glass, dark, amoledActive) {
+    val combBehind = hive && backdrop
+    val targetScheme = remember(baseScheme, glass, dark, amoledActive, combBehind) {
         val withGlass = if (glass) baseScheme.toGlassScheme(dark) else baseScheme
-        if (amoledActive) withGlass.toAmoledScheme(glass) else withGlass
+        val withAmoled = if (amoledActive) withGlass.toAmoledScheme(glass) else withGlass
+        // Screens let the comb show through; the window paints the surface under it.
+        if (combBehind) withAmoled.copy(background = Color.Transparent) else withAmoled
     }
     val reducedMotion = rememberReducedMotion()
+    val powerSaver = rememberPowerSaver()
 
     // System bar icons follow the app's theme, which can differ from the system's.
     val view = LocalView.current
@@ -421,20 +450,34 @@ fun NectarlinkTheme(
     }
     val assets = context.assets
     val fonts = remember(assets) { AppFonts(assets) }
-    val currentShapes = remember(graphite, glass) { shapes(graphite, glass) }
+    val currentShapes = remember(graphite, glass, hive) { shapes(graphite, glass, hive) }
     val currentTypography = remember(fonts, graphite) { typography(fonts, graphite) }
     CompositionLocalProvider(
         LocalAppFonts provides fonts,
         LocalReducedMotion provides reducedMotion,
         LocalGlassTheme provides glass,
         LocalAmoledTheme provides amoledActive,
+        LocalHiveTheme provides hive,
     ) {
         MaterialTheme(
             colorScheme = targetScheme,
             shapes = currentShapes,
             typography = currentTypography,
-            content = content,
-        )
+        ) {
+            if (combBehind) {
+                androidx.compose.foundation.layout.Box(
+                    androidx.compose.ui.Modifier.fillMaxSize().background(baseScheme.surface),
+                ) {
+                    HiveComb(
+                        dark = dark,
+                        animate = appearance.combMotion && !reducedMotion && !powerSaver,
+                    )
+                    content()
+                }
+            } else {
+                content()
+            }
+        }
     }
 }
 

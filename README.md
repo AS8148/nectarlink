@@ -112,7 +112,8 @@ The [user guide](docs/guide/README.md) walks through every step and feature.
 searchable **Timeline** of everything that moved, a **Command Palette**
 (`Ctrl+Alt+Space`), a slide-out **Shelf**, a home-screen widget, and a
 **Connection Doctor** that finds and fixes what keeps devices from connecting.
-Three themes, **Bloom**, **Glass** and **Graphite**, each in light and dark.
+Four themes, **Hive**, **Bloom**, **Glass** and **Graphite**, each in light
+and dark.
 
 ## Private by design
 
@@ -133,9 +134,21 @@ Details: [Privacy and security](docs/guide/privacy-and-security.md) and the
 
 ## Screenshots
 
-The Windows app has three themes: **Bloom**, soft and colorful; **Glass**,
-translucent cards over the Windows backdrop; and **Graphite**, ink on paper.
-Each comes in light and dark.
+**Hive** is honey on charcoal or warm wax, with a living honeycomb behind the
+whole app that breathes and sends soft pulses of light from the logo. It looks
+the same on the PC and the phone, and holds still with reduced motion or
+battery saver, or when you turn the animation off.
+
+<p align="center">
+  <img src="docs/screenshots/desktop-hive-home.png" alt="Home on the PC in the Hive theme, dark, with the honeycomb behind it" width="660">
+  <img src="docs/screenshots/android-hive-home.png" alt="The Android app's Home in the Hive theme, dark" width="200"><br>
+  <img src="docs/screenshots/desktop-hive-settings.png" alt="Settings on the PC in the Hive theme, light" width="660"><br>
+  <sub>Hive on the PC and the phone, in dark and light.</sub>
+</p>
+
+The other three: **Bloom**, soft and colorful; **Glass**, translucent cards over
+the Windows backdrop; and **Graphite**, ink on paper. Each comes in light and
+dark.
 
 | Bloom | Glass | Graphite |
 |:---:|:---:|:---:|

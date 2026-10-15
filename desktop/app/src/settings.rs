@@ -17,6 +17,8 @@ const FILE_NAME: &str = "desktop-settings.json";
 pub enum Theme {
     #[default]
     Bloom,
+    /// Honey on charcoal or wax, with the living comb.
+    Hive,
     Glass,
     Graphite,
 }
@@ -25,6 +27,7 @@ impl<'de> Deserialize<'de> for Theme {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer).unwrap_or_default();
         Ok(match s.trim().to_ascii_lowercase().as_str() {
+            "hive" => Theme::Hive,
             "graphite" => Theme::Graphite,
             "glass" | "blurry" => Theme::Glass,
             _ => Theme::Bloom,
@@ -265,6 +268,10 @@ pub struct Settings {
     pub amoled: bool,
     /// Use the Windows 11 Mica backdrop.
     pub backdrop: bool,
+    /// Hive's comb breathes and pulses (it holds still when off, and with
+    /// reduced motion or battery saver whatever this says).
+    #[serde(default = "default_true", alias = "comb_motion")]
+    pub comb_motion: bool,
     /// Closing the window keeps Nectarlink running in the tray.
     #[serde(alias = "close_to_tray")]
     pub close_to_tray: bool,
@@ -395,6 +402,9 @@ pub struct Settings {
     /// Whether the gentle "What's new" card on Home has been dismissed.
     #[serde(default, alias = "whats_new_dismissed")]
     pub whats_new_dismissed: bool,
+    /// Whether the card on Home inviting to try Hive has been answered.
+    #[serde(default, alias = "hive_invite_dismissed")]
+    pub hive_invite_dismissed: bool,
     /// OBS Studio's WebSocket port, for `obs:` Deck commands.
     pub obs_port: u16,
     /// OBS's WebSocket password, encrypted with Windows DPAPI (base64). Never stored in clear.
@@ -409,6 +419,7 @@ impl Default for Settings {
             color_mode: ColorMode::default(),
             amoled: false,
             backdrop: true,
+            comb_motion: true,
             close_to_tray: true,
             auto_clipboard: true,
             clipboard_history: true,
@@ -451,6 +462,7 @@ impl Default for Settings {
             walkthrough_completed: false,
             walkthrough_step: 0,
             whats_new_dismissed: false,
+            hive_invite_dismissed: false,
             obs_port: crate::obs::DEFAULT_PORT,
             obs_password: None,
         }
@@ -556,6 +568,7 @@ mod tests {
             color_mode: ColorMode::Dark,
             amoled: false,
             backdrop: false,
+            comb_motion: false,
             close_to_tray: false,
             auto_clipboard: false,
             clipboard_history: false,
@@ -598,6 +611,7 @@ mod tests {
             walkthrough_completed: true,
             walkthrough_step: 4,
             whats_new_dismissed: true,
+            hive_invite_dismissed: true,
             obs_port: crate::obs::DEFAULT_PORT,
             obs_password: None,
         };
