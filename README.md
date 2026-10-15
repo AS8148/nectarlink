@@ -134,21 +134,15 @@ Details: [Privacy and security](docs/guide/privacy-and-security.md) and the
 
 ## Screenshots
 
-**Hive** is honey on charcoal or warm wax, with a living honeycomb behind the
-whole app that breathes and sends soft pulses of light from the logo. It looks
-the same on the PC and the phone, and holds still with reduced motion or
-battery saver, or when you turn the animation off.
+**Hive** is an exclusive theme: honey, with a living honeycomb that breathes
+behind the app.
 
-<p align="center">
-  <img src="docs/screenshots/desktop-hive-home.png" alt="Home on the PC in the Hive theme, dark, with the honeycomb behind it" width="660">
-  <img src="docs/screenshots/android-hive-home.png" alt="The Android app's Home in the Hive theme, dark" width="200"><br>
-  <img src="docs/screenshots/desktop-hive-settings.png" alt="Settings on the PC in the Hive theme, light" width="660"><br>
-  <sub>Hive on the PC and the phone, in dark and light.</sub>
-</p>
+| Hive, light | Hive, dark |
+|:---:|:---:|
+| <img src="docs/screenshots/desktop-hive-light.png" alt="Home in the Hive theme, light"> | <img src="docs/screenshots/desktop-hive-dark.png" alt="Home in the Hive theme, dark"> |
 
-The other three: **Bloom**, soft and colorful; **Glass**, translucent cards over
-the Windows backdrop; and **Graphite**, ink on paper. Each comes in light and
-dark.
+Also **Bloom**, soft and colorful; **Glass**, translucent cards over the
+Windows backdrop; and **Graphite**, ink on paper. All in light and dark.
 
 | Bloom | Glass | Graphite |
 |:---:|:---:|:---:|
