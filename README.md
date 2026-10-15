@@ -165,8 +165,7 @@ Windows backdrop; and **Graphite**, ink on paper. All in light and dark.
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/desktop-pairing.png" alt="Pairing a phone by QR code" width="620">
-  <img src="docs/screenshots/android-home.png" alt="The Android app's Home with the PC connected" width="168"><br>
+  <img src="docs/screenshots/pairing-and-android.png" alt="Pairing a phone by QR code, next to the Android app's Home with the PC connected" width="880"><br>
   <sub>Pairing by QR code, and the Android app once connected.</sub>
 </p>
 
