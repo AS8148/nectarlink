@@ -75,6 +75,11 @@ pub mod qobject {
         #[qproperty(QString, update_version)]
         /// Checking for or installing an update.
         #[qproperty(bool, update_busy)]
+        /// How far the update's download is, 0 to 1 (-1: not downloading,
+        /// or the size isn't known yet).
+        #[qproperty(f64, update_progress)]
+        /// What the update is doing, for Settings ("" when idle).
+        #[qproperty(QString, update_status)]
         /// Device ID and name of a phone asking to control this PC for the
         /// first time while `remote_input` is off ("" when none).
         #[qproperty(QString, remote_prompt_device_id)]
@@ -412,6 +417,8 @@ pub struct AppControllerRust {
     can_update: bool,
     update_version: QString,
     update_busy: bool,
+    update_progress: f64,
+    update_status: QString,
     remote_prompt_device_id: QString,
     remote_prompt_device_name: QString,
     pc_mirror_prompt_device_id: QString,
@@ -487,7 +494,9 @@ pub fn toggle_shelf_from_anywhere() {
     }
 }
 
-/// Downloads and starts the update (from the app or its notification).
+/// Downloads and starts the update (from the app or its notification),
+/// showing how far the download is. The app quits for the installer only
+/// once the download is checked; until then it keeps working.
 pub fn install_update_in_background() {
     let Some(qt) = controller() else { return };
     let started = qt.queue(|mut object| {
@@ -495,13 +504,34 @@ pub fn install_update_in_background() {
             return;
         }
         object.as_mut().set_update_busy(true);
-        object.as_mut().toast(QString::from("Downloading the update…"));
+        object.as_mut().set_update_progress(-1.0);
+        object.as_mut().set_update_status(QString::from("Downloading the update…"));
         let qt = object.qt_thread();
         std::thread::spawn(move || {
-            let result = crate::updater::install();
-            let _ = qt.queue(move |mut object| {
-                object.as_mut().set_update_busy(false);
-                if let Err(message) = result {
+            let progress_qt = qt.clone();
+            let result = crate::updater::install(move |done, total| {
+                let fraction = if total > 0 { (done as f64 / total as f64).clamp(0.0, 1.0) } else { -1.0 };
+                let text = if total > 0 {
+                    format!("Downloading the update · {} of {}", megabytes(done), megabytes(total))
+                } else {
+                    "Downloading the update…".to_owned()
+                };
+                let _ = progress_qt.queue(move |mut object| {
+                    object.as_mut().set_update_progress(fraction);
+                    object.as_mut().set_update_status(QString::from(&text));
+                });
+            });
+            let _ = qt.queue(move |mut object| match result {
+                Ok(()) => {
+                    object.as_mut().set_update_progress(-1.0);
+                    object
+                        .as_mut()
+                        .set_update_status(QString::from("Installing. Nectarlink reopens by itself."));
+                }
+                Err(message) => {
+                    object.as_mut().set_update_busy(false);
+                    object.as_mut().set_update_progress(-1.0);
+                    object.as_mut().set_update_status(QString::default());
                     object.toast(QString::from(&message));
                 }
             });
@@ -510,6 +540,11 @@ pub fn install_update_in_background() {
     if started.is_err() {
         tracing::warn!("can't start the update");
     }
+}
+
+/// `12.3 MB`, for download progress.
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_000_000.0)
 }
 
 /// Runs a Doctor fix (if any), then the checks, off the UI thread; the
@@ -676,6 +711,8 @@ impl cxx_qt::Initialize for qobject::AppController {
         self.as_mut().set_version(QString::from(env!("CARGO_PKG_VERSION")));
         self.as_mut().set_current_page(QString::from("home"));
         self.as_mut().set_can_update(crate::updater::can_update());
+        // Nothing downloading yet (0 would show an empty bar).
+        self.as_mut().set_update_progress(-1.0);
         self.as_mut().set_clipboard_history(QString::from(&crate::clipboard::history_json()));
         self.as_mut().set_timeline_preview(QString::from(&super::timeline::preview_json()));
         self.as_mut().set_command_palette_results(QString::from("[]"));

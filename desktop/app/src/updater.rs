@@ -13,9 +13,16 @@
 //! away. Without the task (a copy installed before it existed), "Update"
 //! runs the installer with the usual administrator prompt.
 //!
-//! The installer replaces the running app, so the app starts a small hidden
-//! relauncher first and quits; the relauncher opens the new version once the
-//! installer is done.
+//! The app downloads the installer first, as the user, showing progress and
+//! resuming after a dropped connection ([`stage`]), into a shared folder.
+//! The task takes that file only when it matches the release's sums, which
+//! it fetches itself, and copies it somewhere only SYSTEM can write before
+//! checking and running it; otherwise it downloads the installer itself.
+//!
+//! The installer replaces the running app, so once the download is ready the
+//! app starts a small hidden relauncher and quits; the relauncher opens the
+//! new version once the installer is done, or the old one again if the
+//! update didn't go through.
 
 use std::{
     os::windows::process::CommandExt,
@@ -40,7 +47,7 @@ use crate::{
 const LATEST: &str = "https://api.github.com/repos/thtbee/nectarlink/releases/latest";
 const FIRST_CHECK: Duration = Duration::from_secs(30);
 const EVERY: Duration = Duration::from_secs(24 * 3600);
-const MAX_INSTALLER: usize = 400 * 1024 * 1024;
+const MAX_INSTALLER: u64 = 400 * 1024 * 1024;
 /// The toast "device" for update notices.
 pub const TOAST_GROUP: &str = "update";
 pub const ACTION_UPDATE: &str = "update";
@@ -116,7 +123,10 @@ pub fn start() {
                     && task_registered()
                 {
                     tracing::info!("installing the update at a quiet moment");
-                    if let Err(e) = install_with_task(false) {
+                    let staged = available().map(|update| stage(&update, |_, _| {}));
+                    if let Some(Err(e)) = staged {
+                        tracing::info!(error = %e, "the automatic update couldn't be downloaded yet");
+                    } else if let Err(e) = install_with_task(false) {
                         tracing::warn!(error = e, "the automatic update didn't start");
                     }
                 }
@@ -303,11 +313,17 @@ fn task_registered() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Installs the update found: with [`TASK`] when it's there (no prompt),
+/// Installs the update found: downloads it (reporting `progress(done,
+/// total)`), then installs with [`TASK`] when it's there (no prompt),
 /// otherwise by running the installer, which asks for administrator rights.
-/// Blocking. Returns what went wrong, in words for the user.
-pub fn install() -> Result<(), String> {
-    available().ok_or("There's no update to install.")?;
+/// Blocking. Returns what went wrong, in words for the user. On success the
+/// app is about to quit for the installer.
+pub fn install(progress: impl FnMut(u64, u64)) -> Result<(), String> {
+    let update = available().ok_or("There's no update to install.")?;
+    let staged = stage(&update, progress).map_err(|e| {
+        tracing::warn!(error = %e, "update download failed");
+        e.for_user()
+    })?;
     if task_registered() {
         match install_with_task(true) {
             Ok(()) => return Ok(()),
@@ -316,7 +332,107 @@ pub fn install() -> Result<(), String> {
             }
         }
     }
-    install_with_prompt()
+    install_with_prompt(&update, &staged)
+}
+
+/// Why a download didn't produce a checked installer.
+#[derive(Debug)]
+pub enum StageError {
+    Network(String),
+    Damaged,
+    Disk(String),
+}
+
+impl StageError {
+    fn for_user(&self) -> String {
+        match self {
+            StageError::Network(_) => {
+                "The update couldn't be downloaded. Check your internet connection and try again.".into()
+            }
+            StageError::Damaged => "The download was damaged, so it wasn't installed. Try again.".into(),
+            StageError::Disk(_) => {
+                "The update couldn't be saved. Check that there's free space and try again.".into()
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for StageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StageError::Network(e) => write!(f, "network: {e}"),
+            StageError::Damaged => f.write_str("checksum mismatch"),
+            StageError::Disk(e) => write!(f, "disk: {e}"),
+        }
+    }
+}
+
+/// Where the app leaves a downloaded installer for the task:
+/// `%ProgramData%\Nectarlink\updates`. Anyone may write here; the task only
+/// runs a copy that matches the release's own sums.
+fn staging_dir() -> PathBuf {
+    std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+        .join("Nectarlink")
+        .join("updates")
+}
+
+/// The release's SHA-256 for its installer.
+fn expected_hash(update: &Update) -> Result<String, StageError> {
+    let sums = http::get_retrying(&update.sums_url, 64 * 1024).map_err(StageError::Network)?;
+    listed_hash(&String::from_utf8_lossy(&sums), &update.installer_name).ok_or(StageError::Damaged)
+}
+
+fn sha256_file(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 256 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Downloads the installer into the staging folder (continuing a download
+/// cut short before), checks it, and returns its path. Reuses one already
+/// downloaded and checked.
+pub fn stage(update: &Update, progress: impl FnMut(u64, u64)) -> Result<PathBuf, StageError> {
+    let expected = expected_hash(update)?;
+    let dir = staging_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| StageError::Disk(e.to_string()))?;
+    let path = dir.join(&update.installer_name);
+    let part = dir.join(format!("{}.part", update.installer_name));
+    // Older versions' files.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p != path && p != part {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+    if sha256_file(&path).is_ok_and(|h| h == expected) {
+        return Ok(path);
+    }
+    let _ = std::fs::remove_file(&path);
+    http::download(&update.installer_url, &part, MAX_INSTALLER, progress).map_err(StageError::Network)?;
+    match sha256_file(&part) {
+        Ok(actual) if actual == expected => {}
+        Ok(_) => {
+            let _ = std::fs::remove_file(&part);
+            return Err(StageError::Damaged);
+        }
+        Err(e) => return Err(StageError::Disk(e.to_string())),
+    }
+    std::fs::rename(&part, &path).map_err(|e| StageError::Disk(e.to_string()))?;
+    Ok(path)
 }
 
 /// Starts [`TASK`], and quits so the installer can replace this copy; a
@@ -375,12 +491,19 @@ fn relauncher_script(exe: &str, version: &str, arguments: &str) -> String {
     };
     format!(
         "$key = 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Nectarlink'\n\
-         $deadline = (Get-Date).AddMinutes(10)\n\
-         Start-Sleep -Seconds 5\n\
+         $log = Join-Path (Split-Path -Parent '{exe}') 'update.log'\n\
+         $since = Get-Date\n\
+         $deadline = $since.AddMinutes(10)\n\
+         Start-Sleep -Seconds 3\n\
          while ((Get-Date) -lt $deadline) {{\n\
            $installed = (Get-ItemProperty -Path $key -Name DisplayVersion -ErrorAction SilentlyContinue).DisplayVersion\n\
            $running = Get-Process -ErrorAction SilentlyContinue | Where-Object {{ $_.Name -like 'Nectarlink-*-setup' }}\n\
            if ($installed -eq '{version}' -and -not $running) {{ break }}\n\
+           $logged = Get-Item -LiteralPath $log -ErrorAction SilentlyContinue\n\
+           if ($logged -and $logged.LastWriteTime -gt $since -and -not $running) {{\n\
+             $last = Get-Content -LiteralPath $log -Tail 1 -ErrorAction SilentlyContinue\n\
+             if ($last -and $last -notmatch 'installing') {{ break }}\n\
+           }}\n\
            Start-Sleep -Seconds 2\n\
          }}\n\
          {start}\n"
@@ -482,62 +605,50 @@ fn service_dir() -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
-/// Downloads the installer and its sums into `dir`, checks it, and returns
-/// its path. Errors are for the log.
+/// The installer in `dir` (only SYSTEM can write there), checked against
+/// the release's sums: copied from the app's download when that matches,
+/// downloaded otherwise. Errors are for the log.
 fn download_verified(update: &Update, dir: &Path) -> Result<PathBuf, String> {
-    let sums = http::get(&update.sums_url, 64 * 1024)?;
-    let expected = listed_hash(&String::from_utf8_lossy(&sums), &update.installer_name)
-        .ok_or("the checksum is missing from the release")?;
-    let installer = http::get(&update.installer_url, MAX_INSTALLER)?;
-    let actual = Sha256::digest(&installer).iter().map(|b| format!("{b:02x}")).collect::<String>();
-    if actual != expected {
-        return Err("checksum mismatch".into());
-    }
+    let expected = expected_hash(update).map_err(|e| e.to_string())?;
     let path = dir.join(&update.installer_name);
-    {
-        use std::io::Write;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|e| e.to_string())?;
-        file.write_all(&installer).and_then(|()| file.sync_all()).map_err(|e| e.to_string())?;
+    // Copied first and checked after, so what's checked is what runs.
+    let staged = staging_dir().join(&update.installer_name);
+    if staged.is_file() && std::fs::copy(&staged, &path).is_ok() {
+        if sha256_file(&path).is_ok_and(|h| h == expected) {
+            return Ok(path);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+    http::download(&update.installer_url, &path, MAX_INSTALLER, |_, _| {})?;
+    if sha256_file(&path).map_err(|e| e.to_string())? != expected {
+        let _ = std::fs::remove_file(&path);
+        return Err("checksum mismatch".into());
     }
     Ok(path)
 }
 
-/// The installer with Windows' administrator prompt (no update task).
-fn install_with_prompt() -> Result<(), String> {
-    let update = available().ok_or("There's no update to install.")?;
+/// The installer with Windows' administrator prompt (no update task): a
+/// fresh copy of the download in this user's temp folder, checked again, so
+/// what runs is what was checked.
+fn install_with_prompt(update: &Update, staged: &Path) -> Result<(), String> {
     let failed = |e: String| {
         tracing::warn!(error = e, "update failed");
-        "The update couldn't be downloaded. Try again later.".to_owned()
+        "The update couldn't be started. Try again.".to_owned()
     };
-    let sums = http::get(&update.sums_url, 64 * 1024).map_err(failed)?;
-    let expected = listed_hash(&String::from_utf8_lossy(&sums), &update.installer_name)
-        .ok_or("The update's checksum is missing, so it wasn't installed.")?;
-    let installer = http::get(&update.installer_url, MAX_INSTALLER).map_err(failed)?;
-    let actual = Sha256::digest(&installer).iter().map(|b| format!("{b:02x}")).collect::<String>();
-    if actual != expected {
-        tracing::warn!("update checksum mismatch");
-        return Err("The download was damaged, so it wasn't installed. Try again later.".into());
-    }
+    let expected = expected_hash(update).map_err(|e| e.for_user())?;
     let dir = std::env::temp_dir().join("Nectarlink update");
     let path: PathBuf = dir.join(&update.installer_name);
-    // A fresh file each time (an older copy is removed first), written in one go and run
-    // straight after, so what runs is what was checked.
     std::fs::create_dir_all(&dir)
         .and_then(|()| match std::fs::remove_file(&path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
         })
-        .and_then(|()| {
-            use std::io::Write;
-            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
-            file.write_all(&installer)?;
-            file.sync_all()
-        })
+        .and_then(|()| std::fs::copy(staged, &path).map(|_| ()))
         .map_err(|e| failed(e.to_string()))?;
+    if sha256_file(&path).map_err(|e| failed(e.to_string()))? != expected {
+        let _ = std::fs::remove_file(&path);
+        return Err(StageError::Damaged.for_user());
+    }
     // Silent, then opens the new version (/RUN); Windows asks for
     // permission first. The installer closes this copy itself.
     crate::win::shell::run(&path, "/S /RUN").map_err(failed)?;
@@ -568,9 +679,28 @@ pub fn note_running_version(data_dir: &Path) -> Option<String> {
 /// Just updated: says so, and when the window was asked for, brings it to
 /// the front. Started from the background, Windows would otherwise leave
 /// the new window behind whatever the user has open.
-pub fn announce_update(previous: Option<String>, shown: bool) {
+pub fn announce_update(previous: String, shown: bool) {
     let current = env!("CARGO_PKG_VERSION");
-    tracing::info!(from = previous.as_deref().unwrap_or("?"), to = current, "updated");
+    tracing::info!(from = previous, to = current, "updated");
+    after_start(
+        shown,
+        format!("Nectarlink is updated to {current}"),
+        "Your phone reconnects on its own.".into(),
+    );
+}
+
+/// The relauncher opened this version again because the update didn't
+/// install (`update.log` says why).
+pub fn announce_update_failed(shown: bool) {
+    tracing::warn!("the update didn't install");
+    after_start(
+        shown,
+        "The update didn't install".into(),
+        "Nectarlink is still on the version you had. Try again from Settings.".into(),
+    );
+}
+
+fn after_start(shown: bool, title: String, body: String) {
     std::thread::spawn(move || {
         // Once the window exists.
         std::thread::sleep(Duration::from_millis(1500));
@@ -580,8 +710,8 @@ pub fn announce_update(previous: Option<String>, shown: bool) {
         toast::show(toast::Toast {
             device: TOAST_GROUP.into(),
             key: "updated".into(),
-            title: format!("Nectarlink is updated to {current}"),
-            body: "Your phone reconnects on its own.".into(),
+            title,
+            body,
             attribution: "Nectarlink".into(),
             icon: None,
             image: None,

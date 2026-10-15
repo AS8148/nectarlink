@@ -551,9 +551,11 @@ fn main() -> ExitCode {
         updater::set_auto(settings.auto_update);
         updater::set_auto_install(settings.install_updates);
         updater::start();
-        let previous = updater::note_running_version(&data_dir);
-        if previous.is_some() || options.updated {
-            updater::announce_update(previous, !options.minimized);
+        match (updater::note_running_version(&data_dir), options.updated) {
+            (Some(previous), _) => updater::announce_update(previous, !options.minimized),
+            // Reopened by the relauncher, still on this version.
+            (None, true) => updater::announce_update_failed(!options.minimized),
+            (None, false) => {}
         }
     }
     // Requests left while no instance was running, then this launch's own.

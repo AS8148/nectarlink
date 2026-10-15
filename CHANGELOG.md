@@ -4,6 +4,36 @@ All notable changes to Nectarlink. Versions follow
 [semantic versioning](https://semver.org); before 1.0, a minor version may
 change things that need a step from you, and its notes say so.
 
+## 0.1.3 (2026-10-15)
+
+Updating the Windows app works on slow or unsteady connections, and shows
+how far it is.
+
+### Downloads
+
+| Download | For | Needs |
+|---|---|---|
+| [Nectarlink-0.1.3-x64-setup.exe](https://github.com/thtbee/nectarlink/releases/download/v0.1.3/Nectarlink-0.1.3-x64-setup.exe) | Windows | Windows 11, 64-bit |
+| [Nectarlink-0.1.3-android.apk](https://github.com/thtbee/nectarlink/releases/download/v0.1.3/Nectarlink-0.1.3-android.apk) | Android | Android 8.0 or newer |
+
+Both are listed with their SHA-256 hashes in [SHA256SUMS.txt](https://github.com/thtbee/nectarlink/releases/download/v0.1.3/SHA256SUMS.txt).
+Installed copies update themselves. If **Update** in 0.1.2 or earlier closes
+Nectarlink and nothing happens, install this version from the link above
+once; updates after it work from the app.
+
+### Fixed
+
+- **Updating the Windows app.** Clicking **Update** closed Nectarlink right
+  away, and the download that followed in the background could time out on a
+  slow connection to GitHub's download server. The update then failed with no
+  sign of it, and Nectarlink reopened only minutes later. Now Nectarlink stays
+  open while it downloads, shows the progress in **Settings › Connection &
+  About**, resumes a download that was cut off, and closes only once the
+  update is downloaded and checked. If an update doesn't install, Nectarlink
+  reopens and says so.
+- Slow responses from GitHub no longer fail update checks or downloads: the
+  Windows app waits longer and tries again.
+
 ## 0.1.2 (2026-10-15)
 
 A smoother update on both devices, and the phone reconnects on its own after

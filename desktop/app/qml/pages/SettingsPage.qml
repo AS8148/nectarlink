@@ -2962,10 +2962,33 @@ Item {
                             width: parent.width
                             iconPath: Icons.desktop
                             title: qsTr("Nectarlink %1").arg(AppController.version)
-                            description: qsTr("This PC: %1").arg(AppController.deviceName)
+                            description: AppController.updateStatus.length > 0
+                                         ? AppController.updateStatus
+                                         : qsTr("This PC: %1").arg(AppController.deviceName)
                             Row {
                                 spacing: 8
-                                Spinner { anchors.verticalCenter: parent.verticalCenter; visible: AppController.updateBusy }
+                                // The download's progress, or a spinner while its size isn't known.
+                                Rectangle {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: AppController.updateBusy && AppController.updateProgress >= 0
+                                    width: 120
+                                    height: 4
+                                    radius: 2
+                                    color: Theme.surfaceContainerHighest
+                                    Accessible.role: Accessible.ProgressBar
+                                    Accessible.name: qsTr("Update download")
+                                    Rectangle {
+                                        height: parent.height
+                                        radius: parent.radius
+                                        width: parent.width * Math.max(0, Math.min(1, AppController.updateProgress))
+                                        color: Theme.primary
+                                        Behavior on width { enabled: !Theme.reduceMotion; NumberAnimation { duration: 180 } }
+                                    }
+                                }
+                                Spinner {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: AppController.updateBusy && AppController.updateProgress < 0
+                                }
                                 Button {
                                     visible: AppController.canUpdate
                                     anchors.verticalCenter: parent.verticalCenter
