@@ -4,14 +4,6 @@ All notable changes to Nectarlink. Versions follow
 [semantic versioning](https://semver.org); before 1.0, a minor version may
 change things that need a step from you, and its notes say so.
 
-## Unreleased
-
-### Fixed
-
-- Windows: album art no longer goes blank on the Home media card after the track
-  changes or the card switches between the phone and this PC. The same fix covers
-  rounded images elsewhere (notifications, calls, messages, the shelf).
-
 ## 0.1.3 (2026-10-15)
 
 Hive, a new theme for both apps, and updates to the Windows app that work on
@@ -59,6 +51,10 @@ once; updates after it work from the app.
   reopens and says so.
 - Slow responses from GitHub no longer fail update checks or downloads: the
   Windows app waits longer and tries again.
+- Album art no longer goes blank on the Windows app's Home media card after
+  the track changes or the card switches between the phone and this PC. The
+  same fix covers rounded images in notifications, calls, messages and the
+  shelf.
 
 ## 0.1.2 (2026-10-15)
 
