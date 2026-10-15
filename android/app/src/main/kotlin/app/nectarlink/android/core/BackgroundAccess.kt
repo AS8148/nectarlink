@@ -41,14 +41,14 @@ enum class OemBrand {
 
 /**
  * Running unrestricted in the background. Without it, battery savers (and
- * OEM background app killers in particular) pause Nectarlink between events,
+ * OEM background app killers in particular) pause NectarLink between events,
  * so a PC's requests (replies, dismissals, find my phone) time out.
  */
 object BackgroundAccess {
     fun isUnrestricted(context: Context): Boolean =
         context.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) ?: true
 
-    /** Android's prompt to let Nectarlink run unrestricted. */
+    /** Android's prompt to let NectarLink run unrestricted. */
     @SuppressLint("BatteryLife") // A companion that must stay reachable is the case this exists for.
     fun requestIntent(context: Context): Intent =
         Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri())
@@ -169,7 +169,7 @@ object BackgroundAccess {
 
     /**
      * Returns the first OEM battery/autostart settings intent that resolves on
-     * this phone, or falls back to Nectarlink's App info screen (`ACTION_APPLICATION_DETAILS_SETTINGS`).
+     * this phone, or falls back to NectarLink's App info screen (`ACTION_APPLICATION_DETAILS_SETTINGS`).
      */
     fun oemSettingsIntent(context: Context, oem: OemBrand = detectOem()): Intent {
         val pm = context.packageManager
@@ -189,7 +189,7 @@ object BackgroundAccess {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     /**
-     * Whether Nectarlink was installed other than by an app store (from a
+     * Whether NectarLink was installed other than by an app store (from a
      * file, a browser download, or another installer). Android 13 and newer
      * may then hold back some settings ("restricted settings") until the user
      * allows them from App info. There is no public way to read that state

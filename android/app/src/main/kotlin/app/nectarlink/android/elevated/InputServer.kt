@@ -886,7 +886,7 @@ object InputServer {
             val usage = androidKeyCodeToHidUsage(androidKeyCode) ?: return false
             if (!keyboardAttempted) {
                 keyboardAttempted = true
-                keyboardFd = openDevice("Nectarlink Virtual Keyboard", 0x4EE7, KEYBOARD_RD)
+                keyboardFd = openDevice("NectarLink Virtual Keyboard", 0x4EE7, KEYBOARD_RD)
             }
             val fd = keyboardFd ?: return false
             val down = ByteArray(8).apply { this[2] = usage.toByte() }
@@ -898,7 +898,7 @@ object InputServer {
         fun sendGamepadReport(buttons: Int, lx: Int, ly: Int, rx: Int, ry: Int, lt: Int, rt: Int): Boolean {
             if (!gamepadAttempted) {
                 gamepadAttempted = true
-                gamepadFd = openDevice("Nectarlink Virtual Gamepad", 0x4EE8, GAMEPAD_RD)
+                gamepadFd = openDevice("NectarLink Virtual Gamepad", 0x4EE8, GAMEPAD_RD)
             }
             val fd = gamepadFd ?: return false
             val report = java.nio.ByteBuffer.allocate(12).order(java.nio.ByteOrder.LITTLE_ENDIAN).apply {

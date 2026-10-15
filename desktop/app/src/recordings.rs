@@ -522,7 +522,7 @@ pub fn on_done(transfer: Transfer) {
             key: final_path.to_string_lossy().into_owned(),
             title: format!("Recording from {device} saved"),
             body,
-            attribution: "Nectarlink".into(),
+            attribution: "NectarLink".into(),
             icon: None,
             image: None,
             actions: vec![(ACTION_OPEN.into(), "Open".into()), (ACTION_SHOW.into(), "Show in folder".into())],

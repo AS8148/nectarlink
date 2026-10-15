@@ -1,6 +1,6 @@
 # Releasing
 
-How a version of Nectarlink gets from `main` to people's devices, and how the
+How a version of NectarLink gets from `main` to people's devices, and how the
 apps update themselves afterwards.
 
 ## What a release is
@@ -22,7 +22,9 @@ Both apps' updaters need all three: they only accept an installer that
    place it's set: the Windows app, the installer and the Android app
    (`versionName`, and `versionCode` derived from it) all read it. Use
    `MAJOR.MINOR.PATCH`; a pre-release such as `0.2.0-beta.1` is allowed, and
-   `[workspace.metadata.release] name` gives the release a name.
+   `[workspace.metadata.release] name` gives the release a name. The
+   README's download table links straight to the files, so change the
+   version in its two links too.
 2. **Checks.** `./scripts/check.ps1 -Android` locally, and a green CI run on
    the commit to release.
 3. **Tag and push.** `git tag v<version>` on that commit and push the tag.
@@ -67,7 +69,7 @@ Signing. Either plugs in after `package.ps1` builds the installer, before
   [security model](security-model.md#automatic-updates-and-release-verification).
 - **Android** (`update/AppUpdater.kt`): checks daily from the connection
   service and when the app opens, and installs through `PackageInstaller`.
-  Android 12 and later skip the confirmation once Nectarlink installed the
+  Android 12 and later skip the confirmation once NectarLink installed the
   running version itself; the first update after a manual install asks once.
 
 ## Testing an update before publishing

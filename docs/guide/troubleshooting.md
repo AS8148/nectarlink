@@ -4,7 +4,7 @@ If your phone and PC cannot find each other, disconnect when your phone screen t
 
 ## 1. Run the `Connection Doctor` First
 
-Nectarlink includes a built-in diagnostic tool on Windows that automatically detects the most common network blockers and fixes what it can.
+NectarLink includes a built-in diagnostic tool on Windows that automatically detects the most common network blockers and fixes what it can.
 
 1. On your PC, open **Settings › Connection & About**.
 2. Next to **Connection Doctor**, click **Check**.
@@ -16,48 +16,48 @@ Nectarlink includes a built-in diagnostic tool on Windows that automatically det
 
 ## 2. Phone Disconnects When Its Screen Is Off (Per-OEM Battery Guides)
 
-If Nectarlink stays connected while the Android app is open on screen, but drops its connection a few minutes after you lock your phone (causing inline replies, notifications, or file transfers from your PC to wait or time out), Android or your phone manufacturer's battery manager is putting Nectarlink to sleep.
+If NectarLink stays connected while the Android app is open on screen, but drops its connection a few minutes after you lock your phone (causing inline replies, notifications, or file transfers from your PC to wait or time out), Android or your phone manufacturer's battery manager is putting NectarLink to sleep.
 
 ### Step 1: Allow Standard Android Background Access
 
-1. On your phone, open **Nectarlink › Settings › Permissions › Background & battery**.
-2. Next to **Stay reachable in the background**, tap **Allow** and confirm Android's prompt to let Nectarlink run without battery restrictions (`Unrestricted`).
+1. On your phone, open **NectarLink › Settings › Permissions › Background & battery**.
+2. Next to **Stay reachable in the background**, tap **Allow** and confirm Android's prompt to let NectarLink run without battery restrictions (`Unrestricted`).
 
 ### Step 2: Apply Your Phone Brand's Extra Battery Setting
 
-Several Android manufacturers add their own proprietary background task killers on top of standard Android. Nectarlink detects your phone's manufacturer and shows the matching guide right inside **Settings › Permissions › Background & battery** (tap **Battery settings** there to jump directly to the system screen):
+Several Android manufacturers add their own proprietary background task killers on top of standard Android. NectarLink detects your phone's manufacturer and shows the matching guide right inside **Settings › Permissions › Background & battery** (tap **Battery settings** there to jump directly to the system screen):
 
 | Phone Brand | Required Settings |
 | :--- | :--- |
-| **Samsung (One UI)** | 1. Open **Android Settings › Apps › Nectarlink › Battery** and select **Unrestricted**.<br>2. Open **Android Settings › Device care › Battery › Background usage limits** and make sure Nectarlink is not in **Sleeping apps** or **Deep sleeping apps** (add it to **Never auto sleeping apps**). |
-| **Google Pixel** | Open **Android Settings › Apps › Nectarlink › App battery usage**, tap **Allow background usage** (the row text itself, not just the toggle), and select **Unrestricted**. |
-| **Xiaomi / Redmi / POCO (HyperOS / MIUI)** | 1. Open **Android Settings › Apps › Manage apps › Nectarlink** and turn **Autostart** (or **Background autostart**) **On**.<br>2. Tap **Battery saver** and select **No restrictions**. |
-| **OnePlus (OxygenOS)** | Open **Android Settings › Apps › App management › Nectarlink › Battery usage** and turn on both **Allow background activity** and **Allow auto-launch**. |
-| **Oppo / Realme (ColorOS / Realme UI)** | Open **Android Settings › Apps › App management › Nectarlink › Battery usage** and turn on both **Allow background activity** and **Allow auto-launch**. |
-| **Vivo / iQOO (Funtouch OS / OriginOS)** | Open **Android Settings › Apps › Nectarlink › Battery**, select **Unrestricted** (or **High background power usage**), and enable **Autostart** in Background power consumption management. |
-| **Huawei / Honor (EMUI)** | Open **Phone Manager (or System Optimizer) › App launch**, turn **Off** **Manage automatically** for Nectarlink, and keep all three toggles (**Auto-launch**, **Secondary launch**, and **Run in background**) turned **On**. |
+| **Samsung (One UI)** | 1. Open **Android Settings › Apps › NectarLink › Battery** and select **Unrestricted**.<br>2. Open **Android Settings › Device care › Battery › Background usage limits** and make sure NectarLink is not in **Sleeping apps** or **Deep sleeping apps** (add it to **Never auto sleeping apps**). |
+| **Google Pixel** | Open **Android Settings › Apps › NectarLink › App battery usage**, tap **Allow background usage** (the row text itself, not just the toggle), and select **Unrestricted**. |
+| **Xiaomi / Redmi / POCO (HyperOS / MIUI)** | 1. Open **Android Settings › Apps › Manage apps › NectarLink** and turn **Autostart** (or **Background autostart**) **On**.<br>2. Tap **Battery saver** and select **No restrictions**. |
+| **OnePlus (OxygenOS)** | Open **Android Settings › Apps › App management › NectarLink › Battery usage** and turn on both **Allow background activity** and **Allow auto-launch**. |
+| **Oppo / Realme (ColorOS / Realme UI)** | Open **Android Settings › Apps › App management › NectarLink › Battery usage** and turn on both **Allow background activity** and **Allow auto-launch**. |
+| **Vivo / iQOO (Funtouch OS / OriginOS)** | Open **Android Settings › Apps › NectarLink › Battery**, select **Unrestricted** (or **High background power usage**), and enable **Autostart** in Background power consumption management. |
+| **Huawei / Honor (EMUI)** | Open **Phone Manager (or System Optimizer) › App launch**, turn **Off** **Manage automatically** for NectarLink, and keep all three toggles (**Auto-launch**, **Secondary launch**, and **Run in background**) turned **On**. |
 
 ## 3. Android 13+ "Restricted Settings" (Grayed-Out Notification or Accessibility Switch)
 
 On Android 13 and newer, if you install an APK downloaded from a browser or GitHub Releases, Android disables the **Notification access** and **Accessibility** switches until you explicitly allow restricted settings for that app:
 
-1. Tap **Allow** on the **Show notifications on your PC** or **Use your PC's mouse and keyboard** row in Nectarlink so Android sees that you tried to turn it on once.
-2. Return to Nectarlink's **Settings › Permissions** and tap **App info** (or open **Android Settings › Apps › Nectarlink**).
+1. Tap **Allow** on the **Show notifications on your PC** or **Use your PC's mouse and keyboard** row in NectarLink so Android sees that you tried to turn it on once.
+2. Return to NectarLink's **Settings › Permissions** and tap **App info** (or open **Android Settings › Apps › NectarLink**).
 3. Tap the **three-dot menu** in the top-right corner of the App info screen and tap **Allow restricted settings**.
 4. Authenticate with your fingerprint, face, or PIN.
-5. Go back to Nectarlink and tap **Allow** again. The switch can now be turned on normally.
+5. Go back to NectarLink and tap **Allow** again. The switch can now be turned on normally.
 
 ## 4. Troubleshooting `Elevated` (Wireless Debugging)
 
 ### The 6-Digit Pairing Code Notification Does Not Appear or Fails
 
-- **Keep the code dialog open on screen**: Android invalidates the 6-digit Wireless Debugging pairing code the moment you navigate away from the **Pair device with pairing code** dialog. Keep that dialog visible on screen, pull down your notification shade over it, tap **Enter code** on Nectarlink's notification, and type the 6 digits there.
+- **Keep the code dialog open on screen**: Android invalidates the 6-digit Wireless Debugging pairing code the moment you navigate away from the **Pair device with pairing code** dialog. Keep that dialog visible on screen, pull down your notification shade over it, tap **Enter code** on NectarLink's notification, and type the 6 digits there.
 - **Make sure Wi-Fi is connected**: Android's built-in Wireless Debugging only runs while connected to a Wi-Fi network.
-- **If the phone says "The phone forgot Nectarlink's pairing"**: If you tapped **Forget all** under Paired devices in Android's Wireless Debugging settings, open Nectarlink's **Settings › Permissions › Control from your PC** and tap **Set up** to pair Wireless Debugging again.
+- **If the phone says "The phone forgot NectarLink's pairing"**: If you tapped **Forget all** under Paired devices in Android's Wireless Debugging settings, open NectarLink's **Settings › Permissions › Control from your PC** and tap **Set up** to pair Wireless Debugging again.
 
 ### `Elevated` Stops After Turning Developer Options Off
 
-- If you turn the master **Developer options** switch off in Android Settings, Android stops Wireless Debugging and terminates the `Elevated` shell helper. Keep **Developer options** turned on if you use `Elevated` features. (When you reboot your phone or reconnect to Wi-Fi with Developer options on, Nectarlink automatically re-enables Wireless Debugging and restarts `Elevated` by itself.)
+- If you turn the master **Developer options** switch off in Android Settings, Android stops Wireless Debugging and terminates the `Elevated` shell helper. Keep **Developer options** turned on if you use `Elevated` features. (When you reboot your phone or reconnect to Wi-Fi with Developer options on, NectarLink automatically re-enables Wireless Debugging and restarts `Elevated` by itself.)
 
 ## 5. Troubleshooting USB Auto-Pair and `On USB` Transport
 
@@ -83,18 +83,18 @@ If plugging your phone into your PC with a USB cable does not trigger USB auto-p
 - Check that the speaker icon in the `mirror` window toolbar on your PC is not muted, and that your phone's media volume is turned up.
 - Note that some Android apps explicitly block third-party `AudioPlaybackCapture` in their manifest (see [Known Limitations](known-limitations.md)).
 
-## 7. Troubleshooting Phone as Webcam (`Nectarlink Webcam`)
+## 7. Troubleshooting Phone as Webcam (`NectarLink Webcam`)
 
-### `Nectarlink Webcam` Does Not Appear in Zoom, Teams, Meet, or OBS
+### `NectarLink Webcam` Does Not Appear in Zoom, Teams, Meet, or OBS
 
-1. Open Nectarlink on your PC and go to **Settings › Camera & Audio**.
+1. Open NectarLink on your PC and go to **Settings › Camera & Audio**.
 2. Check the **Virtual camera add-on** row. If it shows **Set up** instead of **Ready**, click **Set up** and approve the Windows Administrator prompt.
 3. Restart Zoom, Teams, your web browser, or OBS so the application refreshes its list of Windows Media Foundation video capture devices.
 
 ### Clicking "Start Webcam" on the PC Waits on "Asking..."
 
-- By design, a PC cannot turn on your phone's camera silently. Look at your phone and tap the **`<PC>` wants to use your camera** notification (or open Nectarlink on your phone and tap **Webcam › Start webcam**).
+- By design, a PC cannot turn on your phone's camera silently. Look at your phone and tap the **`<PC>` wants to use your camera** notification (or open NectarLink on your phone and tap **Webcam › Start webcam**).
 
 ## 8. Inspecting Diagnostic Logs
 
-If you need to report a bug, open **Settings › Connection & About** on your PC and click **Open logs** (next to the Nectarlink version row) to open the local log directory in File Explorer. Nectarlink never logs notification text, SMS message bodies, or clipboard contents to its log files.
+If you need to report a bug, open **Settings › Connection & About** on your PC and click **Open logs** (next to the NectarLink version row) to open the local log directory in File Explorer. NectarLink never logs notification text, SMS message bodies, or clipboard contents to its log files.

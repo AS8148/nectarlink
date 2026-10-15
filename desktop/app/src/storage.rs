@@ -74,7 +74,7 @@ use crate::{
     win,
 };
 
-/// Provider prefix for sync root IDs (`Nectarlink!<device_id>`).
+/// Provider prefix for sync root IDs (`NectarLink!<device_id>`).
 const PROVIDER_PREFIX: &str = "Nectarlink!";
 
 /// Difference between Windows FILETIME epoch (1601-01-01) and Unix epoch
@@ -210,7 +210,7 @@ pub fn shutdown() {
     }
 }
 
-/// Unregisters all `Nectarlink!*` sync roots from Windows (`--uninstall`).
+/// Unregisters all `NectarLink!*` sync roots from Windows (`--uninstall`).
 pub fn unregister_all() {
     shutdown();
     win::with_com(|| {

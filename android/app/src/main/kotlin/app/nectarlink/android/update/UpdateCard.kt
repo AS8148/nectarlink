@@ -42,7 +42,7 @@ private val AppUpdater.State.update: AppUpdater.Update?
         else -> null
     }
 
-/** "Nectarlink 0.2.0 is available" on Home, while there's an update to talk about. */
+/** "NectarLink 0.2.0 is available" on Home, while there's an update to talk about. */
 @Composable
 fun UpdateCard(updater: AppUpdater, modifier: Modifier = Modifier) {
     val state by updater.state.collectAsStateWithLifecycle()

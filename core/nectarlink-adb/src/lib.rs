@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Pure-Rust client for the local ADB server (`127.0.0.1:5037`) used to detect
-//! USB-attached Android devices and set up TCP port forwarding for Nectarlink's
+//! USB-attached Android devices and set up TCP port forwarding for NectarLink's
 //! USB QUIC tunnel.
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};

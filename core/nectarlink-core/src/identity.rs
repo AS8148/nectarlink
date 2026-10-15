@@ -162,7 +162,7 @@ mod dpapi {
             unsafe {
                 CryptProtectData(
                     &input,
-                    windows::core::w!("Nectarlink device key"),
+                    windows::core::w!("NectarLink device key"),
                     Some(&entropy),
                     None,
                     None,
@@ -201,7 +201,7 @@ mod dpapi {
 /// The install ID a device reports to its peers ([`DeviceInfo::install_id`]): a salted
 /// BLAKE3 hash of a platform ID that survives app reinstalls (Android's `ANDROID_ID`,
 /// Windows' `MachineGuid`). The raw ID never leaves the device; the salt keeps the hash
-/// specific to Nectarlink, so it can't be matched against other apps' identifiers.
+/// specific to NectarLink, so it can't be matched against other apps' identifiers.
 ///
 /// [`DeviceInfo::install_id`]: nectarlink_protocol::messages::DeviceInfo::install_id
 pub fn install_id_from(platform_id: &str) -> Option<String> {

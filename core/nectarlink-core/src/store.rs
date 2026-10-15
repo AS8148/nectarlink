@@ -2383,7 +2383,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     let current = usize::try_from(current).unwrap_or(usize::MAX);
     if current > MIGRATIONS.len() {
         return Err(Error::Storage(format!(
-            "the database was created by a newer Nectarlink (schema {current}); please update"
+            "the database was created by a newer NectarLink (schema {current}); please update"
         )));
     }
     for (index, sql) in MIGRATIONS.iter().enumerate().skip(current) {

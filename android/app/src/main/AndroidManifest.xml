@@ -28,7 +28,7 @@
          phone's sound while mirrored (playback capture, with the screen share's consent). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Elevated: turning wireless debugging back on after a reboot or a new
-         Wi-Fi network. Not grantable to apps; Nectarlink grants it to itself
+         Wi-Fi network. Not grantable to apps; NectarLink grants it to itself
          through the shell once the user has paired it with wireless debugging. -->
     <uses-permission
         android:name="android.permission.WRITE_SECURE_SETTINGS"
@@ -48,7 +48,7 @@
     <!-- Asking to run unrestricted in the background: phones such as Samsung's
          otherwise freeze the app, and PCs can't reach it. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- Companion Device Manager association: lets Android wake Nectarlink when
+    <!-- Companion Device Manager association: lets Android wake NectarLink when
          a paired PC's BLE proximity beacon appears nearby. -->
     <uses-feature
         android:name="android.software.companion_device_setup"
@@ -61,7 +61,7 @@
         android:usesPermissionFlags="neverForLocation" />
     <!-- Installing its own updates from GitHub releases (the user allows it once). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- Updates of Nectarlink itself without a prompt (Android 12+), when turned on in Settings. -->
+    <!-- Updates of NectarLink itself without a prompt (Android 12+), when turned on in Settings. -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <!-- Calls, shown on paired PCs, with the caller's number and contact
          (asked for in the app). The call itself stays on the phone. -->
@@ -172,7 +172,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
-            <!-- Map locations (geo: URIs) opened with Nectarlink go straight to the PC. -->
+            <!-- Map locations (geo: URIs) opened with NectarLink go straight to the PC. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -193,7 +193,7 @@
             android:name=".update.AppUpdater$InstallResult"
             android:exported="false" />
 
-        <!-- Reconnects after the phone restarts or Nectarlink updates. -->
+        <!-- Reconnects after the phone restarts or NectarLink updates. -->
         <receiver
             android:name=".service.StartupReceiver"
             android:exported="false">

@@ -202,7 +202,7 @@ unsafe fn find_top_external_window(self_pid: u32) -> Option<(isize, String, bool
 }
 
 /// Records the current foreground window if it belongs to an external
-/// user-facing application (not Nectarlink itself and not the Windows shell tray).
+/// user-facing application (not NectarLink itself and not the Windows shell tray).
 pub fn record_foreground_window() {
     // SAFETY: Standard Win32 queries on the foreground and Z-order HWNDs.
     unsafe {

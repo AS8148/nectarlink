@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Nectarlink for Windows.
+//! NectarLink for Windows.
 //!
 //! One process: Rust runs the core (`nectarlink-core`) and OS integration,
 //! Qt Quick draws the UI. Windows are created when opened and destroyed when
@@ -355,7 +355,7 @@ fn watch_network() {
     });
 }
 
-/// Phone notifications as Windows toasts, sent by "Nectarlink" with the
+/// Phone notifications as Windows toasts, sent by "NectarLink" with the
 /// app's icon (written as a PNG, which Windows needs as a file).
 fn start_toasts() {
     let icon = core_host::host().data_dir.join("cache").join("nectarlink.png");
@@ -401,7 +401,7 @@ fn run_setup_window(mode: setup::Mode) -> ExitCode {
     bridge::native::ffi::prepare_qt_without_log();
     let mut app = QGuiApplication::new();
     if let Some(mut app) = app.as_mut() {
-        app.as_mut().set_application_name(&QString::from("Nectarlink Setup"));
+        app.as_mut().set_application_name(&QString::from("NectarLink Setup"));
         app.as_mut().set_application_version(&QString::from(env!("CARGO_PKG_VERSION")));
     }
     bridge::native::ffi::load_bundled_fonts();

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Folder Sync (§3.6 P2): one-way (Phone → PC) and two-way folder
-//! synchronization over the Nectarlink storage service (`storage.list`,
+//! synchronization over the NectarLink storage service (`storage.list`,
 //! `storage.read`, `storage.write`), with conflict-safe renaming so neither
 //! side's edits are ever lost.
 

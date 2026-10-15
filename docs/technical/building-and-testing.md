@@ -1,6 +1,6 @@
 # Building and Testing
 
-This document covers the pinned toolchain versions, environment variables, build commands, and test suites required to build and verify Nectarlink on Windows and Android.
+This document covers the pinned toolchain versions, environment variables, build commands, and test suites required to build and verify NectarLink on Windows and Android.
 
 ## Pinned Toolchains
 

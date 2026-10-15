@@ -529,7 +529,7 @@ pub fn install_update_in_background() {
                     object.as_mut().set_update_progress(-1.0);
                     object
                         .as_mut()
-                        .set_update_status(QString::from("Installing. Nectarlink reopens by itself."));
+                        .set_update_status(QString::from("Installing. NectarLink reopens by itself."));
                 }
                 Err(message) => {
                     object.as_mut().set_update_busy(false);
@@ -802,16 +802,16 @@ impl cxx_qt::Initialize for qobject::AppController {
         );
 
         let labels = tray::MenuLabels {
-            open: "Open Nectarlink".into(),
+            open: "Open NectarLink".into(),
             command_palette: "Command palette".into(),
             shelf: "Toggle Shelf".into(),
             take_photo: "Take photo with phone".into(),
             scan_document: "Scan document with phone".into(),
             find_phone: "Find my phone".into(),
             open_link: "Open copied link on phone".into(),
-            quit: "Quit Nectarlink".into(),
+            quit: "Quit NectarLink".into(),
         };
-        match tray::Tray::create("Nectarlink", labels, move |event| on_tray_event(&qt, event)) {
+        match tray::Tray::create("NectarLink", labels, move |event| on_tray_event(&qt, event)) {
             Ok(tray) => self.rust_mut().tray = Some(tray),
             Err(e) => tracing::warn!(error = %e, "no tray icon"),
         }
@@ -1247,13 +1247,13 @@ impl qobject::AppController {
         self.as_mut().set_phone_toggles_revision(toggles_version as i32);
 
         let mut tooltip = match (devices, online) {
-            (0, _) => "Nectarlink · no devices paired".to_owned(),
-            (_, 0) => "Nectarlink · not connected".to_owned(),
+            (0, _) => "NectarLink · no devices paired".to_owned(),
+            (_, 0) => "NectarLink · not connected".to_owned(),
             (_, 1) => battery.map_or_else(
-                || "Nectarlink · 1 device connected".to_owned(),
-                |b| format!("Nectarlink · {b}"),
+                || "NectarLink · 1 device connected".to_owned(),
+                |b| format!("NectarLink · {b}"),
             ),
-            (_, n) => format!("Nectarlink · {n} devices connected"),
+            (_, n) => format!("NectarLink · {n} devices connected"),
         };
         if waiting_count > 0 {
             tooltip.push_str(&format!(" · {waiting_count} waiting"));
@@ -1835,7 +1835,7 @@ impl qobject::AppController {
             let json = compute_shelf_items_json(idx);
             self.as_mut().set_shelf_items(QString::from(&json));
             self.as_mut().set_shelf_open(true);
-            win::tray::apply_no_activate_style_by_title("Nectarlink Shelf");
+            win::tray::apply_no_activate_style_by_title("NectarLink Shelf");
         }
     }
 
@@ -1857,7 +1857,7 @@ impl qobject::AppController {
     }
 
     pub fn style_shelf_window(&self) {
-        win::tray::apply_no_activate_style_by_title("Nectarlink Shelf");
+        win::tray::apply_no_activate_style_by_title("NectarLink Shelf");
         win::tray::apply_no_activate_style_by_title("Nectar Island");
     }
 
@@ -2142,7 +2142,7 @@ fn find_guide_file_on_disk(file_stem: &str) -> Option<String> {
 fn load_guide_doc_content(raw_key: &str) -> (String, String) {
     let key = raw_key.trim().trim_end_matches(".md").to_ascii_lowercase();
     let top_level_title = match key.as_str() {
-        "overview" => Some("Nectarlink overview"),
+        "overview" => Some("NectarLink overview"),
         "setup" => Some("Install and first-time setup"),
         "features" => Some("Features reference"),
         "permissions" => Some("Android permissions and why each is optional"),
@@ -2159,8 +2159,8 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
 
     let (title, body) = match key.as_str() {
         "overview" => (
-            "Nectarlink overview",
-            "Nectarlink links your Android phone and your Windows 11 PC directly on your local network or over a USB cable.\n\n\
+            "NectarLink overview",
+            "NectarLink links your Android phone and your Windows 11 PC directly on your local network or over a USB cable.\n\n\
              How it works\n\
              - Devices discover each other over local Wi-Fi (mDNS) or USB (ADB reverse tunnel) and connect over QUIC (TLS 1.3).\n\
              - Every connection is mutually authenticated using Ed25519 device keys generated on each device.\n\
@@ -2172,15 +2172,15 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
         ),
         "setup" => (
             "Install and first-time setup",
-            "1. Install Nectarlink on your Windows 11 PC and your Android phone (Android 8.0 or newer).\n\
+            "1. Install NectarLink on your Windows 11 PC and your Android phone (Android 8.0 or newer).\n\
              2. Connect both devices to the same Wi-Fi network, or plug your phone into your PC with a USB cable.\n\
              3. Open the Pair step in the setup walkthrough, or click + (Pair a new device) at the bottom of the left rail.\n\
-             4. Scan the QR code from the Nectarlink Android app, or select your phone from the nearby devices list and confirm that the 6-digit code matches on both screens.\n\
+             4. Scan the QR code from the NectarLink Android app, or select your phone from the nearby devices list and confirm that the 6-digit code matches on both screens.\n\
              5. Choose which features to share for that phone and grant only the Android permissions you want to use.",
         ),
         "permissions" => (
             "Android permissions and why each is optional",
-            "Nectarlink never asks for every permission up front. Each feature works independently:\n\n\
+            "NectarLink never asks for every permission up front. Each feature works independently:\n\n\
              - Notification Access: Required only if you want phone notifications, inline replies, and notification-backed chat threads on your PC.\n\
              - SMS and Contacts: Required only if you want to read and send SMS/MMS messages or look up contact names on your PC.\n\
              - Phone and Call Log: Required only if you want incoming call alerts, call history, or dialing from your PC.\n\
@@ -2189,22 +2189,22 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
         ),
         "elevated" => (
             "Elevated and Assist modes",
-            "Most Nectarlink features work in Standard mode with regular Android permissions. Two optional modes unlock deeper system integration:\n\n\
+            "Most NectarLink features work in Standard mode with regular Android permissions. Two optional modes unlock deeper system integration:\n\n\
              Elevated mode (Wireless debugging or root)\n\
              - Captures the phone screen without showing the Android cast confirmation prompt every time.\n\
              - Streams individual phone apps in separate desktop windows (virtual displays).\n\
              - Controls additional system quick toggles.\n\n\
              Assist mode (Android Accessibility Service)\n\
              - Injects mouse clicks, scrolling, and touch gestures when you control your phone from your PC.\n\
-             - Nectarlink never reads screen text or logs keystrokes through the Accessibility service.",
+             - NectarLink never reads screen text or logs keystrokes through the Accessibility service.",
         ),
         "troubleshooting" => (
             "Troubleshooting and Connection Doctor",
             "If your phone and PC do not see each other:\n\n\
              1. Open Connection Doctor from Settings › Connection & About or the Command Palette.\n\
-             2. Check that your Wi-Fi network profile in Windows is set to Private rather than Public, or click Fix in Connection Doctor to allow Nectarlink through Windows Firewall.\n\
+             2. Check that your Wi-Fi network profile in Windows is set to Private rather than Public, or click Fix in Connection Doctor to allow NectarLink through Windows Firewall.\n\
              3. Verify that both devices are on the same subnet and that guest Wi-Fi client isolation is turned off on your router.\n\
-             4. You can also connect over a USB cable with USB debugging enabled; Nectarlink automatically sets up a local tunnel.",
+             4. You can also connect over a USB cable with USB debugging enabled; NectarLink automatically sets up a local tunnel.",
         ),
         "privacy" => (
             "Privacy and security",
@@ -2224,7 +2224,7 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
              - Settings › Notifications for per-app rules (Show, Silent, or Hidden) and Do Not Disturb sync.\n\
              - Settings › General › Copy one-time codes.\n\n\
              What it needs\n\
-             - Notification Access permission enabled for Nectarlink on your Android phone.\n\
+             - Notification Access permission enabled for NectarLink on your Android phone.\n\
              - The per-device Notifications toggle enabled on your PC.",
         ),
         "messages" => (
@@ -2258,12 +2258,12 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
              - Settings › General › Sync clipboard to phone.\n\n\
              What it needs\n\
              - Automatic PC-to-phone clipboard send works whenever your phone is connected.\n\
-             - Background phone-to-PC clipboard sync on Android 10+ uses notifications, the Nectarlink quick tile, or Elevated mode.",
+             - Background phone-to-PC clipboard sync on Android 10+ uses notifications, the NectarLink quick tile, or Elevated mode.",
         ),
         "transfers" => (
             "Send files",
             "What it does\n\
-             Sends files, folders, links, and text between your phone and PC at local network speed. If your phone is offline when you send, Nectarlink places the item in the Waiting to send queue and delivers it automatically as soon as your phone reconnects.\n\n\
+             Sends files, folders, links, and text between your phone and PC at local network speed. If your phone is offline when you send, NectarLink places the item in the Waiting to send queue and delivers it automatically as soon as your phone reconnects.\n\n\
              Where to find it\n\
              - Home › Send files button, drag-and-drop anywhere on the window, Waiting to send card, and Transfers list.\n\
              - Windows File Explorer › right-click › Send to.\n\n\
@@ -2297,7 +2297,7 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
             "What it does\n\
              Streams your Windows PC monitor to your phone so you can view your desktop from across the room and use your phone as a trackpad or laser pointer.\n\n\
              Where to find it\n\
-             - Started from the Nectarlink app on your phone.\n\
+             - Started from the NectarLink app on your phone.\n\
              - Settings › Devices › Share PC screen to phone.\n\n\
              What it needs\n\
              - The per-device Share PC screen to phone switch on your PC, or one-time approval when your phone requests to view your screen.",
@@ -2305,7 +2305,7 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
         "webcam" => (
             "Phone as webcam",
             "What it does\n\
-             Streams your phone camera into the Nectarlink Virtual Camera on Windows so Zoom, Teams, Meet, Discord, and OBS can use your phone's rear or front camera at up to 4K.\n\n\
+             Streams your phone camera into the NectarLink Virtual Camera on Windows so Zoom, Teams, Meet, Discord, and OBS can use your phone's rear or front camera at up to 4K.\n\n\
              Where to find it\n\
              - Home › Phone as webcam.\n\
              - Settings › Camera & Audio › Start webcam.\n\n\
@@ -2370,7 +2370,7 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
              - Home › Type on phone.\n\
              - Command Palette › Type on phone with PC keyboard.\n\n\
              What it needs\n\
-             - Assist mode (Accessibility service), the Nectarlink input method, or Elevated mode on your phone.",
+             - Assist mode (Accessibility service), the NectarLink input method, or Elevated mode on your phone.",
         ),
         "phone-controls" => (
             "Phone controls",
@@ -2417,7 +2417,7 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
             "What it does\n\
              Opens a keyboard-first search bar over actions, contacts, message threads, mirrorable apps, phone quick toggles, clipboard history, and navigation pages.\n\n\
              Where to find it\n\
-             - Global hotkey Ctrl+Alt+Space (or Ctrl+K inside the Nectarlink window).\n\
+             - Global hotkey Ctrl+Alt+Space (or Ctrl+K inside the NectarLink window).\n\
              - Commands in the top bar.\n\n\
              What it needs\n\
              - Works at any time with zero background memory cost when closed.",
@@ -2473,7 +2473,7 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
         "local-api" => (
             "Local HTTP API",
             "What it does\n\
-             Exposes an opt-in localhost HTTP/JSON and Server-Sent Events API on 127.0.0.1 (default port 53320) protected by a bearer token so scripts, CLI tools, and Stream Deck plugins can trigger Nectarlink actions.\n\n\
+             Exposes an opt-in localhost HTTP/JSON and Server-Sent Events API on 127.0.0.1 (default port 53320) protected by a bearer token so scripts, CLI tools, and Stream Deck plugins can trigger NectarLink actions.\n\n\
              Where to find it\n\
              - Settings › Connection & About › Local automation API.\n\n\
              What it needs\n\

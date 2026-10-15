@@ -1,6 +1,6 @@
 [package]
 name = "nectarlink-protocol"
-description = "Nectarlink wire protocol: message types, framing and pairing primitives"
+description = "NectarLink wire protocol: message types, framing and pairing primitives"
 license = "MPL-2.0"
 version.workspace = true
 edition.workspace = true

@@ -22,7 +22,7 @@ The **Messages** page on your PC brings together your phone's SMS and MMS text t
 1. Click **Messages** in the left navigation bar on your PC.
 2. The left pane lists your conversations ordered by most recent activity:
    - **SMS and MMS threads** are synced directly from your phone's system telephony database, including group MMS conversations and inline picture attachments.
-   - **Unified Conversations** capture incoming messages from chat apps that use Android's `MessagingStyle` notification format (such as Google Messages RCS, WhatsApp, Telegram, Signal, Discord, and Slack). Each thread badge shows which app it belongs to. Nectarlink automatically deduplicates SMS notifications against the system SMS provider so texts never appear twice.
+   - **Unified Conversations** capture incoming messages from chat apps that use Android's `MessagingStyle` notification format (such as Google Messages RCS, WhatsApp, Telegram, Signal, Discord, and Slack). Each thread badge shows which app it belongs to. NectarLink automatically deduplicates SMS notifications against the system SMS provider so texts never appear twice.
 3. When chat apps are present, chips at the top of the list filter conversations by app. The search box filters threads by contact name, phone number, app, or message text.
 
 ### Sending Texts and Replying to Chat Apps
@@ -48,12 +48,12 @@ You can attach images to any SMS/MMS conversation in three ways:
 ### Starting a New Conversation
 
 1. Click the **New message** button at the top of the conversation list.
-2. Type a contact's name or phone number in the **To:** field. Nectarlink searches your phone's synced contacts as you type, showing matching names, phone numbers, and contact avatars.
+2. Type a contact's name or phone number in the **To:** field. NectarLink searches your phone's synced contacts as you type, showing matching names, phone numbers, and contact avatars.
 3. Click a contact (or finish typing a phone number), write your message in the composer, and press **Enter**.
 
 ### One-Time Codes
 
-When an SMS or chat message contains a verification code, Nectarlink displays a **Copy code** button right inside the message bubble (and copies it automatically if **Copy one-time codes** is turned on in **Settings › General**).
+When an SMS or chat message contains a verification code, NectarLink displays a **Copy code** button right inside the message bubble (and copies it automatically if **Copy one-time codes** is turned on in **Settings › General**).
 
 ## What the Options Do
 

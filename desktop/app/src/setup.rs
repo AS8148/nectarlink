@@ -12,7 +12,7 @@
 //! A program can't delete its own folder, so it first copies itself to a
 //! temporary folder (as `Nectarlink Uninstall.exe`) and carries on from
 //! there, then runs `uninstall.exe /S /PROGRESS=<file>` with administrator
-//! rights, and finally removes this user's Nectarlink data. Files received
+//! rights, and finally removes this user's NectarLink data. Files received
 //! from phones (`Downloads\Nectarlink`), voice recordings and synced folders
 //! belong to the user and are kept.
 //!
@@ -106,7 +106,7 @@ impl Step {
     /// What the window says while this step runs.
     pub fn label(self) -> &'static str {
         match self {
-            Step::Closing => "Closing Nectarlink",
+            Step::Closing => "Closing NectarLink",
             Step::Files => "Copying files",
             Step::Firewall => "Allowing through Windows Firewall",
             Step::Updates => "Setting up updates",
@@ -170,7 +170,7 @@ pub fn remove(installed: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
     let uninstaller = installed.join("uninstall.exe");
     if !uninstaller.is_file() {
         return Outcome::Failed(
-            "The uninstaller is missing. Reinstall Nectarlink, then uninstall it.".into(),
+            "The uninstaller is missing. Reinstall NectarLink, then uninstall it.".into(),
         );
     }
     let progress = progress_file("remove");
@@ -192,7 +192,7 @@ pub fn remove_user_data() {
     if let Err(e) = std::fs::remove_dir_all(&data)
         && e.kind() != std::io::ErrorKind::NotFound
     {
-        tracing::warn!(error = %e, "can't remove all of Nectarlink's data");
+        tracing::warn!(error = %e, "can't remove all of NectarLink's data");
     }
 }
 

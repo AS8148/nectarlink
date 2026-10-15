@@ -11,7 +11,7 @@ Window {
     minimumWidth: 980
     minimumHeight: 640
     visible: true
-    title: "Nectarlink · S1 proof"
+    title: "NectarLink · S1 proof"
     color: mica ? "transparent" : Theme.surface
 
     // The frame and the Mica tint follow the app theme, not the system one.

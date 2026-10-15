@@ -137,16 +137,16 @@ the call.
 calls. `call.log` needs the call log permission. `call.dial` uses
 `CALL_PHONE` to place the call directly, or opens the dialer when
 `CALL_PHONE` isn't granted. `call.incall` needs Android 12 or later and
-the `MANAGE_ONGOING_CALLS` app-op, which lets Telecom bind Nectarlink's
+the `MANAGE_ONGOING_CALLS` app-op, which lets Telecom bind NectarLink's
 in-call service as a calling companion without it being the phone app.
-Apps can't grant that app-op to themselves; Nectarlink's Elevated mode
+Apps can't grant that app-op to themselves; NectarLink's Elevated mode
 (Wireless debugging) grants it through the shell when it starts.
 
 Not in this service:
 
 - **Recording calls.** Android doesn't let apps other than the phone's
   own record call audio (capturing the voice call stream needs a
-  privileged permission), so Nectarlink doesn't offer it.
+  privileged permission), so NectarLink doesn't offer it.
 - **Talking through the PC.** Carrying the call's audio to the PC's
   microphone and speakers is planned as a Bluetooth hands-free (HFP)
   link from the PC to the phone, as for a headset; it isn't part of this

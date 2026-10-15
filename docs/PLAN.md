@@ -1,7 +1,7 @@
-# Nectarlink: Product & Engineering Plan
+# NectarLink: Product & Engineering Plan
 
-> **Nectarlink** connects Android phones and Windows PCs. It's one open-source app that replaces Phone Link, KDE Connect, scrcpy, LocalSend and Intel Unison.
-> *Bees carry nectar back to the hive. Nectarlink carries everything between your phone and your PC.*
+> **NectarLink** connects Android phones and Windows PCs. It's one open-source app that replaces Phone Link, KDE Connect, scrcpy, LocalSend and Intel Unison.
+> *Bees carry nectar back to the hive. NectarLink carries everything between your phone and your PC.*
 > Status: **in active development (Qt Quick + Rust on Windows 11, Kotlin + Jetpack Compose on Android, shared Rust core).** Phase 1 and most of Phases 2 to 3 work end to end; see §3 for per-feature status. Last updated 2026-10-09.
 
 ---
@@ -10,14 +10,14 @@
 
 | Question | Decision | One-line reason |
 |---|---|---|
-| Name | **Nectarlink** (done) | Clean name (no conflicts found), warm, on the bee theme, says "connection". See §10.1 |
+| Name | **NectarLink** (done) | Clean name (no conflicts found), warm, on the bee theme, says "connection". See §10.1 |
 | Shared engine | **Rust core** (`nectarlink-core`) used by both apps | Both ends run the same protocol code, which avoids the cross-implementation bugs KDE Connect has |
 | Transport | **iroh 1.x** (QUIC, devices dialed by public key) | E2E-encrypted by default, LAN discovery, hole punching, relay fallback and multipath in one library (1.0 June 2026, now 1.3) |
 | Wire format | **CBOR (serde)** over QUIC streams, plus a versioned spec in `docs/protocol` | Self-describing and forward-compatible, with no codegen toolchain. Third parties can still implement it |
 | Windows app | **Qt Quick (QML) for the UI + Rust for everything else** (bridged by cxx-qt), `windows-rs` for OS integration, mirrored video drawn inside the UI with no copies. **No WebView, no web stack** (done) | Visual ceiling equal to web (real blur, shaders, Caelestia-level motion) at a fraction of the RAM, best fit for video and always-on overlays. Gated by a Phase 0 "Qt + Rust proof" (§5.1) |
 | Android app | **Kotlin + Jetpack Compose + Material 3 Expressive**, core via **UniFFI** | Deep OS integration needs native Kotlin, and Compose/M3 Expressive is the best-looking, smoothest Android UI stack |
 | Mirroring | **Two engines:** *Elevated* (scrcpy-server, Apache-2.0) and *Standard* (MediaProjection). PC side decodes in hardware with Media Foundation and renders with D3D11 | Best quality and features when privileged access exists, and it still works when it doesn't |
-| Superpowers without root | **Power Levels** (Basic → Assist → Elevated). A Root level is parked for later. Elevated mode runs Nectarlink's *own* code as the `shell` user, so there's **no extra app to install**. Several setup paths, and the UI greys out features by level | Unlocks background clipboard, sensitive notifications, consent-free mirroring, app windows and toggles on **any** Android phone |
+| Superpowers without root | **Power Levels** (Basic → Assist → Elevated). A Root level is parked for later. Elevated mode runs NectarLink's *own* code as the `shell` user, so there's **no extra app to install**. Several setup paths, and the UI greys out features by level | Unlocks background clipboard, sensitive notifications, consent-free mirroring, app windows and toggles on **any** Android phone |
 | Accounts / cloud | **None.** Local-first. Optional "away from home" mode via relays (self-hostable) | Privacy is the #1 reason people leave Phone Link |
 | Platforms | **Windows 11 only** (x64 + native ARM64). Android 8+. **macOS desktop = future scope** (Qt Quick, the Rust core and the `Platform`/`VideoSink` layers make it a port, not a rewrite). iPhone = later | Win11-only frees us to use Mica, the virtual camera API and the Win11 context menu |
 | Distribution | **GitHub-first**: GitHub Releases + winget (Windows), GitHub Releases + Obtainium + later IzzyOnDroid (Android). No Play account for now | Free, fast to ship, no Play policy limits on SMS/Accessibility/files |
@@ -58,8 +58,8 @@
 
 | Constraint | Impact | Our answer |
 |---|---|---|
-| Android 10+: no background clipboard read | Auto clipboard sync phone→PC is impossible for normal apps | Elevated mode reads the clipboard. Fallbacks: QS tile, share target, notification button, optional Nectarlink keyboard (IME) |
-| Android 15+: sensitive notifications redacted for untrusted listeners | OTPs and 2FA vanish | Elevated mode grants Nectarlink `RECEIVE_SENSITIVE_NOTIFICATIONS` via appops (one time, persists). Explained clearly in onboarding |
+| Android 10+: no background clipboard read | Auto clipboard sync phone→PC is impossible for normal apps | Elevated mode reads the clipboard. Fallbacks: QS tile, share target, notification button, optional NectarLink keyboard (IME) |
+| Android 15+: sensitive notifications redacted for untrusted listeners | OTPs and 2FA vanish | Elevated mode grants NectarLink `RECEIVE_SENSITIVE_NOTIFICATIONS` via appops (one time, persists). Explained clearly in onboarding |
 | Android 14+: MediaProjection needs consent **every session** | Standard mirroring shows a dialog each time | Elevated engine (scrcpy-server as shell) has no prompts |
 | Android 13+: "restricted settings" for sideloaded apps | Notification-listener and accessibility toggles are greyed out for non-store installs | Onboarding detects it and walks through "Allow restricted settings". Obtainium installs reduce the friction |
 | Android developer verification (enforced from 30 Sep 2026 in BR/ID/SG/TH, global 2027) | Unverified sideloads get blocked, and that includes GitHub APKs | Register for verification (non-Play path) before global enforcement. One signing key for every channel from day one |
@@ -71,7 +71,7 @@
 
 
 ### 1.4 What we take from KDE Connect (inspiration only, no connection to it)
-Nectarlink does **not** pair with or talk to KDE Connect. We study what it does well and build our own version:
+NectarLink does **not** pair with or talk to KDE Connect. We study what it does well and build our own version:
 - **Per-device plugin toggles**: every feature can be switched on/off per paired device. This becomes our per-device feature permissions.
 - **Run commands**: user-defined PC commands triggered from the phone. Our custom commands / Deck actions, off by default.
 - **Presentation remote**: slide control plus a pointer. Our presentation remote with laser pointer.
@@ -164,7 +164,7 @@ current Android.
 | Fast, resumable, multi-stream transfers with progress, pause/resume, and integrity hashing (done) (single QUIC stream per transfer with 16 MiB stream window and 8 × 1 MiB read-ahead saturates the shared QUIC congestion window; BLAKE3 integrity hashing and manual pause/resume from either side) | P0 |
 | **Flick to send**: flick a photo/file upward on the phone and it lands on the PC. Drag a file to the screen edge on the PC and it flies to the phone. Physics-based animation on both ends (done) | P1 |
 | **LocalSend protocol interop**: send to and receive from any LocalSend device (iOS, Mac, Linux). We implement its open protocol in Rust; we don't reuse its (Dart) code (done) | P1 |
-| **Coexistence**: runs side by side with KDE Connect (ports 1714 to 1764) and LocalSend (53317) on the same PC without conflicts. If LocalSend's port is taken, Nectarlink still sends but leaves receiving to the LocalSend app (done) | P0 |
+| **Coexistence**: runs side by side with KDE Connect (ports 1714 to 1764) and LocalSend (53317) on the same PC without conflicts. If LocalSend's port is taken, NectarLink still sends but leaves receiving to the LocalSend app (done) | P0 |
 | **Phone storage in Explorer** (Cloud Files API: placeholders, on-demand download, native sync icons) (done) | P1 |
 | **Photos**: gallery with thumbnails, recent screenshots/photos pop up on PC, drag out to the desktop (done) | P0 (recent), P1 (gallery) |
 | Folder sync (Syncthing-style two-way folders, e.g. Camera → PC) (done) | P2 |
@@ -210,7 +210,7 @@ current Android.
 | Wake-on-LAN (done) | P1 |
 | **Unlock PC with phone fingerprint**: the PC lock screen offers "Unlock with phone" → the phone shows a biometric prompt → a signed challenge unlocks Windows. Built as a Windows credential provider. Keys live in Android Keystore (StrongBox where available) and are bound to biometrics. Works only when paired and nearby (BLE proximity + LAN). Rate-limited, revocable, and **external security review before release**: deferred (dedicated post-1.0 workstream requiring a system-wide `Winlogon` `ICredentialProvider` DLL and external security review) | P2 (dedicated workstream) |
 
-### 3.11 Ambient & signature experiences (what makes Nectarlink special)
+### 3.11 Ambient & signature experiences (what makes NectarLink special)
 | Feature | Tier |
 |---|---|
 | **Nectar Island** (optional extra, off by default (`nectar_island: false`), with per-trigger toggles when enabled): a small, animated pill at the top of the PC screen showing live phone activity (call, timer, music, transfer, Live Update, OTP, voice recording). Expands on hover. A nice touch, not a pillar (done) | P2 |
@@ -220,7 +220,7 @@ current Android.
 | **Handoff**: send a link, map location, document or YouTube timestamp to open on the other device (done) | P0 (links), P1 (rich) |
 | **"Ping me when it's done"**: `nectarlink notify-when <pid \| -- command...>` watches a running process or command on the PC, shows a live chronometer notification on the phone while it runs, and alerts the phone when it finishes or fails (done) | P1 |
 | **Timeline**: one searchable history of everything that moved between devices (files, clips, links, photos, recordings), with "send again" (done) | P1 |
-| **Your PC in your pocket**: from anywhere (Away mode), browse and grab PC files, see what the PC is doing (Ping-me tasks, downloads), wake it (relayed Wake-on-LAN through another Nectarlink device left at home), and later view/control the PC screen (reverse mirroring) (done) (PC file browsing, Ping-me status, relayed Wake-on-LAN, and reverse PC-to-phone screen mirroring implemented; reverse mirroring is off by default (`pc_mirror` toggle), prompts the PC user for consent on every session with a persistent stop banner, and requires `remote_input` for mouse/keyboard control) | P2 (files/status in P1 if Away mode lands early) |
+| **Your PC in your pocket**: from anywhere (Away mode), browse and grab PC files, see what the PC is doing (Ping-me tasks, downloads), wake it (relayed Wake-on-LAN through another NectarLink device left at home), and later view/control the PC screen (reverse mirroring) (done) (PC file browsing, Ping-me status, relayed Wake-on-LAN, and reverse PC-to-phone screen mirroring implemented; reverse mirroring is off by default (`pc_mirror` toggle), prompts the PC user for consent on every session with a persistent stop banner, and requires `remote_input` for mouse/keyboard control) | P2 (files/status in P1 if Away mode lands early) |
 | **Proximity lock**: lock the PC when the phone walks away (BLE RSSI): deferred (requires continuous BLE RSSI hardware ranging; Android emulator lacks a BLE radio) | P2 |
 | **Automations**: triggers (connected, battery low, call started) → actions (done) | P2 |
 | Find my phone (ring even on silent), battery & signal in tray, low-battery alerts, measured phone screen preview & Home summary (done) | P0 |
@@ -253,7 +253,7 @@ current Android.
 
 ```
 ┌──────────────────────── Windows PC (one native process) ──┐        ┌───────────────────────── Android phone ─────────────────────────┐
-│  Qt Quick UI (QML screens, Nectarlink design system)          │        │  Compose UI (Material 3 Expressive)                              │
+│  Qt Quick UI (QML screens, NectarLink design system)          │        │  Compose UI (Material 3 Expressive)                              │
 │   main window · Island · Shelf · Deck editor · palette   │        │   home · devices · onboarding · Deck · tiles · widgets           │
 │   mirror/app windows: decoded D3D11 video inside the UI   │        │        ▲  Kotlin facades (Flows)                                  │
 │        ▲  cxx-qt bridge (view-models, in-process)             │        │  ┌─────┴───────────────────────────────────────────────────┐    │
@@ -266,7 +266,7 @@ current Android.
 │  └─────┬──────────────────────────────────────────────┘   │  QUIC  │  │ nectarlink-core (same crate, compiled for arm64/x86_64)     │     │
 │  ┌─────┴──────────────────────────────────────────────┐   │◄──────►│  └─────────────────────────────────────────────────────────┘     │
 │  │ nectarlink-core (Rust, shared)                         │   │  iroh  │  ┌─────────────────────────────────────────────────────────┐     │
-│  │  identity · pairing · sessions · capabilities      │   │        │  │ Elevated mode (Nectarlink's own code as shell uid)          │     │
+│  │  identity · pairing · sessions · capabilities      │   │        │  │ Elevated mode (NectarLink's own code as shell uid)          │     │
 │  │  services · transfer engine · store (SQLite)       │   │        │  │  clipboard · appops · screen capture · input injection  │     │
 │  └────────────────────────────────────────────────────┘   │        │  │  virtual displays · toggles · scrcpy-server engine      │     │
 │  nectarlink-adb (built-in ADB client) ─ USB / wireless dbg ───┼────────┼─►│                                                         │     │
@@ -289,7 +289,7 @@ nectarlink/
     app/                one crate (cxx-qt builds the QML module, bridge and binary together):
       src/              Rust host: startup, tray, window lifecycle, wiring to core
       src/bridge/       the ONLY Rust↔Qt bridge: cxx-qt view-models exposed to QML
-      qml/              Nectarlink design system (tokens, ~30 components) + screens. Presentation only
+      qml/              NectarLink design system (tokens, ~30 components) + screens. Presentation only
     platform/           `Platform` trait: nectarlink-win (windows-rs) now, nectarlink-mac later
     video/              `VideoSink`: MF decode + D3D11 texture → Qt Quick scene-graph item (small C++)
                         now; VideoToolbox + Metal later
@@ -339,23 +339,23 @@ Order of attempts (iroh races paths and keeps the best one; multipath lets two p
 - **Transfers:** chunked, content-hashed (BLAKE3), resumable by offset, parallel streams for many small files, zero-copy reads where possible.
 
 ### 4.6 Power Levels (one APK, no extra apps)
-Everything ships inside the single Nectarlink APK. "Elevated" is **not a separate app**: it's a mode where Nectarlink launches a copy of its *own* code (via `app_process`) with `shell`-user privileges. That process talks back to the app over a local socket with strict caller checks (our UID + signing certificate). Shizuku is only **one optional path** for people who already have it.
+Everything ships inside the single NectarLink APK. "Elevated" is **not a separate app**: it's a mode where NectarLink launches a copy of its *own* code (via `app_process`) with `shell`-user privileges. That process talks back to the app over a local socket with strict caller checks (our UID + signing certificate). Shizuku is only **one optional path** for people who already have it.
 
 | Level | How you get it | Effort | Lasts | Adds (on top of the level above) |
 |---|---|---|---|---|
 | **Basic Basic** | Install + grant normal permissions | ~1 min | Forever | Notifications (non-sensitive), SMS/MMS, calls, contacts, files, photos, media both ways, PC→phone clipboard, webcam, Continuity Camera, voice recorder, voice typing, touchpad/air mouse/Deck, standard mirroring (consent prompt each session, view-only) |
-| **Assist Assist** | Turn on Nectarlink's Accessibility service (one toggle, plus the "restricted settings" step for sideloaded installs) | ~1 min | Forever | Control the phone during standard mirroring, global actions (back/home/recents/lock) |
+| **Assist Assist** | Turn on NectarLink's Accessibility service (one toggle, plus the "restricted settings" step for sideloaded installs) | ~1 min | Forever | Control the phone during standard mirroring, global actions (back/home/recents/lock) |
 | **Elevated Elevated** | Any one of the setup paths below | 1 to 3 min | Until phone reboot (auto re-arms) | **Auto** phone→PC clipboard, OTP/sensitive notifications, prompt-free mirroring with full control, phone audio to PC, **app windows**, type into the phone with the PC keyboard, Wi-Fi/BT/DND toggles from PC, install APKs from PC, self-whitelist from battery killers |
 
-**Setup paths to Elevated** (Nectarlink recommends the best one by detecting Android version, USB state and Shizuku):
+**Setup paths to Elevated** (NectarLink recommends the best one by detecting Android version, USB state and Shizuku):
 1. **USB cable:** guided "enable USB debugging" (animated, per-OEM steps), then plug in. The PC app has a **built-in ADB client**, so there's nothing else to install. This also turns on the USB connection path.
 2. **Wireless, using the PC's QR** (Android 11+): the PC shows an ADB-pairing QR, and the phone scans it in *Developer options → Wireless debugging → Pair with QR code*. No cable.
-3. **Phone only** (Android 11+): Nectarlink opens Wireless debugging, the user types the pairing code into a Nectarlink notification, and Nectarlink pairs with itself. No PC needed.
+3. **Phone only** (Android 11+): NectarLink opens Wireless debugging, the user types the pairing code into a NectarLink notification, and NectarLink pairs with itself. No PC needed.
 4. **Shizuku / Sui:** one tap if already installed. Never required.
 
 **Re-arming after a reboot (keeping it painless):**
 - If the PC is paired for wireless debugging, the PC silently re-arms the phone the next time both are on the same network.
-- On Android 13+, Nectarlink grants itself `WRITE_SECURE_SETTINGS` during the first Elevated session. After that it can switch wireless debugging back on by itself on trusted Wi-Fi, on devices where the OEM allows it.
+- On Android 13+, NectarLink grants itself `WRITE_SECURE_SETTINGS` during the first Elevated session. After that it can switch wireless debugging back on by itself on trusted Wi-Fi, on devices where the OEM allows it.
 - Otherwise it shows a single quiet notification: "Tap to restore superpowers".
 
 **Capability-driven UI** (the same rules on both apps):
@@ -443,7 +443,7 @@ What we optimize for, in order:
 
 **Decision: Qt Quick (QML) for the UI, Rust for everything else.** Fallback: web UI (Tauri) with native Rust video windows.
 
-#### Final three, scored (1 to 5, weighted for Nectarlink; RAM/size/start figures are estimates to verify in Phase 0)
+#### Final three, scored (1 to 5, weighted for NectarLink; RAM/size/start figures are estimates to verify in Phase 0)
 | Criterion | Weight | A. Web (Tauri 2 + React) | **B. Qt Quick + Rust** (done) | C. Slint |
 |---|---|---|---|---|
 | Visual ceiling (blur, glass, effects, type) | 15 | 5 | **5** (real blur, shaders, particles) | 3 (no in-app blur/shaders yet) |
@@ -462,7 +462,7 @@ What we optimize for, in order:
 | Mac later | 2 | 4 | **4** | 4 |
 | **Weighted total / 100** | | **≈ 78** | **≈ 81** | **≈ 74** |
 
-**Why B wins (narrowly):** Nectarlink is *always running*, *video-heavy* (mirroring plus one window per phone app) and has *always-on overlays* (Island, Shelf). Those are exactly the web stack's weakest points and Qt's strongest, and Qt gives up nothing on looks. If development speed were weighted above ~20 %, web would win, which is why it is the fallback.
+**Why B wins (narrowly):** NectarLink is *always running*, *video-heavy* (mirroring plus one window per phone app) and has *always-on overlays* (Island, Shelf). Those are exactly the web stack's weakest points and Qt's strongest, and Qt gives up nothing on looks. If development speed were weighted above ~20 %, web would win, which is why it is the fallback.
 
 **Rejected outright:** Flutter (maintainer's call; multi-window still experimental), Electron (RAM), WinUI 3 (Windows-only), Compose Multiplatform (JVM RAM), Avalonia (C# bridge), GPUI (development slowed in 2026), iced/egui (not built for this).
 
@@ -477,7 +477,7 @@ What we optimize for, in order:
 | Startup cost of QML | Pre-compile QML to bytecode at build time (`qmlcachegen`, LGPL) |
 | Mica on a Qt window | Direct DWM calls on the native window handle, plus a transparent QML root |
 | **Qt licensing pitfalls** | Use only LGPL modules (Core, Gui, Qml, Quick, Quick Controls, Quick Effects/MultiEffect, Quick Shapes, Svg, Multimedia). **Avoid GPL-only modules:** Qt Qml Compiler (`qmlsc`), Lottie, Quick Timeline, Graphs, Quick 3D, Virtual Keyboard, Canvas Painter. They'd conflict with the future app-store exception. Dynamic linking satisfies LGPL relinking |
-| Qt LTS patch releases become **commercial-only** after their first period | Track the **latest Qt 6 minor release** (currently 6.12), pinned per Nectarlink release, instead of relying on LTS patches |
+| Qt LTS patch releases become **commercial-only** after their first period | Track the **latest Qt 6 minor release** (currently 6.12), pinned per NectarLink release, instead of relying on LTS patches |
 | Qt's long-term openness | Guaranteed by the KDE Free Qt Foundation agreement: if open-source releases ever stop, Qt becomes BSD-licensed |
 
 #### Risk gate (Phase 0): "Qt + Rust proof"
@@ -529,7 +529,7 @@ Build Home, a notification card, the Deck grid, one hero transition and a live m
 
 **Shared language across both apps**
 - Same iconography, the same names for features, and the same power-level badges (mapped to the theme's own palette, no traffic-light colors).
-- **Dynamic color:** default warm honey/amber accent (on brand for Nectarlink). Once paired, both apps can adopt the phone's Material You palette.
+- **Dynamic color:** default warm honey/amber accent (on brand for NectarLink). Once paired, both apps can adopt the phone's Material You palette.
 - Motion: spring-based (no linear easing), choreographed transitions (a notification card grows into the conversation view), honoring reduced motion.
 
 **Desktop (Qt Quick)**
@@ -652,7 +652,7 @@ Each phase ends with a usable, releasable product. Phase sizes are relative; act
 | # | Feature | Target & Constraints | Architecture & Implementation Spec |
 |---|---|---|---|
 | **2.1** | **Proximity Lock (BLE RSSI Ranging)** (§3.11) | Lock Windows automatically when the paired phone walks away. | Continuous BLE advertisement RSSI smoothing (EMA filter + hysteresis threshold, e.g. `< -82 dBm` for `> 12 s` or link loss while on battery) in `desktop/app/src/win/ble_beacon.rs` + Android BLE scanner, triggering `LockWorkStation()` when enabled in Settings. |
-| **2.2** | **Unlock PC with Phone Fingerprint (`desktop/credprov`)** (§3.10) | Unlock Windows lock screen via phone `BiometricPrompt`. | Isolated Windows `ICredentialProvider` DLL (`desktop/credprov`) communicating over a local named pipe with the Nectarlink service, issuing a 256-bit nonce signed by an Android Keystore `StrongBox` Ed25519/ECDSA key bound to `BiometricPrompt`. Requires external security review before enabling by default. |
+| **2.2** | **Unlock PC with Phone Fingerprint (`desktop/credprov`)** (§3.10) | Unlock Windows lock screen via phone `BiometricPrompt`. | Isolated Windows `ICredentialProvider` DLL (`desktop/credprov`) communicating over a local named pipe with the NectarLink service, issuing a 256-bit nonce signed by an Android Keystore `StrongBox` Ed25519/ECDSA key bound to `BiometricPrompt`. Requires external security review before enabling by default. |
 | **2.3** | **Bluetooth RFCOMM Fallback Link** (§3.1) | Keep notifications, SMS, and call alerts alive when no Wi-Fi/LAN or USB is available. | Classic Bluetooth RFCOMM socket transport (`Windows.Devices.Bluetooth.Rfcomm` ↔ Android `BluetoothAdapter.listenUsingRfcommWithServiceRecord`) multiplexed into `nectarlink-core` as a low-bandwidth control path. |
 | **2.4** | **Tablet / Phone as Second Monitor (`IddCx`)** (§3.12) | Extend the Windows desktop onto an Android tablet/phone as a virtual display. | Pair an open-source signed UMDF2 `IddCx` indirect display driver on Windows with the Reverse Mirroring pipeline (§1.2) capturing the virtual display output at 60 to 120 fps. |
 | **2.5** | **Phone as Live PC Microphone** (§3.8) | Route the phone's microphone into Windows apps (Discord, Zoom, OBS). | Stream low-latency 48 kHz mono/stereo PCM from the phone's `AudioRecord` (with `NoiseSuppressor`) to the PC (`audio.pcm` bidirectional stream) and play into a virtual audio endpoint or default communications loopback. |
@@ -694,7 +694,7 @@ Each phase ends with a usable, releasable product. Phase sizes are relative; act
 
 ## 10. Decisions & open questions
 
-### 10.1 Name: **Nectarlink** (done)
+### 10.1 Name: **NectarLink** (done)
 - Repo: `github.com/thtbee/nectarlink` (private until most things work locally; no pushing before that).
 - Checks done: no conflicting products found on the web; `nectarlink.app`, `nectarlink.dev`, `getnectarlink.com` and the GitHub name were free (2026-10-05).
 - **Still to do before any announcement:** official trademark searches (USPTO, TMview, IP India), register the domain, X handle, and reserve `nectar-link` as a redirect.
@@ -715,7 +715,7 @@ Each phase ends with a usable, releasable product. Phase sizes are relative; act
 **Windows 11 only**, x64 + ARM64.
 
 ### 10.5 Crash reporting (done) (opt-in)
-- Nothing is sent unless you say yes. After a crash, Nectarlink asks once and shows the exact redacted report (no notification text, message content, file names or keys).
+- Nothing is sent unless you say yes. After a crash, NectarLink asks once and shows the exact redacted report (no notification text, message content, file names or keys).
 - **v1 uses no server at all:** "Report on GitHub" opens a prefilled issue, and you attach the redacted bundle yourself.
 - If volume grows: an opt-in, self-hosted GlitchTip (Sentry-compatible) server.
 - Tooling: Rust minidumps (`crash-handler`) on desktop, ACRA with a consent dialog on Android.
@@ -757,8 +757,8 @@ Each phase ends with a usable, releasable product. Phase sizes are relative; act
 ## 11. Pre-flight checklist
 
 ### Must resolve before writing code
-1. **Name clearance.** Trademark search for "Nectarlink" in software classes (9 and 42) in the US, EU and India, then secure the domain, GitHub org and X handle. Do this *before* teasing the name to the X audience, because renaming after a public announcement is costly.
-2. **Signing-key custody.** The Android signing key is Nectarlink's permanent identity: lose it and every user has to uninstall to update, and developer verification is tied to it. Generate it once, keep two offline backups, and store it as a CI secret. The same applies to the auto-update signing key.
+1. **Name clearance.** Trademark search for "NectarLink" in software classes (9 and 42) in the US, EU and India, then secure the domain, GitHub org and X handle. Do this *before* teasing the name to the X audience, because renaming after a public announcement is costly.
+2. **Signing-key custody.** The Android signing key is NectarLink's permanent identity: lose it and every user has to uninstall to update, and developer verification is tied to it. Generate it once, keep two offline backups, and store it as a CI secret. The same applies to the auto-update signing key.
 3. **Dev environment (done) (done 2026-10-04)**:
    - Installed: Qt 6.12.0 (MSVC x64 + ARM64) in `C:\Qt`, Android NDK 30.0.16248370 + CMake 4.1.2, Android command-line tools, Rust targets (Android ×4, Windows ARM64), `cargo-ndk` 4.1.2.
    - Already present: Android platform 37, build-tools 36, platform-tools, Rust 1.99, MSVC Build Tools 2022, Node 24, Python 3.14.
@@ -793,7 +793,7 @@ Each phase ends with a usable, releasable product. Phase sizes are relative; act
 
 | # | Step | Owner | Output |
 |---|---|---|---|
-| 1 | Name clearance + grab domain, GitHub org, X handle | Maintainer | "Nectarlink" cleared by official searches |
+| 1 | Name clearance + grab domain, GitHub org, X handle | Maintainer | "NectarLink" cleared by official searches |
 | 2 | Phase 0 detailed spec: protocol v0 (Hello, pairing, capabilities), `nectarlink-core` public API, capability-matrix schema, repo scaffolding plan, ADRs, spike test plans with pass criteria | Claude | `docs/` specs |
 | 3 | Design foundations + 2 to 3 visual directions (both apps) | Claude → maintainer picks | Chosen direction, then hi-fi mockups |
 | 4 | Dev environment setup (Qt 6.12, JDK, Android SDK/NDK, Rust targets) | Together | One-command build prerequisites |

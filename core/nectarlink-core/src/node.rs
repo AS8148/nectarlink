@@ -1298,7 +1298,7 @@ impl ProtocolHandler for PairProtocol {
     }
 }
 
-/// The Nectarlink engine. One per app.
+/// The NectarLink engine. One per app.
 ///
 /// Commands are async methods; everything that changes is reported through
 /// [`Node::events`]. Cheap to clone.

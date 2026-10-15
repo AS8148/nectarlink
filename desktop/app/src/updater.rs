@@ -155,9 +155,9 @@ pub fn check_now(told: bool) -> Option<String> {
             if new {
                 announce(&update);
             }
-            Some(format!("Nectarlink {} is available.", update.version))
+            Some(format!("NectarLink {} is available.", update.version))
         }
-        Ok(None) => told.then(|| "Nectarlink is up to date.".to_owned()),
+        Ok(None) => told.then(|| "NectarLink is up to date.".to_owned()),
         Err(e) => {
             tracing::info!(error = %e, "couldn't check for updates");
             told.then(|| "Couldn't check for updates. Check your internet connection.".to_owned())
@@ -169,9 +169,9 @@ fn announce(update: &Update) {
     toast::show(toast::Toast {
         device: TOAST_GROUP.into(),
         key: update.version.clone(),
-        title: format!("Nectarlink {} is available", update.version),
+        title: format!("NectarLink {} is available", update.version),
         body: "Update now, or later from Settings.".into(),
-        attribution: "Nectarlink".into(),
+        attribution: "NectarLink".into(),
         icon: None,
         image: None,
         actions: vec![(ACTION_UPDATE.into(), "Update".into())],
@@ -684,7 +684,7 @@ pub fn announce_update(previous: String, shown: bool) {
     tracing::info!(from = previous, to = current, "updated");
     after_start(
         shown,
-        format!("Nectarlink is updated to {current}"),
+        format!("NectarLink is updated to {current}"),
         "Your phone reconnects on its own.".into(),
     );
 }
@@ -696,7 +696,7 @@ pub fn announce_update_failed(shown: bool) {
     after_start(
         shown,
         "The update didn't install".into(),
-        "Nectarlink is still on the version you had. Try again from Settings.".into(),
+        "NectarLink is still on the version you had. Try again from Settings.".into(),
     );
 }
 
@@ -712,7 +712,7 @@ fn after_start(shown: bool, title: String, body: String) {
             key: "updated".into(),
             title,
             body,
-            attribution: "Nectarlink".into(),
+            attribution: "NectarLink".into(),
             icon: None,
             image: None,
             actions: Vec::new(),

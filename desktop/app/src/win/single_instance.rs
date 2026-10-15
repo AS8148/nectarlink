@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! One Nectarlink per user session and data folder. A second launch (from
+//! One NectarLink per user session and data folder. A second launch (from
 //! the Start menu, a shortcut or Explorer's "Send to") leaves its request
 //! (`crate::launch`), wakes the running one with [`wake`] and exits.
 

@@ -24,7 +24,7 @@ pub use shm::{
 };
 pub use source::{SAMPLE_DURATION_100NS, VcamClassFactory, VcamMediaSource, VcamMediaStream};
 
-/// CLSID of the Nectarlink Virtual Camera Media Foundation media source:
+/// CLSID of the NectarLink Virtual Camera Media Foundation media source:
 /// `{8E6C3B74-5D4A-4B9E-9A12-7C8F1E2D3A40}`.
 pub const CLSID_NECTARLINK_VCAM: GUID = GUID::from_u128(0x8e6c3b74_5d4a_4b9e_9a12_7c8f1e2d3a40);
 

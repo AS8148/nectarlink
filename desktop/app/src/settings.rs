@@ -272,7 +272,7 @@ pub struct Settings {
     /// reduced motion or battery saver whatever this says).
     #[serde(default = "default_true", alias = "comb_motion")]
     pub comb_motion: bool,
-    /// Closing the window keeps Nectarlink running in the tray.
+    /// Closing the window keeps NectarLink running in the tray.
     #[serde(alias = "close_to_tray")]
     pub close_to_tray: bool,
     /// Send what's copied on this PC to connected phones.

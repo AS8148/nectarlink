@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Spike S1: can Qt Quick + Rust deliver the Nectarlink design within the
+//! Spike S1: can Qt Quick + Rust deliver the NectarLink design within the
 //! performance budgets? See README.md for what is measured and the results.
 
 mod bridge;
@@ -19,7 +19,7 @@ fn main() {
     let mut app = QGuiApplication::new();
     let mut engine = QQmlApplicationEngine::new();
     if let Some(app) = app.as_mut() {
-        app.set_application_name(&QString::from("Nectarlink S1"));
+        app.set_application_name(&QString::from("NectarLink S1"));
     }
     // The tray test closes the main window and keeps running, like tray mode.
     if std::env::args().any(|a| a == "--tray-test") {

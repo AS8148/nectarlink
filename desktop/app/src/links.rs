@@ -103,7 +103,7 @@ fn notice(title: &str, body: &str) {
         key: "notice".into(),
         title: title.into(),
         body: body.into(),
-        attribution: "Nectarlink".into(),
+        attribution: "NectarLink".into(),
         icon: None,
         image: None,
         actions: Vec::new(),
@@ -187,7 +187,7 @@ fn send(phone: DeviceId, name: String, handoff: HandoffLink) {
                     notice(&format!("Sent to {name}"), &body);
                 }
             }
-            Err(Error::Unsupported) => notice("Couldn't send it", &format!("Update Nectarlink on {name}.")),
+            Err(Error::Unsupported) => notice("Couldn't send it", &format!("Update NectarLink on {name}.")),
             Err(e) => notice("Couldn't send it", &describe(&e)),
         }
     });

@@ -181,9 +181,9 @@ data class CoreState(
     val pairing: PairingState = PairingState.Idle,
     /** Name of the device making this phone ring, or null. */
     val ringingFrom: String? = null,
-    /** Whether the user let Nectarlink read notifications (to mirror them). */
+    /** Whether the user let NectarLink read notifications (to mirror them). */
     val notificationAccess: Boolean = false,
-    /** Whether Android lets Nectarlink reach the local network (Android 17). */
+    /** Whether Android lets NectarLink reach the local network (Android 17). */
     val localNetwork: Boolean = true,
     /** Whether the Elevated helper runs (wireless debugging). */
     val elevated: Boolean = false,
@@ -191,17 +191,17 @@ data class CoreState(
     val inputAccess: Boolean = false,
     /** Whether a paired PC tried to inject mouse/keyboard input while input access is off. */
     val remoteInputRequested: Boolean = false,
-    /** Whether the user let Nectarlink read and send texts (for PCs). */
+    /** Whether the user let NectarLink read and send texts (for PCs). */
     val smsAccess: Boolean = false,
-    /** Whether the user let Nectarlink follow and answer calls (to show them on PCs). */
+    /** Whether the user let NectarLink follow and answer calls (to show them on PCs). */
     val callAccess: Boolean = false,
-    /** Whether the user let Nectarlink read contacts (for PCs). */
+    /** Whether the user let NectarLink read contacts (for PCs). */
     val contactsAccess: Boolean = false,
-    /** Whether the user let Nectarlink see the phone's photos (to show them on PCs). */
+    /** Whether the user let NectarLink see the phone's photos (to show them on PCs). */
     val photoAccess: Boolean = false,
     /** Whether Android 14+ "Select photos and videos" partial access is active. */
     val photoPartialAccess: Boolean = false,
-    /** Whether Android lets Nectarlink run unrestricted in the background. */
+    /** Whether Android lets NectarLink run unrestricted in the background. */
     val backgroundUnrestricted: Boolean = true,
     /** Whether Companion Device Manager association is active for waking when a PC BLE beacon is nearby. */
     val companionAssociated: Boolean = false,

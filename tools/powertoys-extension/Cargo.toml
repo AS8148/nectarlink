@@ -1,6 +1,6 @@
 [package]
 name = "nectarlink-ptrun"
-description = "PowerToys Run & Command Palette extension helper for Nectarlink"
+description = "PowerToys Run & Command Palette extension helper for NectarLink"
 version = "0.0.1"
 edition = "2024"
 license = "GPL-3.0-or-later"

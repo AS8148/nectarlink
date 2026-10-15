@@ -1,6 +1,6 @@
 [package]
 name = "nectarlink-vcam"
-description = "Nectarlink virtual camera Media Foundation media source (Windows 11)"
+description = "NectarLink virtual camera Media Foundation media source (Windows 11)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

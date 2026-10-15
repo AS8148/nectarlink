@@ -308,7 +308,7 @@ pub fn send_now(device: DeviceId) {
             Err(Error::TooLarge) if image => show_message("That image is too large to send."),
             Err(Error::TooLarge) => show_message("That's too much text to send at once."),
             Err(Error::Unsupported) if image => {
-                show_message(format!("Update Nectarlink on {name} to send it images."))
+                show_message(format!("Update NectarLink on {name} to send it images."))
             }
             Err(Error::Denied) => show_message(format!("The clipboard is turned off for {name}.")),
             Err(e) => show_message(describe(&e)),

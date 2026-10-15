@@ -71,7 +71,7 @@ fn reg_dword(root: HKEY, key: &str, value: &str) -> Option<u32> {
 }
 
 /// Windows' per-installation machine GUID. It stays the same across app reinstalls, so a
-/// hash of it lets phones recognise this PC after Nectarlink is reinstalled.
+/// hash of it lets phones recognise this PC after NectarLink is reinstalled.
 pub fn machine_guid() -> Option<String> {
     reg_string(HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography", "MachineGuid")
 }
@@ -204,6 +204,6 @@ mod tests {
         let version = os_version();
         let parts: Vec<&str> = version.split('.').collect();
         assert_eq!(parts.len(), 3, "{version}");
-        assert!(parts[2].parse::<u32>().unwrap() >= 22000, "Nectarlink targets Windows 11: {version}");
+        assert!(parts[2].parse::<u32>().unwrap() >= 22000, "NectarLink targets Windows 11: {version}");
     }
 }

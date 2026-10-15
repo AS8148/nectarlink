@@ -117,7 +117,7 @@ class PcMedia(
         if (first == null) return hide()
         val (pc, player) = first
         shown = first
-        val session = session ?: MediaSession(context, "Nectarlink PC media").also {
+        val session = session ?: MediaSession(context, "NectarLink PC media").also {
             it.setCallback(callback, main)
             it.setSessionActivity(openApp())
             session = it

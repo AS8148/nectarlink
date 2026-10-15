@@ -1,6 +1,6 @@
 # Performance Budgets
 
-Nectarlink treats startup latency, idle resource consumption, UI frame pacing, and bulk transfer throughput as regression-tested engineering budgets. Every metric below is taken from [`docs/PERFORMANCE.md`](../PERFORMANCE.md) and verified on hardware (`Windows 11 desktop + Samsung SM-S908E Android 14`).
+NectarLink treats startup latency, idle resource consumption, UI frame pacing, and bulk transfer throughput as regression-tested engineering budgets. Every metric below is taken from [`docs/PERFORMANCE.md`](../PERFORMANCE.md) and verified on hardware (`Windows 11 desktop + Samsung SM-S908E Android 14`).
 
 ## Target Budgets vs Measured Results
 

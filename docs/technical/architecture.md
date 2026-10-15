@@ -1,6 +1,6 @@
 # Architecture
 
-Nectarlink is built around a shared Rust core library (`nectarlink-core`) that implements peer discovery, cryptographic identity, QUIC session management, capability negotiation, persistent storage, and media/file framing. Native platform shells on Windows (`desktop/app`) and Android (`android/app`) bind directly to this core and provide OS integration and UI rendering.
+NectarLink is built around a shared Rust core library (`nectarlink-core`) that implements peer discovery, cryptographic identity, QUIC session management, capability negotiation, persistent storage, and media/file framing. Native platform shells on Windows (`desktop/app`) and Android (`android/app`) bind directly to this core and provide OS integration and UI rendering.
 
 ## System Topology
 
@@ -99,7 +99,7 @@ The Windows desktop client combining a Rust service host with a Qt 6.12 Quick/QM
   - `media.rs`: Windows `GlobalSystemMediaTransportControlsSessionManager` (SMTC) integration for bidirectional Now Playing metadata and transport controls.
   - `ble_proximity.rs`: Windows WinRT BLE watcher and GATT advertisement reader for RSSI-smoothed proximity presence and auto-lock.
   - `local_api.rs`: Opt-in localhost HTTP/SSE server (`127.0.0.1:53320`) for CLI, PowerToys, Raycast, and Stream Deck integrations.
-  - `share_target.rs` and `shell_integration.rs`: Windows Share Target activation and Explorer context-menu verb registration (`Send to Phone with Nectarlink`).
+  - `share_target.rs` and `shell_integration.rs`: Windows Share Target activation and Explorer context-menu verb registration (`Send to Phone with NectarLink`).
   - `setup.rs` (with `bridge/setup.rs` and `qml/setup/`): The installer's and uninstaller's window. The NSIS installer (`desktop/installer/nectarlink.nsi`) unpacks the app and starts it with `--setup`; the uninstall entry starts the installed app with `--remove`. The window runs the NSIS installer or uninstaller silently with administrator rights and shows its progress.
   - `updater.rs`: Automatic release update checker (`https://api.github.com/repos/thtbee/nectarlink/releases/latest`) and SHA-256 verified silent NSIS installer runner on installed desktop copies.
 
@@ -121,7 +121,7 @@ The Android application written in Kotlin with Jetpack Compose (`compileSdk = 37
 
 ## Discovery and Transport Architecture
 
-Nectarlink uses `iroh` (`1.3`) to run a single QUIC + TLS 1.3 endpoint per device. Every paired connection is classified into one of three `ConnectionPath` variants (`core/nectarlink-core/src/node.rs`):
+NectarLink uses `iroh` (`1.3`) to run a single QUIC + TLS 1.3 endpoint per device. Every paired connection is classified into one of three `ConnectionPath` variants (`core/nectarlink-core/src/node.rs`):
 
 | Path | Discovery Mechanism | Transport Path | Latency & Bandwidth Profile |
 |---|---|---|---|

@@ -1,6 +1,6 @@
 # Protocol Overview
 
-The Nectarlink wire protocol (`nectarlink/0`) runs over a single mutually authenticated QUIC + TLS 1.3 connection per peer (`iroh` `1.3`). It multiplexes control messages, request/response RPCs, bulk file streams, real-time media streams, and unreliable low-latency datagrams without head-of-line blocking between independent features.
+The NectarLink wire protocol (`nectarlink/0`) runs over a single mutually authenticated QUIC + TLS 1.3 connection per peer (`iroh` `1.3`). It multiplexes control messages, request/response RPCs, bulk file streams, real-time media streams, and unreliable low-latency datagrams without head-of-line blocking between independent features.
 
 ## Specification Index (`docs/protocol/`)
 

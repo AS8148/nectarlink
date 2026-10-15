@@ -21,13 +21,13 @@ The **Photos** page on your PC gives you instant access to your phone's camera r
 
 1. Click **Photos** in the left navigation bar on your PC.
 2. Use the album filter pills at the top (**All**, **Camera**, **Screenshots**, or any custom album from your phone's `MediaStore`) to narrow the grid.
-3. Photos are grouped chronologically by day. As you scroll, Nectarlink streams lightweight thumbnails from your phone and caches them locally so scrolling stays responsive even across galleries with 10,000+ photos.
+3. Photos are grouped chronologically by day. As you scroll, NectarLink streams lightweight thumbnails from your phone and caches them locally so scrolling stays responsive even across galleries with 10,000+ photos.
 4. Additionally, the **Home** screen and the slide-out `Shelf` edge panel (`Ctrl+Alt+S`) always show quick cards for your phone's **Latest photo** and **Latest screenshot**.
 
 ### Viewing Full-Resolution Photos
 
-1. Click any thumbnail in the **Photos** grid to open the full-resolution viewer inside Nectarlink.
-2. Nectarlink streams the original, uncompressed image file from your phone on demand.
+1. Click any thumbnail in the **Photos** grid to open the full-resolution viewer inside NectarLink.
+2. NectarLink streams the original, uncompressed image file from your phone on demand.
 3. Use the **Left** and **Right** arrow keys on your keyboard to step through your gallery, or press **Escape** to return to the grid.
 4. From the viewer toolbar, you can:
    - Click **Copy** (`Ctrl+C`) to copy the full-resolution image onto your Windows clipboard so you can paste it into any document, chat app, or image editor.
@@ -40,7 +40,7 @@ You do not need to click Save before using a photo in another Windows program:
 
 1. Point at any photo tile on the **Photos** page, on the **Home** screen, or inside the slide-out `Shelf`.
 2. Click and drag the photo directly onto your Windows Desktop, into a File Explorer folder, or into an open app (such as PowerPoint, Photoshop, Figma, Slack, or your web browser).
-3. Nectarlink stages the full-resolution file with its original sanitized filename (for example, `IMG_20261012_091500.jpg`) so the receiving app gets the real file immediately.
+3. NectarLink stages the full-resolution file with its original sanitized filename (for example, `IMG_20261012_091500.jpg`) so the receiving app gets the real file immediately.
 
 ### Selecting and Saving Multiple Photos
 
@@ -62,10 +62,10 @@ Whenever you take a new photo or capture a screenshot on your phone while connec
 
 ## Data and Privacy
 
-- **On-demand reading**: Nectarlink never bulk-uploads your photo library in the background. Your phone reads photo metadata and thumbnails directly from Android's `MediaStore` only when you open the **Photos** page (or for the single latest photo/screenshot on Home), and full-resolution originals are transferred only when you view, copy, drag, or save a specific photo.
+- **On-demand reading**: NectarLink never bulk-uploads your photo library in the background. Your phone reads photo metadata and thumbnails directly from Android's `MediaStore` only when you open the **Photos** page (or for the single latest photo/screenshot on Home), and full-resolution originals are transferred only when you view, copy, drag, or save a specific photo.
 - **Local cache retention**: Thumbnail previews downloaded to your PC are stored in `%LOCALAPPDATA%\Nectarlink\cache\photos\` and automatically purged after **30 days**. Drag-and-drop staging files in `%LOCALAPPDATA%\Nectarlink\cache\photos\drag\` are cleaned up automatically. Clicking **Clear** next to **Photo thumbnails** in **Settings › Storage & Privacy** wipes all cached thumbnails on your PC without affecting any photos on your phone or any files you saved to `Downloads`.
 
 ## Limits
 
-- **Android 14+ Partial Photo Access**: If you choose **Select photos** instead of **Allow all** when Android prompts for media access, Android only reveals the specific photos you picked to Nectarlink. Nectarlink displays an inline notice in Android Settings (**Some of your photos and videos aren't available on your PC**) with an **Allow all** button so you can expand access whenever you want.
-- **Cloud-Only Backed-Up Photos**: Nectarlink reads photos stored locally on your phone's storage (`MediaStore`). Older photos that have been deleted from your phone's local storage by a cloud backup service (such as Google Photos "Free up space") are not on the device and will not appear unless downloaded back to the phone.
+- **Android 14+ Partial Photo Access**: If you choose **Select photos** instead of **Allow all** when Android prompts for media access, Android only reveals the specific photos you picked to NectarLink. NectarLink displays an inline notice in Android Settings (**Some of your photos and videos aren't available on your PC**) with an **Allow all** button so you can expand access whenever you want.
+- **Cloud-Only Backed-Up Photos**: NectarLink reads photos stored locally on your phone's storage (`MediaStore`). Older photos that have been deleted from your phone's local storage by a cloud backup service (such as Google Photos "Free up space") are not on the device and will not appear unless downloaded back to the phone.

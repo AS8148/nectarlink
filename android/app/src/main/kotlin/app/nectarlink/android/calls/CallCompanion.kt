@@ -12,8 +12,8 @@ import android.telecom.VideoProfile
 import app.nectarlink.core.CallControls
 
 /**
- * Nectarlink as a calling companion: Telecom binds this while there are
- * calls, without Nectarlink being the phone app, so a PC can mute, switch to
+ * NectarLink as a calling companion: Telecom binds this while there are
+ * calls, without NectarLink being the phone app, so a PC can mute, switch to
  * the speaker, hold, and press keys on the call in progress. It shows
  * nothing on the phone. Telecom binds companions that hold
  * MANAGE_ONGOING_CALLS (Android 12+), an app-op Elevated's shell grants.

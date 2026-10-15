@@ -57,7 +57,7 @@ object PhoneClipboard {
         data object Unreadable : ImageResult
     }
 
-    /** True when `(text, html)` was written to the phone clipboard by Nectarlink itself within the last few seconds. */
+    /** True when `(text, html)` was written to the phone clipboard by NectarLink itself within the last few seconds. */
     fun isRecentEcho(text: String, html: String? = null): Boolean {
         val last = lastWrittenText ?: return false
         if (normalizeClipText(last) != normalizeClipText(text)) return false
@@ -66,7 +66,7 @@ object PhoneClipboard {
         return true
     }
 
-    /** True when `uri` was placed on the phone clipboard by Nectarlink itself within the last few seconds. */
+    /** True when `uri` was placed on the phone clipboard by NectarLink itself within the last few seconds. */
     fun isRecentUriEcho(uri: Uri): Boolean {
         val last = lastWrittenUri ?: return false
         if (last != uri) return false
@@ -205,14 +205,14 @@ object PhoneClipboard {
      * immediately paste it into chat or email apps, while recording the URI to suppress
      * clipboard echo back to the PC.
      */
-    fun setFileUri(context: Context, uri: Uri, label: String = "Nectarlink file"): Boolean = runCatching {
+    fun setFileUri(context: Context, uri: Uri, label: String = "NectarLink file"): Boolean = runCatching {
         appContext = context.applicationContext
         lastWrittenUri = uri
         lastWrittenText = uri.toString()
         lastWrittenHtml = null
         lastWrittenAtMs = android.os.SystemClock.elapsedRealtime()
         val mgr = manager(context) ?: return false
-        val clip = ClipData.newUri(context.contentResolver, label.ifBlank { "Nectarlink file" }, uri)
+        val clip = ClipData.newUri(context.contentResolver, label.ifBlank { "NectarLink file" }, uri)
         mgr.setPrimaryClip(clip)
         true
     }.getOrElse {
@@ -221,7 +221,7 @@ object PhoneClipboard {
     }
 
     /** Overload using the cached application [Context] when available. */
-    fun setFileUri(uri: Uri, label: String = "Nectarlink file"): Boolean {
+    fun setFileUri(uri: Uri, label: String = "NectarLink file"): Boolean {
         val ctx = appContext ?: return false
         return setFileUri(ctx, uri, label)
     }
