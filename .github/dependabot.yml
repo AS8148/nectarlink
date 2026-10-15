@@ -9,6 +9,9 @@ updates:
       rust:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # Moves with cxx-qt only (see Cargo.toml).
+      - dependency-name: cxx
   - package-ecosystem: gradle
     directory: /android
     schedule:
