@@ -1087,7 +1087,9 @@ impl Shared {
             self.toggles.remove_peer(&ended.peer);
             self.deck.remove_peer(&ended.peer);
             if paired {
-                tracing::info!(peer = %ended.peer.short(), "disconnected");
+                // Why, as QUIC tells it: timed out, closed by the other side...
+                let reason = ended.conn.close_reason().map(|r| r.to_string()).unwrap_or_default();
+                tracing::info!(peer = %ended.peer.short(), %reason, "disconnected");
                 // Still under the lock: a new session for the peer can't
                 // register (and say it's online) until this is said, so a
                 // stale "offline" never lands after a fresh "online".
