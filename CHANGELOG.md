@@ -54,6 +54,9 @@ change things that need a step from you, and its notes say so.
 - Windows: the emoji panel (**Win+.**) and input methods for Chinese and
   other languages type into the phone's screen and app windows while you
   control them. Only plain key presses got through before.
+- Pausing a transfer on the receiving device just as its last bytes
+  arrived left the sending device waiting, showing it as still sending. Both
+  now show it paused.
 
 ## 0.1.3 (2026-10-15)
 
