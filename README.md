@@ -49,6 +49,13 @@ against its SHA-256 sums.
 > isn't code-signed yet: choose **More info**, then **Run anyway**. On Android,
 > allow your browser or file manager to install apps when asked.
 
+> [!IMPORTANT]
+> In India and many other countries, Google Play Protect blocks the APK with
+> no **Install anyway** button. Pause **Scan apps with Play Protect** while you
+> install it (Play Store › your profile › Play Protect › Settings), then turn it
+> back on, or install it from a PC with `adb install`. See
+> [Play Protect blocks the APK](docs/guide/troubleshooting.md#google-play-protect-blocks-the-apk-without-an-install-anyway-button).
+
 ## Get started
 
 1. Install NectarLink on your PC and on your phone.
