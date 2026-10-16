@@ -65,6 +65,9 @@ change things that need a step from you, and its notes say so.
   Elevated on, text from the PC goes on the phone's clipboard without the
   copy toast or preview Android and One UI show for every copy. Without
   Elevated, Android doesn't let an app avoid it.
+- **Mirroring with Elevated starts without asking on the phone.** Starting it
+  failed on the phone (it opened the helper's stream on the main thread,
+  which Android refuses), so it fell back to asking you to share the screen.
 - Android: Phone as webcam no longer crashes the app when its preview
   comes back (the same fix covers the QR scanner and Continuity Camera).
 - Android: on Hive, the category chips at the top of Settings and the

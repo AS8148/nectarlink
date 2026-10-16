@@ -51,6 +51,8 @@ class MirrorService : Service() {
     private var projection: MediaProjection? = null
     private var encoder: ScreenEncoder? = null
     @Volatile private var elevatedSocket: java.net.Socket? = null
+    /** Opening the helper's screen stream (off the main thread), before [elevatedSocket] is set. */
+    @Volatile private var elevatedStarting = false
     private var elevatedDisplayListener: android.hardware.display.DisplayManager.DisplayListener? = null
     private var sound: SoundCapture? = null
     private var pcId: String? = null
@@ -67,8 +69,8 @@ class MirrorService : Service() {
         val pc = intent?.getStringExtra(EXTRA_PC)
         val isElevated = intent?.getBooleanExtra(EXTRA_ELEVATED, false) == true
         val consent = intent?.let { IntentCompat.getParcelableExtra(it, EXTRA_CONSENT, Intent::class.java) }
-        if (pc == null || (!isElevated && consent == null) || projection != null || elevatedSocket != null) {
-            if (projection == null && elevatedSocket == null) stopSelf()
+        if (pc == null || (!isElevated && consent == null) || projection != null || elevatedSocket != null || elevatedStarting) {
+            if (projection == null && elevatedSocket == null && !elevatedStarting) stopSelf()
             return START_NOT_STICKY
         }
         val core = (application as NectarlinkApplication).core
@@ -94,6 +96,7 @@ class MirrorService : Service() {
                 screenOff = screenOff,
             )
             val fallbackRequest = MirrorRequest(pc, maxSize, fps, bitrate, audio, stayAwake, screenOff)
+            elevatedStarting = true
             startElevatedStream(core, pc, name, fallbackRequest)
             return START_NOT_STICKY
         }
@@ -151,8 +154,10 @@ class MirrorService : Service() {
         pc: String,
         pcName: String,
         request: MirrorRequest,
-    ) {
-        val (initW, initH, initDpi) = ScreenEncoder.computeScreenSize(this, request.maxSize)
+    ) = scope.launch {
+        // The helper's socket: off the main thread, where Android refuses
+        // network calls (and the phone then asked for screen-capture consent).
+        val (initW, initH, initDpi) = ScreenEncoder.computeScreenSize(this@MirrorService, request.maxSize)
         val codec = ScreenEncoder.selectCodec("h264")
         val socket = app.nectarlink.android.elevated.Elevated.openScreen(
             initW,
@@ -162,14 +167,22 @@ class MirrorService : Service() {
             request.fps,
             codec,
         )
+        elevatedStarting = false
         if (socket == null) {
             main.post {
                 stopSharing()
                 MirrorRequests.show(this@MirrorService, request, pcName)
             }
-            return
+            return@launch
         }
         elevatedSocket = socket
+        main.post { watchDisplay(socket, request, initW, initH) }
+        streamElevated(core, pc, pcName, request, socket, codec)
+    }
+
+    /** Resizes the helper's picture when the phone's screen turns. */
+    private fun watchDisplay(socket: java.net.Socket, request: MirrorRequest, initW: Int, initH: Int) {
+        if (elevatedSocket !== socket) return
         var curW = initW
         var curH = initH
         val displays = getSystemService(android.hardware.display.DisplayManager::class.java)
@@ -199,57 +212,65 @@ class MirrorService : Service() {
         elevatedDisplayListener = listener
         displays?.registerDisplayListener(listener, main)
         applyPower()
+    }
 
-        scope.launch {
-            val stream = runCatching { core.mirrorOpen(pc) }.getOrElse {
-                Log.w(TAG, "can't stream to the PC", it)
-                main.post { stopSharing() }
-                return@launch
-            }
-            if (request.audio && SoundCapture.canCapture(this@MirrorService)) startSound(core, pc)
-            var gotConfig = false
-            try {
-                val input = java.io.DataInputStream(socket.getInputStream().buffered(1 shl 16))
-                while (elevatedSocket === socket) {
-                    val length = input.readInt()
-                    if (length < 9 || length > 16 * 1024 * 1024) break
-                    val kind = input.readUnsignedByte()
-                    val time = input.readLong().toULong()
-                    val data = ByteArray(length - 9).also { input.readFully(it) }
-                    val result = when (kind) {
-                        app.nectarlink.android.elevated.AppDisplay.KIND_CONFIG -> {
-                            gotConfig = true
-                            val fields = java.nio.ByteBuffer.wrap(data)
-                            val (w, h) = fields.int to fields.int
-                            stream.send(
-                                app.nectarlink.core.VideoPacketKind.CONFIG,
-                                0u,
-                                app.nectarlink.core.mirrorConfigCodec(codec, w.toUInt(), h.toUInt(), 0u),
-                            )
-                        }
-                        app.nectarlink.android.elevated.AppDisplay.KIND_KEYFRAME ->
-                            stream.send(app.nectarlink.core.VideoPacketKind.KEYFRAME, time, data)
-                        else ->
-                            stream.send(app.nectarlink.core.VideoPacketKind.FRAME, time, data)
+    /** The helper's packets to the PC, until either side ends; asks for consent if none came. */
+    private suspend fun streamElevated(
+        core: app.nectarlink.android.core.Core,
+        pc: String,
+        pcName: String,
+        request: MirrorRequest,
+        socket: java.net.Socket,
+        codec: String,
+    ) {
+        val stream = runCatching { core.mirrorOpen(pc) }.getOrElse {
+            Log.w(TAG, "can't stream to the PC", it)
+            main.post { stopSharing() }
+            return
+        }
+        if (request.audio && SoundCapture.canCapture(this@MirrorService)) startSound(core, pc)
+        var gotConfig = false
+        try {
+            val input = java.io.DataInputStream(socket.getInputStream().buffered(1 shl 16))
+            while (elevatedSocket === socket) {
+                val length = input.readInt()
+                if (length < 9 || length > 16 * 1024 * 1024) break
+                val kind = input.readUnsignedByte()
+                val time = input.readLong().toULong()
+                val data = ByteArray(length - 9).also { input.readFully(it) }
+                val result = when (kind) {
+                    app.nectarlink.android.elevated.AppDisplay.KIND_CONFIG -> {
+                        gotConfig = true
+                        val fields = java.nio.ByteBuffer.wrap(data)
+                        val (w, h) = fields.int to fields.int
+                        stream.send(
+                            app.nectarlink.core.VideoPacketKind.CONFIG,
+                            0u,
+                            app.nectarlink.core.mirrorConfigCodec(codec, w.toUInt(), h.toUInt(), 0u),
+                        )
                     }
-                    when (result) {
-                        app.nectarlink.core.MirrorSendResult.CLOSED -> break
-                        app.nectarlink.core.MirrorSendResult.NEED_KEYFRAME,
-                        app.nectarlink.core.MirrorSendResult.DROPPED -> requestElevatedKeyframe()
-                        app.nectarlink.core.MirrorSendResult.QUEUED -> {}
-                    }
+                    app.nectarlink.android.elevated.AppDisplay.KIND_KEYFRAME ->
+                        stream.send(app.nectarlink.core.VideoPacketKind.KEYFRAME, time, data)
+                    else ->
+                        stream.send(app.nectarlink.core.VideoPacketKind.FRAME, time, data)
                 }
-            } catch (_: java.io.EOFException) {
-            } catch (e: java.io.IOException) {
-                Log.d(TAG, "Elevated screen mirror ended", e)
-            } finally {
-                stream.end()
-                val shouldFallback = !gotConfig && pcId == pc
-                main.post {
-                    stopSharing()
-                    if (shouldFallback) {
-                        MirrorRequests.show(this@MirrorService, request, pcName)
-                    }
+                when (result) {
+                    app.nectarlink.core.MirrorSendResult.CLOSED -> break
+                    app.nectarlink.core.MirrorSendResult.NEED_KEYFRAME,
+                    app.nectarlink.core.MirrorSendResult.DROPPED -> requestElevatedKeyframe()
+                    app.nectarlink.core.MirrorSendResult.QUEUED -> {}
+                }
+            }
+        } catch (_: java.io.EOFException) {
+        } catch (e: java.io.IOException) {
+            Log.d(TAG, "Elevated screen mirror ended", e)
+        } finally {
+            stream.end()
+            val shouldFallback = !gotConfig && pcId == pc
+            main.post {
+                stopSharing()
+                if (shouldFallback) {
+                    MirrorRequests.show(this@MirrorService, request, pcName)
                 }
             }
         }
