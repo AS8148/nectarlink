@@ -384,7 +384,7 @@ impl qobject::Mirror {
     }
 
     pub fn paste(&self, key: &QString) {
-        if let crate::win::clipboard::Clip::Text { text, .. } = crate::win::clipboard::read() {
+        if let crate::win::clipboard::Clip::Text { text, .. } = crate::win::clipboard::read_for_paste() {
             // Long text goes in pieces, each a whole number of characters.
             let mut piece = String::new();
             for c in text.chars() {

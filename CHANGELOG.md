@@ -89,6 +89,9 @@ change things that need a step from you, and its notes say so.
 - Windows: the emoji panel (**Win+.**) and input methods for Chinese and
   other languages type into the phone's screen and app windows while you
   control them. Only plain key presses got through before.
+- Windows: **Win+V** pastes into the phone's screen and app windows. Windows
+  marks an item picked from clipboard history as one for clipboard watchers
+  to skip, and NectarLink skipped it even when you asked to paste it.
 - Pausing a transfer on the receiving device just as its last bytes
   arrived left the sending device waiting, showing it as still sending. Both
   now show it paused.

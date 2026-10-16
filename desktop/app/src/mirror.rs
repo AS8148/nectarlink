@@ -828,7 +828,7 @@ pub fn keyboard_paste(device: DeviceId) {
     if keyboard_device() != Some(device) {
         return;
     }
-    if let crate::win::clipboard::Clip::Text { text, .. } = crate::win::clipboard::read() {
+    if let crate::win::clipboard::Clip::Text { text, .. } = crate::win::clipboard::read_for_paste() {
         keyboard_text(device, text);
     }
 }
