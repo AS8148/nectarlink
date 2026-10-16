@@ -78,16 +78,26 @@ if (-not (Test-Path $windeployqt)) {
 }
 if (-not (Test-Path $windeployqt)) { throw "windeployqt not found under $hostKit or $QtRoot; pass -QtRoot" }
 
-$qtpaths = Join-Path $targetKit 'bin\qtpaths.bat'
-if (-not (Test-Path $qtpaths)) {
+$arm64ToolDir = Join-Path $env:LOCALAPPDATA "Nectarlink\dev\qmake-arm64"
+if ($isArm64) {
+    & (Join-Path $PSScriptRoot "qmake-arm64.ps1") -QtRoot $qtBase -OutDir $arm64ToolDir | Out-Null
+    $qtpaths = Join-Path $arm64ToolDir 'qtpaths.exe'
+    if (-not (Test-Path $qtpaths)) {
+        $qtpaths = Join-Path $arm64ToolDir 'qtpaths6.exe'
+    }
+} else {
     $qtpaths = Join-Path $targetKit 'bin\qtpaths.exe'
+    if (-not (Test-Path $qtpaths)) {
+        $qtpaths = Join-Path $targetKit 'bin\qtpaths6.exe'
+    }
 }
 
 # ---- Build ----
 if (-not $SkipBuild) {
     Step "Build ($Arch)"
     if ($isArm64) {
-        $env:QMAKE = & (Join-Path $PSScriptRoot "qmake-arm64.ps1") -QtRoot $qtBase
+        $env:QMAKE = Join-Path $arm64ToolDir "qmake6.exe"
+        if (-not (Test-Path $env:QMAKE)) { $env:QMAKE = Join-Path $arm64ToolDir "qmake.exe" }
         Invoke-Native "the build" { cargo build --locked --release --target aarch64-pc-windows-msvc -p nectarlink-desktop -p nectarlink-vcam }
     } else {
         $env:PATH = "$(Join-Path $targetKit 'bin');$env:PATH"
@@ -133,8 +143,11 @@ Invoke-Native "windeployqt" {
         '--no-compiler-runtime',
         '--dir', $stage
     )
-    if ($isArm64 -and (Test-Path $qtpaths)) {
-        $deployArgs = @('--qtpaths', $qtpaths) + $deployArgs
+    if ($isArm64) {
+        if (Test-Path $qtpaths) {
+            $deployArgs = @('--qtpaths', $qtpaths) + $deployArgs
+        }
+        $env:PATH = "$arm64ToolDir;$(Join-Path $hostKit 'bin');$env:PATH"
     }
     & $windeployqt @deployArgs (Join-Path $stage 'nectarlink-desktop.exe')
 }
@@ -168,12 +181,26 @@ foreach ($style in 'Fusion', 'Imagine', 'Material', 'Universal') {
 # The C++ runtime, next to the app (Microsoft allows this app-local copy),
 # so it runs on PCs without the Visual C++ Redistributable.
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-$vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+$vs = if (Test-Path $vswhere) {
+    & $vswhere -latest -products * -property installationPath
+} else { $null }
 $crtArch = if ($isArm64) { 'arm64' } else { 'x64' }
-$crt = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory |
-    Where-Object { $_.Name -match '^\d' } | Sort-Object { [version]$_.Name } -Descending |
-    ForEach-Object { Get-ChildItem (Join-Path $_.FullName $crtArch) -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue } |
-    Select-Object -First 1
+$redistDirs = @()
+if ($vs) { $redistDirs += (Join-Path $vs 'VC\Redist\MSVC') }
+if ($env:VCToolsRedistDir -and (Test-Path $env:VCToolsRedistDir)) { $redistDirs += $env:VCToolsRedistDir }
+$crt = $null
+foreach ($dir in $redistDirs) {
+    if (Test-Path $dir) {
+        $crt = Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d' } | Sort-Object { [version]$_.Name } -Descending |
+            ForEach-Object { Get-ChildItem (Join-Path $_.FullName $crtArch) -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue } |
+            Select-Object -First 1
+        if (-not $crt) {
+            $crt = Get-ChildItem (Join-Path $dir $crtArch) -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+        if ($crt) { break }
+    }
+}
 if (-not $crt) { throw "can't find the Visual C++ runtime ($crtArch) to ship" }
 Copy-Item (Join-Path $crt.FullName '*.dll') $stage
 
