@@ -394,7 +394,7 @@ fun WebcamScreen(
                             }
                             for ((h, label) in resolutions) {
                                 FilterChip(
-                                    selected = session.height == h,
+                                    selected = session.resolution == h,
                                     onClick = { WebcamService.setResolutionHeight(h) },
                                     label = { Text(label) },
                                 )

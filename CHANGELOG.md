@@ -52,6 +52,10 @@ change things that need a step from you, and its notes say so.
   stays for the whole call, and the number comes from Android's call
   service when its broadcast has none; a number not in contacts shows as the
   number.
+- **Webcam resolution buttons stay in sync** on the PC and the phone. Each
+  follows the resolution actually streaming, whichever side changed it (or
+  1080p when the phone can't do 4K); upright, the phone's buttons showed none
+  selected.
 - Android: Phone as webcam no longer crashes the app when its preview
   comes back (the same fix covers the QR scanner and Continuity Camera).
 - Android: on Hive, the category chips at the top of Settings and the

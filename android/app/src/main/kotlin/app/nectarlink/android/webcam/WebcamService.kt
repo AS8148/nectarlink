@@ -45,7 +45,23 @@ data class WebcamSession(
     val hasFlash: Boolean = false,
     val torchOn: Boolean = false,
     val supports4k: Boolean = CameraEncoder.supports4kEncoder(),
-)
+) {
+    /**
+     * The resolution streaming (720, 1080 or 2160), from the picture's short
+     * side: upright, the phone streams 1080 × 1920 for 1080p.
+     */
+    val resolution: Int get() = resolutionOf(width, height)
+}
+
+/** 720, 1080 or 2160 for a picture of [width] × [height], either way up. */
+internal fun resolutionOf(width: Int, height: Int): Int {
+    val short = minOf(width, height)
+    return when {
+        short >= 2000 -> 2160
+        short >= 1000 -> 1080
+        else -> 720
+    }
+}
 
 /**
  * Streams the phone's camera as H.264 to a paired PC (`docs/protocol/webcam.md`).
