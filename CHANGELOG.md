@@ -42,6 +42,11 @@ change things that need a step from you, and its notes say so.
   calls and alarms. A new post from the same app shows as usual.
 - Android: turning off notification access, or a force stop, no longer
   crashes the app.
+- **Root is opt-in.** On a rooted phone, NectarLink asked for root every
+  time it started and ran its Elevated helper as root. Root is now a choice in
+  Elevated setup (**Use root**), offered only on rooted phones, and the helper
+  runs as the shell user either way, with the same permissions as through
+  Wireless debugging.
 - Android: Phone as webcam no longer crashes the app when its preview
   comes back (the same fix covers the QR scanner and Continuity Camera).
 - Android: on Hive, the category chips at the top of Settings and the

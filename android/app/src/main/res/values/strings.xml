@@ -92,6 +92,10 @@
     <string name="elevated_failed">Couldn\'t start it. Check that Wireless debugging is on, then try again.</string>
     <string name="elevated_not_paired">The phone forgot NectarLink\'s pairing. Set it up again.</string>
     <string name="elevated_set_up">Set up</string>
+    <string name="elevated_use_root">Use root</string>
+    <string name="elevated_root_hint">This phone is rooted, so Elevated can start through root instead: no pairing, and it comes back by itself after a restart or away from Wi-Fi. It gets the same permissions as with Wireless debugging.</string>
+    <string name="elevated_running_root">On, through root: your PC\'s mouse and keyboard work like a real touchscreen and keyboard.</string>
+    <string name="elevated_root_failed">Root wasn\'t allowed, or your root manager can\'t start NectarLink\'s helper as the shell user. You can set it up with Wireless debugging instead.</string>
     <string name="elevated_turn_off">Turn off</string>
     <string name="elevated_try_again">Try again</string>
     <string name="elevated_steps_title">Set up Wireless debugging</string>
