@@ -17,6 +17,11 @@ change things that need a step from you, and its notes say so.
 
 ### Fixed
 
+- **Far fewer disconnects.** As the phone app opened, two of its startup
+  calls could race and start the phone's connection twice, with one
+  identity. The two took the PC from each other every few seconds: windows
+  and mirroring dropped or couldn't start, and the PC showed the phone
+  connecting over and over. It now starts once.
 - **Windows 10.** NectarLink and its installer start on Windows 10 again. They
   failed right away with "Entry Point Not Found" because the Windows 11-only
   virtual camera was required at startup. On Windows 10, everything works
