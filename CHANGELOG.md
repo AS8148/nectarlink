@@ -46,6 +46,11 @@ change things that need a step from you, and its notes say so.
   the PC dropped or was replaced just as you opened an app window or the
   phone's screen, the phone gave up at once with "Offline". It now waits up
   to 10 seconds for the connection to come back, and opens the stream on it.
+- **App windows keep running when the phone would sleep.** With an app open
+  in a window on the PC, the phone went to sleep after its screen timeout,
+  which stopped the app and froze the window. While a window is open, the
+  phone now stays awake with its screen dimmed, and sleeps as usual once the
+  last window closes.
 
 ## 0.1.3 (2026-10-15)
 
