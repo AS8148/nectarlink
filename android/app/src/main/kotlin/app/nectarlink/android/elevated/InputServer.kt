@@ -345,18 +345,8 @@ object InputServer {
                 if (rec.state == android.media.AudioRecord.STATE_INITIALIZED) return rec
                 rec.release()
             }
-            // 3. Fallback to DEFAULT audio source if REMOTE_SUBMIX is restricted on a custom ROM.
-            runCatching {
-                val rec = android.media.AudioRecord(
-                    android.media.MediaRecorder.AudioSource.DEFAULT,
-                    rate,
-                    channelMask,
-                    encoding,
-                    minBuf,
-                )
-                if (rec.state == android.media.AudioRecord.STATE_INITIALIZED) return rec
-                rec.release()
-            }
+            // Nothing else: any other source is the microphone, and the PC
+            // asked for what the phone plays, not what it hears.
             return null
         }
 

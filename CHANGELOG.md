@@ -56,6 +56,9 @@ change things that need a step from you, and its notes say so.
   follows the resolution actually streaming, whichever side changed it (or
   1080p when the phone can't do 4K); upright, the phone's buttons showed none
   selected.
+- **Phone sound never falls back to the microphone.** On a phone that blocks
+  capturing what it plays, Elevated recorded the microphone instead and sent
+  it to the PC as the phone's sound. It now sends no sound.
 - Android: Phone as webcam no longer crashes the app when its preview
   comes back (the same fix covers the QR scanner and Continuity Camera).
 - Android: on Hive, the category chips at the top of Settings and the
