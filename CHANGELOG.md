@@ -42,6 +42,8 @@ change things that need a step from you, and its notes say so.
   calls and alarms. A new post from the same app shows as usual.
 - Android: turning off notification access, or a force stop, no longer
   crashes the app.
+- Android: Phone as webcam no longer crashes the app when its preview
+  comes back (the same fix covers the QR scanner and Continuity Camera).
 - **App windows and mirroring open after a reconnect.** If the connection to
   the PC dropped or was replaced just as you opened an app window or the
   phone's screen, the phone gave up at once with "Offline". It now waits up
