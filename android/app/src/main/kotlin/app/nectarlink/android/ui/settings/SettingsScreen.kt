@@ -215,7 +215,10 @@ fun SettingsScreen(
                             selected = selected,
                             onClick = { activeCategory = id },
                             label = { Text(stringResource(label)) },
+                            // Solid like the cards: the row sits right on the
+                            // background (Hive's comb showed through).
                             colors = FilterChipDefaults.filterChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainer,
                                 selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                                 selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
                             ),
