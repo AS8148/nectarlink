@@ -37,7 +37,18 @@ Several Android manufacturers add their own proprietary background task killers 
 | **Vivo / iQOO (Funtouch OS / OriginOS)** | Open **Android Settings › Apps › NectarLink › Battery**, select **Unrestricted** (or **High background power usage**), and enable **Autostart** in Background power consumption management. |
 | **Huawei / Honor (EMUI)** | Open **Phone Manager (or System Optimizer) › App launch**, turn **Off** **Manage automatically** for NectarLink, and keep all three toggles (**Auto-launch**, **Secondary launch**, and **Run in background**) turned **On**. |
 
-## 3. Android 13+ "Restricted Settings" (Grayed-Out Notification or Accessibility Switch)
+## 3. Android Sideloading: Play Protect Blocks and Android 13+ "Restricted Settings"
+
+### Google Play Protect Blocks the APK Without an "Install anyway" Button
+
+When you download `Nectarlink-<version>-android.apk` in a mobile browser, Google Play Protect may show a prompt:
+
+- **If "More details" is shown**: Tap **More details › Install anyway**.
+- **If there is no "Install anyway" button (only "OK")**: Google Play Protect's **Enhanced Fraud Protection**, on in 185 markets including India, automatically blocks browser-sideloaded APKs that declare `READ_SMS`, `BIND_NOTIFICATION_LISTENER_SERVICE`, or `BIND_ACCESSIBILITY_SERVICE` in `AndroidManifest.xml`. To install:
+  1. **Option A (On phone)**: Open **Google Play Store**, tap your **profile icon** (top right) › **Play Protect** › **Settings** (gear icon), and temporarily toggle off **Scan apps with Play Protect** (choose **Pause**). Install `Nectarlink-<version>-android.apk`, then turn **Scan apps with Play Protect** back on.
+  2. **Option B (Over USB from PC)**: Connect your phone with USB debugging enabled and run `adb install -r Nectarlink-<version>-android.apk`.
+
+### Android 13+ "Restricted Settings" (Grayed-Out Notification or Accessibility Switch)
 
 On Android 13 and newer, if you install an APK downloaded from a browser or GitHub Releases, Android disables the **Notification access** and **Accessibility** switches until you explicitly allow restricted settings for that app:
 
