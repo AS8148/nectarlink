@@ -61,6 +61,10 @@ change things that need a step from you, and its notes say so.
 - **Phone sound never falls back to the microphone.** On a phone that blocks
   capturing what it plays, Elevated recorded the microphone instead and sent
   it to the PC as the phone's sound. It now sends no sound.
+- **No "copied" pop-up on the phone for copies made on the PC.** With
+  Elevated on, text from the PC goes on the phone's clipboard without the
+  copy toast or preview Android and One UI show for every copy. Without
+  Elevated, Android doesn't let an app avoid it.
 - Android: Phone as webcam no longer crashes the app when its preview
   comes back (the same fix covers the QR scanner and Continuity Camera).
 - Android: on Hive, the category chips at the top of Settings and the

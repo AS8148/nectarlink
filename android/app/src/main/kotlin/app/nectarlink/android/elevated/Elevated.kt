@@ -666,6 +666,17 @@ object Elevated {
         return send(writer, "C $command")
     }
 
+    /**
+     * Puts a PC's text on the clipboard through the helper, so the phone
+     * doesn't pop up "copied" for a copy made on the PC. False when the
+     * helper isn't running (the app writes it then).
+     */
+    fun setClipboard(text: String, html: String?): Boolean {
+        val writer = input ?: return false
+        val b64 = { value: String -> android.util.Base64.encodeToString(value.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP) }
+        return send(writer, "B ${b64(text)} ${html?.let(b64).orEmpty()}")
+    }
+
     /** Turns the physical screen panel off or back on while mirroring. */
     fun setScreenOff(off: Boolean): Boolean {
         screenOffRequested = off
