@@ -21,6 +21,12 @@ change things that need a step from you, and its notes say so.
   ([#6](https://github.com/thtbee/nectarlink/issues/6)).
 - Windows: button tooltips, such as **Pause** on the media card, show next to
   their button again instead of in the window's top-left corner.
+- **Old calls and notifications no longer come back** after the PC sleeps or
+  restarts. A call whose end the phone never recorded rang again on every
+  reconnect; it now counts as over after 90 seconds of ringing. Notifications
+  you clear on the PC stay cleared when the phone resends its list (on
+  reconnect or Refresh), even when the phone can't remove them, as with missed
+  calls and alarms. A new post from the same app shows as usual.
 
 ## 0.1.3 (2026-10-15)
 
