@@ -51,6 +51,9 @@ change things that need a step from you, and its notes say so.
   which stopped the app and froze the window. While a window is open, the
   phone now stays awake with its screen dimmed, and sleeps as usual once the
   last window closes.
+- Windows: the emoji panel (**Win+.**) and input methods for Chinese and
+  other languages type into the phone's screen and app windows while you
+  control them. Only plain key presses got through before.
 
 ## 0.1.3 (2026-10-15)
 
