@@ -47,6 +47,11 @@ change things that need a step from you, and its notes say so.
   Elevated setup (**Use root**), offered only on rooted phones, and the helper
   runs as the shell user either way, with the same permissions as through
   Wireless debugging.
+- **Calls show who is calling.** An answered call lost the contact name on
+  the PC, and calls made on the phone showed "Unknown caller". The name now
+  stays for the whole call, and the number comes from Android's call
+  service when its broadcast has none; a number not in contacts shows as the
+  number.
 - Android: Phone as webcam no longer crashes the app when its preview
   comes back (the same fix covers the QR scanner and Continuity Camera).
 - Android: on Hive, the category chips at the top of Settings and the
