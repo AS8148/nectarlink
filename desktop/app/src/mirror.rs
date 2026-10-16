@@ -1633,7 +1633,9 @@ impl MirrorSink for Sink {
 /// earlier ones), shows the newest picture of each batch.
 fn decode(window: Window, items: &Receiver<Item>, waiting: &AtomicUsize) {
     let stream = window.key();
-    let mut decoder = match Decoder::new() {
+    // On the GPU when the PC has one (falling back to software on its own),
+    // so big phone screens and several app windows stay smooth.
+    let mut decoder = match Decoder::new_gpu("h264") {
         Ok(decoder) => decoder,
         Err(e) => {
             tracing::error!(error = %e, "no H.264 decoder");
@@ -1641,6 +1643,7 @@ fn decode(window: Window, items: &Receiver<Item>, waiting: &AtomicUsize) {
             return;
         }
     };
+    tracing::info!(gpu = decoder.on_gpu(), codec = decoder.codec(), "mirror decoder ready");
     let keyframe_please = || {
         if let Some(node) = core_host::node() {
             core_host::spawn(async move { node.mirror_keyframe(window.device, window.session).await });
@@ -1654,8 +1657,15 @@ fn decode(window: Window, items: &Receiver<Item>, waiting: &AtomicUsize) {
         match item {
             Item::Config(config) => {
                 if decoder.codec() != config.codec {
-                    match Decoder::new_for_codec(&config.codec) {
-                        Ok(next) => decoder = next,
+                    match Decoder::new_gpu(&config.codec) {
+                        Ok(next) => {
+                            decoder = next;
+                            tracing::info!(
+                                gpu = decoder.on_gpu(),
+                                codec = decoder.codec(),
+                                "mirror decoder ready"
+                            );
+                        }
                         Err(e) => {
                             tracing::error!(error = %e, codec = %config.codec, "no decoder for codec");
                             set_phase(

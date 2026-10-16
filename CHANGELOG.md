@@ -14,6 +14,10 @@ change things that need a step from you, and its notes say so.
   except Phone as webcam, which needs Windows 11.
 - Android: changing the theme in Settings no longer jumps back to Home
   ([#8](https://github.com/thtbee/nectarlink/issues/8)).
+- **Screen mirroring and app windows use the GPU.** They decode on the PC's
+  GPU when it has one, and in software when it doesn't or if the GPU fails
+  mid-stream, and convert pictures on several cores. Large phone screens and
+  several app windows stay smooth with less CPU.
 - **Phone as webcam in 4K is smooth.** The PC decoded and converted each 4K
   frame in about 47 ms, over the 33 ms a frame has at 30 fps, so frames were
   dropped. It now decodes on the GPU when there is one and converts on several

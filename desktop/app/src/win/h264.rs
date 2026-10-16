@@ -202,12 +202,8 @@ impl Drop for Decoder {
 }
 
 impl Decoder {
-    /// A decoder for the calling thread (which it stays on), defaulting to H.264.
-    pub fn new() -> windows::core::Result<Decoder> {
-        Self::new_for_codec("h264")
-    }
-
-    /// Creates a low-latency video decoder for `"h264"`, `"h265"`, or `"av1"`.
+    /// A low-latency software decoder for `"h264"`, `"h265"`, or `"av1"`, for
+    /// the calling thread (which it stays on).
     pub fn new_for_codec(codec: &str) -> windows::core::Result<Decoder> {
         Self::create(codec, false)
     }
@@ -219,7 +215,7 @@ impl Decoder {
     pub fn new_gpu(codec: &str) -> windows::core::Result<Decoder> {
         Self::create(codec, true).or_else(|e| {
             tracing::info!(error = %e, "no GPU video decoding; decoding in software");
-            Self::create(codec, false)
+            Self::new_for_codec(codec)
         })
     }
 
@@ -636,7 +632,7 @@ mod tests {
     fn the_stream_says_which_colors() {
         // 3 frames tagged BT.601, full range (as some phones encode).
         let units = access_units(include_bytes!("testdata/bt601-full.h264"));
-        let mut decoder = Decoder::new().unwrap();
+        let mut decoder = Decoder::new_for_codec("h264").unwrap();
         let pictures: Vec<Picture> =
             units.iter().enumerate().flat_map(|(i, u)| decoder.decode(u, i as u64).unwrap()).collect();
         assert_eq!(pictures.last().unwrap().colors, Colors { bt601: true, full_range: true });
@@ -686,40 +682,64 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn the_gpu_decodes_the_same_pictures_as_software() {
-        let units = access_units(include_bytes!("testdata/testsrc.h264"));
-        let Ok(mut gpu) = Decoder::new_gpu("h264") else { return };
+    /// Decodes `units` on the GPU and in software and checks every picture
+    /// matches (decoding is exact). Skips when this PC has no GPU decoding
+    /// (CI runners) or no decoder for the codec (HEVC is an optional Windows
+    /// extension).
+    fn gpu_matches_software(codec: &str, units: &[&[u8]]) {
+        let Ok(mut software) = Decoder::new_for_codec(codec) else { return };
+        let Ok(mut gpu) = Decoder::new_gpu(codec) else { return };
         if !gpu.on_gpu() {
-            // No usable GPU here (CI runners): nothing to compare.
             return;
         }
-        let mut software = Decoder::new().unwrap();
+        let mut compared = 0;
         for (i, unit) in units.iter().enumerate() {
             let a = software.decode(unit, i as u64 * 33_333).unwrap();
             let b = gpu.decode(unit, i as u64 * 33_333).unwrap();
-            assert_eq!(a.len(), b.len(), "unit {i}");
+            assert!(gpu.on_gpu(), "{codec}: fell back to software at unit {i}");
+            assert_eq!(a.len(), b.len(), "{codec} unit {i}");
             for (a, b) in a.iter().zip(&b) {
                 assert_eq!((a.width, a.height), (b.width, b.height));
-                // H.264 decoding is exact: same visible luma and chroma, row by row.
                 let (w, h) = (a.width as usize, a.height as usize);
                 for row in 0..h {
                     assert_eq!(
                         a.nv12[row * a.stride..][..w],
                         b.nv12[row * b.stride..][..w],
-                        "unit {i} luma row {row}"
+                        "{codec} unit {i} luma row {row}"
                     );
                 }
+                let (ca, cb) = (a.stride * a.plane_rows, b.stride * b.plane_rows);
                 for row in 0..h / 2 {
-                    let (ca, cb) = (a.stride * a.plane_rows, b.stride * b.plane_rows);
                     assert_eq!(
                         a.nv12[ca + row * a.stride..][..w],
                         b.nv12[cb + row * b.stride..][..w],
-                        "unit {i} chroma row {row}"
+                        "{codec} unit {i} chroma row {row}"
                     );
                 }
+                compared += 1;
             }
         }
+        assert!(compared > 0, "{codec}: no pictures to compare");
+    }
+
+    #[test]
+    fn the_gpu_decodes_the_same_h264_pictures_as_software() {
+        gpu_matches_software("h264", &access_units(include_bytes!("testdata/testsrc.h264")));
+    }
+
+    #[test]
+    fn the_gpu_decodes_the_same_h265_pictures_as_software() {
+        // 10 frames of FFmpeg's test pattern, 320x240, HEVC, access unit delimiters.
+        let stream = include_bytes!("testdata/testsrc.h265");
+        let starts: Vec<usize> =
+            (0..stream.len()).filter(|&i| stream[i..].starts_with(&[0, 0, 0, 1, 0x46])).collect();
+        let units: Vec<&[u8]> = starts
+            .iter()
+            .enumerate()
+            .map(|(k, &at)| &stream[at..starts.get(k + 1).copied().unwrap_or(stream.len())])
+            .collect();
+        assert_eq!(units.len(), 10);
+        gpu_matches_software("h265", &units);
     }
 
     #[test]
@@ -729,7 +749,7 @@ mod tests {
         let stream = include_bytes!("testdata/testsrc.h264");
         let units = access_units(stream);
         assert_eq!(units.len(), 10);
-        let mut decoder = Decoder::new().unwrap();
+        let mut decoder = Decoder::new_for_codec("h264").unwrap();
         let mut pictures = Vec::new();
         for (i, unit) in units.iter().enumerate() {
             let got = decoder.decode(unit, i as u64 * 33_333).unwrap();
