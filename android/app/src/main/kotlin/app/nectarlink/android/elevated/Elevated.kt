@@ -618,16 +618,17 @@ object Elevated {
             is MirrorInputEvent.Scroll -> "S ${event.x * w} ${event.y * h} ${event.dx} ${event.dy}"
             is MirrorInputEvent.Key -> keys[event.key]?.let { "K $it" }
                 ?: if (event.key == "notifications" && display == null) "C cmd statusbar expand-notifications" else return true
-            // One line per piece: no line breaks inside. Non-ASCII pieces are pasted via the clipboard.
-            is MirrorInputEvent.Text -> return event.text.split(LINE_BREAK).withIndex().all { (i, piece) ->
-                (i == 0 || send(writer, "${to}K ${KeyEvent.KEYCODE_ENTER}")) && when {
-                    piece.isEmpty() -> true
-                    piece.any { it.code > 127 } -> {
-                        app.nectarlink.android.clipboard.PhoneClipboard.write(context, piece)
-                        send(writer, "${to}K ${KeyEvent.KEYCODE_PASTE}")
-                    }
-                    else -> send(writer, "${to}T $piece")
-                }
+            // A key typed on the PC types; anything longer (a paste, a word from
+            // an input method, an emoji) goes on the clipboard, quietly, and is
+            // pasted at once: typing it out took a moment per letter, and a line
+            // break typed as Enter sends a chat message early.
+            is MirrorInputEvent.Text -> return when {
+                event.text.isEmpty() -> true
+                event.text == "\n" || event.text == "\r" || event.text == "\r\n" ->
+                    send(writer, "${to}K ${KeyEvent.KEYCODE_ENTER}")
+                event.text.length == 1 && event.text[0].code in 32..126 -> send(writer, "${to}T ${event.text}")
+                // The clipboard is the phone's own, whichever display the text is for.
+                else -> setClipboard(event.text, null) && send(writer, "${to}K ${KeyEvent.KEYCODE_PASTE}")
             }
             is MirrorInputEvent.Gamepad ->
                 "G ${event.buttons} ${event.lx} ${event.ly} ${event.rx} ${event.ry} ${event.lt} ${event.rt}"
@@ -764,7 +765,6 @@ object Elevated {
         false
     }
 
-    private val LINE_BREAK = Regex("\r\n|\r|\n")
     private val PACKAGE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
 
     private val keys = mapOf(

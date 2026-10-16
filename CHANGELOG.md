@@ -92,6 +92,9 @@ change things that need a step from you, and its notes say so.
 - Windows: **Win+V** pastes into the phone's screen and app windows. Windows
   marks an item picked from clipboard history as one for clipboard watchers
   to skip, and NectarLink skipped it even when you asked to paste it.
+- Pasting into the phone's screen or an app window is instant, instead of
+  typing out a letter at a time, and a pasted line break no longer presses
+  Enter (which sent chat messages early).
 - Pausing a transfer on the receiving device just as its last bytes
   arrived left the sending device waiting, showing it as still sending. Both
   now show it paused.
