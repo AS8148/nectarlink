@@ -652,7 +652,7 @@
     <string name="walkthrough_action_done">完成</string>
     <string name="walkthrough_action_open_guide">打开功能指南</string>
     <string name="walkthrough_welcome_title">连接手机与电脑</string>
-    <string name="walkthrough_welcome_subtitle">通知、通话、消息、文件、剪贴板、摄像头和屏幕，与你的 Windows 11 电脑共享。</string>
+    <string name="walkthrough_welcome_subtitle">通知、通话、消息、文件、剪贴板、摄像头和屏幕，与你的电脑共享。</string>
     <string name="walkthrough_welcome_card_heading">设计即隐私</string>
     <string name="walkthrough_welcome_tls_title">端到端加密（TLS 1.3）</string>
     <string name="walkthrough_welcome_tls_body">每次连接都使用相互验证的设备证书。</string>
@@ -700,7 +700,7 @@
     <string name="walkthrough_perm_access_does">用鼠标和键盘从电脑控制投屏的手机屏幕。</string>
     <string name="walkthrough_perm_access_requires">Android 需要 NectarLink 无障碍服务或高级权限。</string>
     <string name="walkthrough_pair_title">与电脑配对</string>
-    <string name="walkthrough_pair_subtitle">在你的 Windows 11 电脑上打开 NectarLink。扫描其二维码或在下方选择你的电脑。</string>
+    <string name="walkthrough_pair_subtitle">在你的电脑上打开 NectarLink。扫描其二维码或在下方选择你的电脑。</string>
     <string name="walkthrough_pair_ready_title">已配对电脑</string>
     <string name="walkthrough_pair_badge_paired">已配对</string>
     <string name="walkthrough_pair_device_online">%1$s · 已连接</string>
@@ -712,7 +712,7 @@
     <string name="walkthrough_pair_usb_title">USB 自动配对</string>
     <string name="walkthrough_pair_usb_hint">连接 USB 数据线并启用 USB 调试即可自动配对。</string>
     <string name="walkthrough_power_title">选择权限级别</string>
-    <string name="walkthrough_power_subtitle">选择你的 Windows 11 电脑对此手机拥有多少控制权。</string>
+    <string name="walkthrough_power_subtitle">选择你的电脑对此手机拥有多少控制权。</string>
     <string name="walkthrough_power_current_badge">当前：%1$s</string>
     <string name="walkthrough_power_badge_active">已启用</string>
     <string name="walkthrough_power_badge_available">可用</string>
@@ -804,7 +804,7 @@
     <string name="guide_notif_needs">通知使用权，并为该电脑开启通知开关</string>
     <string name="guide_notif_need_1">已为 NectarLink 开启 Android 通知使用权。</string>
     <string name="guide_notif_need_2">在 Android 13 及以上，若为侧载安装，需在应用信息中允许受限设置。</string>
-    <string name="guide_notif_need_3">Windows 11 电脑已配对并在线。</string>
+    <string name="guide_notif_need_3">电脑已配对并在线。</string>
     <string name="guide_notif_phone_1">打开设置 › 权限 › 通知，然后点按允许。</string>
     <string name="guide_notif_phone_2">在 Android 通知使用权中开启 NectarLink。</string>
     <string name="guide_notif_pc_1">在电脑通知中心或 NectarLink 窗口中查看手机通知。</string>
@@ -832,7 +832,7 @@
     <string name="guide_media_where">首页 › 已配对电脑卡片 › 电脑音频</string>
     <string name="guide_media_needs">手机媒体需通知使用权，电脑音频需已配对电脑在线</string>
     <string name="guide_media_need_1">需要 Android 通知使用权以读取活动的媒体会话。</string>
-    <string name="guide_media_need_2">已配对且在线的 Windows 11 电脑。</string>
+    <string name="guide_media_need_2">已配对且在线的电脑。</string>
     <string name="guide_media_phone_1">在首页的已配对电脑卡片上展开电脑音频。</string>
     <string name="guide_media_phone_2">调节电脑音量滑块，或开启将手机用作扬声器。</string>
     <string name="guide_media_pc_1">在电脑上使用播放、暂停、下一个和上一个控制手机播放。</string>
@@ -883,7 +883,7 @@
     <string name="guide_files_summary">通过 Wi-Fi、以太网或 USB 在手机和电脑之间传输文件或文件夹，支持暂停和继续。</string>
     <string name="guide_files_where">首页 › 已配对电脑卡片 › 发送文件 / 发送文件夹</string>
     <string name="guide_files_needs">已配对电脑</string>
-    <string name="guide_files_need_1">已配对的 Windows 11 电脑（离线文件在发送队列中最多等待 7 天）。</string>
+    <string name="guide_files_need_1">已配对的电脑（离线文件在发送队列中最多等待 7 天）。</string>
     <string name="guide_files_phone_1">在首页的已配对电脑卡片上点按发送文件或发送文件夹。</string>
     <string name="guide_files_phone_2">在首页的传输卡片中暂停、继续或取消进行中的传输。</string>
     <string name="guide_files_pc_1">将文件拖到电脑上的 NectarLink 窗口或顶部边缘岛。</string>
@@ -970,7 +970,7 @@
     <string name="guide_mirror_summary">将手机屏幕和内部音频串流到电脑上的窗口，或在手机上查看电脑屏幕。</string>
     <string name="guide_mirror_where">设置 › 权限 › 从电脑控制（或 首页 › 控制电脑）</string>
     <string name="guide_mirror_needs">在线的已配对电脑；鼠标和键盘控制需要辅助功能或高级权限</string>
-    <string name="guide_mirror_need_1">在线的已配对 Windows 11 电脑。</string>
+    <string name="guide_mirror_need_1">在线的已配对电脑。</string>
     <string name="guide_mirror_need_2">可选：使用辅助功能（无障碍）或高级权限实现电脑鼠标和键盘输入。</string>
     <string name="guide_mirror_phone_1">从电脑发起投屏时，在 Android 的截屏提示中点击立即开始。</string>
     <string name="guide_mirror_phone_2">随时点击首页横幅上的停止即可结束屏幕共享。</string>
@@ -983,7 +983,7 @@
     <string name="guide_apps_where">设置 › 权限 › 从电脑控制 › 真实触控与按键（无线调试）</string>
     <string name="guide_apps_needs">高级权限（无线调试）</string>
     <string name="guide_apps_need_1">已通过无线调试设置高级权限。</string>
-    <string name="guide_apps_need_2">在线的已配对 Windows 11 电脑。</string>
+    <string name="guide_apps_need_2">在线的已配对电脑。</string>
     <string name="guide_apps_phone_1">在 设置 › 权限 › 从电脑控制 中设置无线调试。</string>
     <string name="guide_apps_pc_1">在电脑上打开应用串流，点击任意手机应用即可在独立窗口中启动。</string>
     <string name="guide_apps_opt_1">全部关闭：从首页横幅关闭所有活动的虚拟显示应用窗口。</string>
@@ -1027,7 +1027,7 @@
     <string name="guide_remote_need_1">已允许此手机控制的在线已配对电脑。</string>
     <string name="guide_remote_phone_1">在首页的已配对电脑卡片上点击控制电脑。</string>
     <string name="guide_remote_phone_2">在触控板、空中鼠标、演示、键盘和听写之间切换。</string>
-    <string name="guide_remote_pc_1">在 Windows 11 电脑上收到提示时批准远程控制。</string>
+    <string name="guide_remote_pc_1">在电脑上收到提示时批准远程控制。</string>
     <string name="guide_remote_opt_1">触控板速度：在 设置 › 功能与数据 › 控制您的电脑 中调整灵敏度。</string>
     <string name="guide_remote_privacy">输入事件通过加密的 QUIC 流传输到已配对电脑。</string>
     <string name="guide_remote_limits">空中鼠标需要手机具备硬件陀螺仪。</string>
@@ -1056,7 +1056,7 @@
     <string name="guide_deck_summary">将手机用作快捷磁贴、媒体按键、音量滑块和电脑系统实时仪表盘的网格。</string>
     <string name="guide_deck_where">首页 › 已配对电脑卡片 › 面板</string>
     <string name="guide_deck_needs">在线的已配对电脑</string>
-    <string name="guide_deck_need_1">在线的已配对 Windows 11 电脑。</string>
+    <string name="guide_deck_need_1">在线的已配对电脑。</string>
     <string name="guide_deck_phone_1">在首页的已配对电脑卡片上点击面板，然后点击任意磁贴即可触发其操作。</string>
     <string name="guide_deck_pc_1">在电脑上的 NectarLink 中自定义面板页面和磁贴。</string>
     <string name="guide_deck_opt_1">全屏：将面板网格扩展到整个手机屏幕。</string>
@@ -1066,7 +1066,7 @@
     <string name="guide_desk_summary">常亮的 OLED 桌面时钟，显示电脑实时连接状态、媒体控制和快捷操作。</string>
     <string name="guide_desk_where">首页 › 已配对电脑卡片 › 桌面时钟</string>
     <string name="guide_desk_needs">已配对电脑</string>
-    <string name="guide_desk_need_1">已配对的 Windows 11 电脑。</string>
+    <string name="guide_desk_need_1">已配对的电脑。</string>
     <string name="guide_desk_phone_1">在首页的已配对电脑卡片上点击桌面时钟，然后将手机放在支架或充电器上。</string>
     <string name="guide_desk_pc_1">电脑的媒体播放和状态会实时更新到桌面模式显示中。</string>
     <string name="guide_desk_opt_1">OLED 烧屏保护：定期偏移布局像素以保护 OLED 屏幕。</string>

@@ -4,7 +4,7 @@
 
 # NectarLink
 
-**Your Android phone and your Windows PC, working as one.**
+**Your Android phone and your PC, working as one.**
 
 Notifications, messages, calls, clipboard, files, photos, screen mirroring and
 phone apps in windows, between Android and Windows 11. Free and open source.
