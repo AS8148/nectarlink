@@ -108,10 +108,10 @@ class WebcamService : LifecycleService() {
         current = this
         WebcamRequests.dismiss(this, targetPc)
 
-        val supports4k = CameraEncoder.supports4kEncoder()
+        val normCamera = if (camera == "front") "front" else "back"
+        val supports4k = CameraEncoder.supports4k(this, normCamera)
         val normHeight = CameraEncoder.normalizeHeight(height, supports4k)
         val normWidth = CameraEncoder.widthForHeight(normHeight)
-        val normCamera = if (camera == "front") "front" else "back"
         val hasFlash = CameraEncoder.cameraHasFlash(this, normCamera)
         val maxZoom = CameraEncoder.cameraMaxZoom(this, normCamera)
         val initialZoom = _session.value.zoomRatio.coerceIn(1f, maxZoom)

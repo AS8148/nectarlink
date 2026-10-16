@@ -56,6 +56,8 @@ change things that need a step from you, and its notes say so.
   follows the resolution actually streaming, whichever side changed it (or
   1080p when the phone can't do 4K); upright, the phone's buttons showed none
   selected.
+- Phone as webcam offers 4K only when the camera in use can output it, not
+  just the encoder: switching to a front camera without 4K drops to 1080p.
 - **Phone sound never falls back to the microphone.** On a phone that blocks
   capturing what it plays, Elevated recorded the microphone instead and sent
   it to the PC as the phone's sound. It now sends no sound.
