@@ -1162,4 +1162,23 @@
     <string name="settings_theme_artwork_body">让应用与玻璃配色跟随播放中的媒体封面</string>
     <string name="settings_wireless_debugging_active">无线调试已启用 · 剪贴板会自动同步</string>
     <string name="settings_wireless_debugging_hint">允许无线调试后，剪贴板才能在后台同步；也可以在通知里点「发送剪贴板」</string>
+    <!-- Pause for banking apps -->
+    <string name="banking_title">为银行应用暂停</string>
+    <string name="banking_text">部分银行应用在开发者选项、调试或无障碍服务开启时无法打开。在这里选择这些应用：打开它们时，NectarLink会关闭这些设置，离开后再重新开启。</string>
+    <plurals name="banking_chosen">
+        <item quantity="other">已选择%1$d个应用</item>
+    </plurals>
+    <string name="banking_needs_elevated">需要先设置一次无线调试，NectarLink才能更改这些设置。</string>
+    <string name="banking_needs_usage">请允许使用情况访问权限，以便NectarLink知道银行应用何时打开。</string>
+    <string name="banking_paused_now">已为银行应用暂停。</string>
+    <string name="banking_choose">选择应用</string>
+    <string name="banking_pick_title">银行应用</string>
+    <string name="banking_search">搜索应用</string>
+    <string name="banking_shortcut">添加快捷方式</string>
+    <string name="banking_shortcut_hint">如果应用仍然无法打开，请通过它的快捷方式打开：NectarLink会先暂停，再打开它。</string>
+    <string name="banking_channel">为银行应用暂停</string>
+    <string name="banking_paused_title">已为银行应用暂停</string>
+    <string name="banking_paused_text">在你离开该应用之前，开发者选项、调试和NectarLink的无障碍服务将保持关闭。</string>
+    <string name="banking_turn_back_on">重新开启</string>
+    <string name="action_done">完成</string>
 </resources>

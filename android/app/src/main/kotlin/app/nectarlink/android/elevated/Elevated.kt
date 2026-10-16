@@ -17,6 +17,7 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.core.content.edit
+import app.nectarlink.android.banking.BankingPause
 import app.nectarlink.android.calls.CallCompanion
 import app.nectarlink.android.notifications.NotificationListener
 import app.nectarlink.core.MirrorInputEvent
@@ -151,7 +152,7 @@ object Elevated {
 
     /** Tries again later, while it can still work: paired, not running, on Wi-Fi. */
     private fun scheduleRetry() {
-        if (!paired() || running || !onWifi()) return
+        if (!paired() || running || !onWifi() || BankingPause.isPaused(context)) return
         val wait = RETRY_MS[retryAttempt.coerceAtMost(RETRY_MS.lastIndex)]
         retryAttempt++
         retryJob?.cancel()
@@ -243,6 +244,12 @@ object Elevated {
     /** Connects and starts the input helper (when set up or rooted; again after it stopped). */
     suspend fun start(): Boolean = withContext(Dispatchers.IO) {
         if (!paired() && !isRootAvailable()) return@withContext false
+        // Paused for a banking app: debugging stays off until it's over
+        // (BankingPause starts Elevated again then).
+        if (BankingPause.isPaused(context)) {
+            if (!running) _state.value = State.Waiting
+            return@withContext false
+        }
         val started = lock.withLock {
             if (running) return@withLock true
             _state.value = State.Starting
@@ -378,6 +385,10 @@ object Elevated {
         }
         if (!Settings.System.canWrite(context)) {
             run(adb, "appops set ${context.packageName} WRITE_SETTINGS allow")
+        }
+        // Pause for banking apps sees which app is in front; only for those using it.
+        if (BankingPause.apps(context).isNotEmpty() && !BankingPause.hasUsageAccess(context)) {
+            run(adb, "appops set ${context.packageName} GET_USAGE_STATS allow")
         }
         val token = ByteArray(24).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
         val apk = context.applicationInfo.sourceDir
@@ -596,6 +607,9 @@ object Elevated {
             }
         }.onFailure { Log.w(TAG, "can't open Elevated audio stream", it) }.getOrNull()
     }
+
+    /** Lets NectarLink see which app is in front (for Pause for banking apps); false if Elevated isn't running. */
+    fun grantUsageAccess(): Boolean = runCommand("appops set ${context.packageName} GET_USAGE_STATS allow")
 
     /** Runs an allowed shell command through the Elevated helper. */
     fun runCommand(command: String): Boolean {

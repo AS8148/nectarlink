@@ -541,6 +541,8 @@ fun SettingsScreen(
                     SettingRowDivider()
                     ElevatedAccess()
                     SettingRowDivider()
+                    BankingPauseAccess()
+                    SettingRowDivider()
                     DndAccess(state.dndAccess)
                     SettingRowDivider()
                     WriteSettingsAccess(state.writeSettingsAccess || state.elevated)

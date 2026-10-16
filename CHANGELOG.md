@@ -6,6 +6,15 @@ change things that need a step from you, and its notes say so.
 
 ## Unreleased
 
+### New
+
+- **Pause for banking apps.** Many banking apps won't open while Developer
+  options, debugging or an accessibility service is on. Choose them in
+  **Settings › Control from your PC**: while one is open, NectarLink turns
+  those off, and turns back on exactly what was on when you leave, even after
+  a crash or a restart. A shortcut can pause first for apps that check as
+  they open.
+
 ### Fixed
 
 - **Windows 10.** NectarLink and its installer start on Windows 10 again. They

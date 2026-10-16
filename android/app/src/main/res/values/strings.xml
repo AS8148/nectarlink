@@ -1298,6 +1298,27 @@
     <string name="settings_theme_artwork_body">Sync app &amp; glass colors with playing media artwork</string>
     <string name="settings_wireless_debugging_active">Active via Wireless Debugging · clipboard syncs automatically</string>
     <string name="settings_wireless_debugging_hint">Allow Wireless Debugging so clipboard can sync in the background, or use Send clipboard in the notification</string>
+
+    <!-- Pause for banking apps -->
+    <string name="banking_title">Pause for banking apps</string>
+    <string name="banking_text">Some banking apps won\'t open while Developer options, debugging or an accessibility service is on. Choose them here: NectarLink turns those off while they\'re open and back on when you leave.</string>
+    <plurals name="banking_chosen">
+        <item quantity="one">%1$d app chosen</item>
+        <item quantity="other">%1$d apps chosen</item>
+    </plurals>
+    <string name="banking_needs_elevated">Needs Elevated set up once, so NectarLink can change these settings.</string>
+    <string name="banking_needs_usage">Allow usage access, so NectarLink can see when a banking app is open.</string>
+    <string name="banking_paused_now">Paused now for a banking app.</string>
+    <string name="banking_choose">Choose apps</string>
+    <string name="banking_pick_title">Banking apps</string>
+    <string name="banking_search">Search apps</string>
+    <string name="banking_shortcut">Add shortcut</string>
+    <string name="banking_shortcut_hint">If an app still refuses to open, open it from its shortcut: NectarLink pauses first, then opens it.</string>
+    <string name="banking_channel">Pause for banking apps</string>
+    <string name="banking_paused_title">Paused for a banking app</string>
+    <string name="banking_paused_text">Developer options, debugging and NectarLink\'s accessibility service are off until you leave it.</string>
+    <string name="banking_turn_back_on">Turn back on</string>
+    <string name="action_done">Done</string>
 </resources>
 
 

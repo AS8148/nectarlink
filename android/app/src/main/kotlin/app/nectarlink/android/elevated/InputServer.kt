@@ -741,6 +741,8 @@ object InputServer {
             "hotspot off",
             "cmd wifi start-softap",
             "cmd wifi stop-softap",
+            // Pause for banking apps: seeing which app is in front.
+            "appops set app.nectarlink GET_USAGE_STATS allow",
         )
 
         private companion object {

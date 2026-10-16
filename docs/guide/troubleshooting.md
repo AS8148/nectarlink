@@ -59,6 +59,18 @@ On Android 13 and newer, if you install an APK downloaded from a browser or GitH
 
 - If you turn the master **Developer options** switch off in Android Settings, Android stops Wireless Debugging and terminates the `Elevated` shell helper. Keep **Developer options** turned on if you use `Elevated` features. (When you reboot your phone or reconnect to Wi-Fi with Developer options on, NectarLink automatically re-enables Wireless Debugging and restarts `Elevated` by itself.)
 
+### A Banking App Won't Open
+
+Many banking apps refuse to run while **Developer options**, USB or Wireless Debugging, or an accessibility service is on, all of which `Elevated` and Assist use. NectarLink can switch them off while those apps are open:
+
+1. Open **Settings › Permissions › Control from your PC › Pause for banking apps** and tap **Choose apps**.
+2. Pick your banking and payment apps. NectarLink needs `Elevated` set up once, and usage access (tap **Allow** if it asks), to see which app is open.
+3. Open a banking app as usual. NectarLink turns off Developer options, debugging and its accessibility service while it's open, and turns back on exactly what was on when you leave. A notification shows while it's paused, with **Turn back on**.
+
+If an app checks before NectarLink notices it, tap **Add shortcut** next to it and open it from that home screen shortcut: NectarLink pauses first, then opens the app.
+
+Some banking apps also refuse to run on a phone that was ever rooted (on Samsung phones, a tripped Knox flag). NectarLink can't change that.
+
 ## 5. Troubleshooting USB Auto-Pair and `On USB` Transport
 
 If plugging your phone into your PC with a USB cable does not trigger USB auto-pair or switch your connection to `On USB`:
