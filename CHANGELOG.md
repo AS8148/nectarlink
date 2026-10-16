@@ -4,6 +4,17 @@ All notable changes to NectarLink. Versions follow
 [semantic versioning](https://semver.org); before 1.0, a minor version may
 change things that need a step from you, and its notes say so.
 
+## Unreleased
+
+### Fixed
+
+- **Windows 10.** NectarLink and its installer start on Windows 10 again. They
+  failed right away with "Entry Point Not Found" because the Windows 11-only
+  virtual camera was required at startup. On Windows 10, everything works
+  except Phone as webcam, which needs Windows 11.
+- Android: changing the theme in Settings no longer jumps back to Home
+  ([#8](https://github.com/thtbee/nectarlink/issues/8)).
+
 ## 0.1.3 (2026-10-15)
 
 Hive, a new theme for both apps, and updates to the Windows app that work on
