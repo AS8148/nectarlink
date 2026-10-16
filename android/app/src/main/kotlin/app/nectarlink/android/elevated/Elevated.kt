@@ -723,7 +723,24 @@ object Elevated {
         }.onFailure { Log.w(TAG, "can't open Elevated screen mirror", it) }.getOrNull()
     }
 
-    private fun send(writer: Writer, line: String): Boolean = try {
+    /**
+     * Writes [line] to the helper. Android doesn't allow socket writes on
+     * the main thread (they throw, which read as the helper having gone);
+     * a line sent from there goes out on [offMain], in order.
+     */
+    private fun send(writer: Writer, line: String): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            offMain.execute { sendNow(writer, line) }
+            return true
+        }
+        return sendNow(writer, line)
+    }
+
+    private val offMain = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "elevated-send").apply { isDaemon = true }
+    }
+
+    private fun sendNow(writer: Writer, line: String): Boolean = try {
         require('\r' !in line && '\n' !in line)
         synchronized(writer) {
             writer.write(line + "\n")

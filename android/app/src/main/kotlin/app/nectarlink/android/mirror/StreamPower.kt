@@ -28,7 +28,8 @@ object StreamPower {
     private var cpu: PowerManager.WakeLock? = null
     private var wifi: WifiManager.WifiLock? = null
     private var screen: PowerManager.WakeLock? = null
-    private var panelOff: Boolean? = null
+    /** What Elevated was last told; the panel is on until something turns it off. */
+    private var panelOff = false
 
     /** [source] streams ([streaming]), and wants the phone kept awake or its screen off. */
     @Synchronized
