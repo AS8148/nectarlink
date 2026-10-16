@@ -19,6 +19,8 @@ change things that need a step from you, and its notes say so.
   dropped. It now decodes on the GPU when there is one and converts on several
   cores, about 19 ms a frame
   ([#6](https://github.com/thtbee/nectarlink/issues/6)).
+- Windows: button tooltips, such as **Pause** on the media card, show next to
+  their button again instead of in the window's top-left corner.
 
 ## 0.1.3 (2026-10-15)
 
