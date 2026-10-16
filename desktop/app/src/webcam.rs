@@ -636,7 +636,9 @@ fn mirror_bgrx_in_place(bgrx: &mut [u8], width: u32, height: u32) {
 }
 
 fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
-    let mut decoder = match Decoder::new() {
+    // On the GPU when there is one: 4K takes about 24 ms a frame in software
+    // and 11 ms on a GPU, against 33 ms per frame at 30 fps.
+    let mut decoder = match Decoder::new_gpu("h264") {
         Ok(decoder) => decoder,
         Err(e) => {
             tracing::error!(error = %e, "no H.264 decoder for webcam");
@@ -648,6 +650,7 @@ fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
             return;
         }
     };
+    tracing::info!(gpu = decoder.on_gpu(), "webcam decoder ready");
     let keyframe_please = || {
         if let Some(node) = core_host::node() {
             core_host::spawn(async move { node.webcam_keyframe(device).await });
