@@ -71,7 +71,19 @@ internal class CameraEncoder(
     private val context = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val mainExecutor = ContextCompat.getMainExecutor(this.context)
-    private val surfaceExecutor = Executors.newSingleThreadExecutor()
+    private val surfaceThread = Executors.newSingleThreadExecutor()
+
+    /**
+     * Where the encoder's surface work runs. CameraX can still hand it a
+     * task (a surface it's done with) after [stop] shut the thread down, as
+     * it unbinds on the main thread; that one is dropped instead of thrown.
+     */
+    private val surfaceExecutor = java.util.concurrent.Executor { task ->
+        try {
+            surfaceThread.execute(task)
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+        }
+    }
     private val displayManager = this.context.getSystemService(DisplayManager::class.java)
 
     val supports4k: Boolean = supports4kEncoder()
@@ -180,7 +192,7 @@ internal class CameraEncoder(
             runCatching { stream.end() }
             main.post { onEnded() }
         }
-        surfaceExecutor.shutdown()
+        surfaceThread.shutdown()
     }
 
     fun requestKeyframe() {
