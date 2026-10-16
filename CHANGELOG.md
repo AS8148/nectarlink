@@ -51,6 +51,13 @@ change things that need a step from you, and its notes say so.
   the PC dropped or was replaced just as you opened an app window or the
   phone's screen, the phone gave up at once with "Offline". It now waits up
   to 10 seconds for the connection to come back, and opens the stream on it.
+- **Mirroring and app windows stay connected with the phone's screen off.**
+  With its screen off, the phone dozed off the network, the PC dropped the
+  connection every few seconds and the picture kept restarting. While it
+  streams, the phone now keeps its Wi-Fi and processor awake.
+- **Turn the phone's screen off from an app window**, as screen mirroring
+  could: the phone stays awake with its screen dark, and the apps keep
+  running on the PC. Keep awake works there too.
 - **App windows keep running when the phone would sleep.** With an app open
   in a window on the PC, the phone went to sleep after its screen timeout,
   which stopped the app and froze the window. While a window is open, the

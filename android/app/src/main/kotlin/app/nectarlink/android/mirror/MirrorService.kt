@@ -54,7 +54,6 @@ class MirrorService : Service() {
     private var elevatedDisplayListener: android.hardware.display.DisplayManager.DisplayListener? = null
     private var sound: SoundCapture? = null
     private var pcId: String? = null
-    private var wakeLock: android.os.PowerManager.WakeLock? = null
     private var stayAwake: Boolean = false
     private var screenOff: Boolean = false
 
@@ -268,26 +267,9 @@ class MirrorService : Service() {
         }
     }
 
-    @Suppress("DEPRECATION")
     private fun applyPower() {
         val active = (encoder != null && projection != null) || elevatedSocket != null
-        val wantWake = active && (stayAwake || screenOff)
-        if (wantWake) {
-            if (wakeLock == null) {
-                wakeLock = getSystemService(android.os.PowerManager::class.java)?.newWakeLock(
-                    android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                    "nectarlink:mirror",
-                )?.apply { setReferenceCounted(false) }
-            }
-            if (wakeLock?.isHeld == false) {
-                runCatching { wakeLock?.acquire(4 * 60 * 60 * 1000L) }
-            }
-        } else {
-            if (wakeLock?.isHeld == true) {
-                runCatching { wakeLock?.release() }
-            }
-        }
-        app.nectarlink.android.elevated.Elevated.setScreenOff(active && screenOff)
+        StreamPower.set(this, StreamPower.SCREEN, active, stayAwake, screenOff)
     }
 
     /** The sound, on a stream of its own; the screen goes on without it if it can't. */
@@ -326,9 +308,7 @@ class MirrorService : Service() {
         stayAwake = false
         screenOff = false
         _session.value = MirrorSession()
-        runCatching { if (wakeLock?.isHeld == true) wakeLock?.release() }
-        wakeLock = null
-        app.nectarlink.android.elevated.Elevated.setScreenOff(false)
+        StreamPower.set(this, StreamPower.SCREEN, streaming = false)
         elevatedDisplayListener?.let {
             getSystemService(android.hardware.display.DisplayManager::class.java)?.unregisterDisplayListener(it)
         }
