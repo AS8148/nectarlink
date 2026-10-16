@@ -10,10 +10,11 @@ A GitHub release with three files:
 | File | Built by |
 |---|---|
 | `Nectarlink-<version>-x64-setup.exe` | The `windows` job: `scripts/package.ps1`, then `scripts/smoke-installer.ps1` installs and uninstalls it |
+| `Nectarlink-<version>-arm64-setup.exe` | The `windows-arm64` job: cross-compiled and packaged via `scripts/package.ps1 -Arch arm64` |
 | `Nectarlink-<version>-android.apk` | The `android` job: a release build for 64-bit and 32-bit ARM, signed with the release key and checked with `apksigner verify` |
-| `SHA256SUMS.txt` | The `publish` job, over both |
+| `SHA256SUMS.txt` | The `publish` job, over all installers and APKs |
 
-Both apps' updaters need all three: they only accept an installer that
+Both apps' updaters need all four: they only accept an installer that
 `SHA256SUMS.txt` lists with a matching hash.
 
 ## Steps

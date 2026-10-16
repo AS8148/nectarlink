@@ -110,16 +110,19 @@ Pop-Location
 To stage the release desktop binary, `nectarlink_vcam.dll`, `windeployqt` Qt runtime DLLs and QML modules, `THIRD-PARTY-NOTICES.txt`, and Sparse Package manifest (`AppxManifest.xml`), and build the NSIS setup installer (`desktop/installer/nectarlink.nsi`):
 
 ```powershell
-# Full release build + staging + NSIS installer
+# Full release build + staging + NSIS installer (default x64):
 powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 
-# Stage files into target\package\Nectarlink\ without running makensis
+# Full release build + staging + NSIS installer for Windows 11 ARM64:
+powershell -ExecutionPolicy Bypass -File scripts\package.ps1 -Arch arm64
+
+# Stage files into target\package\Nectarlink\ without running makensis:
 powershell -ExecutionPolicy Bypass -File scripts\package.ps1 -StageOnly
 ```
 
 Artifacts are written to `target/package/`:
 - `target/package/Nectarlink/` (staged portable directory)
-- `target/package/Nectarlink-<version>-x64-setup.exe` (NSIS installer when `makensis.exe` is installed)
+- `target/package/Nectarlink-<version>-x64-setup.exe` or `Nectarlink-<version>-arm64-setup.exe` (NSIS installer when `makensis.exe` is installed)
 
 ## Running the Test Suites
 

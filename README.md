@@ -38,7 +38,8 @@ of new features I wanted that I think you'll enjoy having too.
 
 | | Download | Needs |
 |---|---|---|
-| **Windows** | [Installer (.exe)](https://github.com/thtbee/nectarlink/releases/download/v0.1.4/Nectarlink-0.1.4-x64-setup.exe) | Windows 11, 64-bit |
+| **Windows (x64)** | [Installer (.exe)](https://github.com/thtbee/nectarlink/releases/download/v0.1.4/Nectarlink-0.1.4-x64-setup.exe) | Windows 11, 64-bit Intel or AMD |
+| **Windows (ARM64)** | From the next release | Windows 11 on ARM (Snapdragon) |
 | **Android** | [App (.apk)](https://github.com/thtbee/nectarlink/releases/download/v0.1.4/Nectarlink-0.1.4-android.apk) | Android 8.0 or newer |
 
 Both apps update themselves from GitHub Releases and check every download

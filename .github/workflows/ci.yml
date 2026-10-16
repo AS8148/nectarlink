@@ -113,11 +113,21 @@ jobs:
           arch: win64_msvc2022_arm64_cross_compiled
           cache: true
           aqtsource: git+https://github.com/miurahr/aqtinstall.git
-      - name: Build
+      - name: Install NSIS
         shell: pwsh
         run: |
-          $env:QMAKE = ./scripts/qmake-arm64.ps1 -QtRoot (Split-Path -Parent $env:QT_ROOT_DIR)
-          cargo build --locked --release --target aarch64-pc-windows-msvc -p nectarlink-desktop -p nectarlink-vcam
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue) -and
+              -not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            choco install nsis --yes --no-progress
+          }
+      - name: Build and Package
+        shell: pwsh
+        run: ./scripts/package.ps1 -Arch arm64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nectarlink-windows-arm64
+          path: target/package/*-setup.exe
+          retention-days: 14
 
   android:
     name: Android app
