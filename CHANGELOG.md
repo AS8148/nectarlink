@@ -40,6 +40,8 @@ change things that need a step from you, and its notes say so.
   you clear on the PC stay cleared when the phone resends its list (on
   reconnect or Refresh), even when the phone can't remove them, as with missed
   calls and alarms. A new post from the same app shows as usual.
+- Android: turning off notification access, or a force stop, no longer
+  crashes the app.
 
 ## 0.1.3 (2026-10-15)
 
