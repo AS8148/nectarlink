@@ -4584,3 +4584,38 @@ mod tests {
         assert_eq!(entry.kind, "file");
     }
 }
+
+/// `app.nectarlink.android.core.AndroidContext.nativeInstall(context)`: gives the
+/// core the application's `Context`, so it reads the phone's DNS servers
+/// (see `nectarlink_core::install_android_context`). The library is loaded
+/// with `System.loadLibrary` for this; JNA's calls use the same copy.
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_nectarlink_android_core_AndroidContext_nativeInstall(
+    env: *mut jni_sys::JNIEnv,
+    _class: jni_sys::jclass,
+    context: jni_sys::jobject,
+) {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        // SAFETY: `env` is the calling thread's JNI environment, valid for
+        // this call; the global reference keeps `context` alive for good,
+        // and the JavaVM lives as long as the process.
+        unsafe {
+            let functions = &**env;
+            let (Some(get_vm), Some(new_global)) = (functions.GetJavaVM, functions.NewGlobalRef) else {
+                return;
+            };
+            let mut vm: *mut jni_sys::JavaVM = std::ptr::null_mut();
+            if get_vm(env, &mut vm) != jni_sys::JNI_OK || vm.is_null() {
+                return;
+            }
+            let global = new_global(env, context);
+            if global.is_null() {
+                return;
+            }
+            nectarlink_core::install_android_context(vm.cast(), global.cast());
+        }
+    });
+}

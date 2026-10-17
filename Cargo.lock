@@ -2411,6 +2411,7 @@ dependencies = [
 name = "nectarlink-ffi"
 version = "0.1.4"
 dependencies = [
+ "jni-sys 0.3.1",
  "nectarlink-core",
  "paranoid-android",
  "thiserror 2.0.21",

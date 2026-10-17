@@ -187,3 +187,19 @@ pub(crate) fn now_unix_ms() -> i64 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or_default()
 }
+
+/// On Android: lets the network code read the phone's own DNS servers
+/// (through Java), instead of falling back to public ones that some
+/// networks block. Call once, before any [`Node`] starts.
+///
+/// # Safety
+///
+/// `java_vm` must be the process's `JavaVM` and `context` a JNI global
+/// reference to the application `Context`; both must stay valid until the
+/// process exits.
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+pub unsafe fn install_android_context(java_vm: *mut std::ffi::c_void, context: *mut std::ffi::c_void) {
+    // SAFETY: as this function's contract says.
+    unsafe { iroh::dns::install_android_jni_context(java_vm, context) }
+}
