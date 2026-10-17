@@ -25,6 +25,11 @@ change things that need a step from you, and its notes say so.
   ([#7](https://github.com/thtbee/nectarlink/issues/7)). A microphone of
   NectarLink's own, without the cable, needs an audio driver and comes
   later.
+- **Pair a phone with a tablet (or another phone).** In NectarLink's
+  pairing screen, **Pair a phone or tablet instead** shows a code to scan
+  from the other device. Once paired, each shows the other on Home with its
+  battery, Ring, Send files and Send clipboard, and a phone's notifications
+  show on the tablet; dismiss one there and it goes on the phone too.
 - **The Windows app follows the system language**, and speaks Simplified
   Chinese, by [@zzz1465720680](https://github.com/zzz1465720680)
   ([#16](https://github.com/thtbee/nectarlink/pull/16),
