@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! H.264 decoding with Windows' own decoder (Media Foundation's H.264
-//! MFT, licensed with Windows), in low-latency mode: each access unit in,
-//! its picture out right away, as NV12.
+//! Video decoding with Windows' own decoders (Media Foundation's H.264
+//! MFT, licensed with Windows, and the HEVC and AV1 video extensions where
+//! installed), in low-latency mode: each access unit in, its picture out
+//! right away, as NV12.
 
 use std::{mem::ManuallyDrop, sync::Mutex, time::Duration};
 
@@ -265,6 +266,12 @@ impl Decoder {
             let input = MFCreateMediaType()?;
             input.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
             input.SetGUID(&MF_MT_SUBTYPE, &subtype)?;
+            // Windows' HEVC and AV1 decoders (the Store's video extensions)
+            // offer no output until the input has a size; any will do, as
+            // the stream's own size replaces it (a stream change).
+            if subtype != MFVideoFormat_H264 {
+                input.SetUINT64(&MF_MT_FRAME_SIZE, (1920u64 << 32) | 1080)?;
+            }
             transform.SetInputType(0, &input, 0)?;
             let mut decoder = Decoder {
                 codec: codec.to_owned(),
@@ -336,7 +343,11 @@ impl Decoder {
 
     fn decode_on(&mut self, data: &[u8], time_us: u64) -> windows::core::Result<Vec<Picture>> {
         let expects_picture = has_slice(&self.codec, data);
-        let sample = sample_of(data, time_us)?;
+        // Windows' HEVC decoder holds a picture until the next access unit
+        // starts, a frame late; ending each one with an access unit
+        // delimiter (type 35, any slice types) lets it out at once.
+        let end = if self.codec == "h265" { &HEVC_AUD[..] } else { &[] };
+        let sample = sample_of(data, end, time_us)?;
         let mut pictures = Vec::new();
         // SAFETY: as above.
         loop {
@@ -502,16 +513,23 @@ impl Decoder {
     }
 }
 
-fn sample_of(data: &[u8], time_us: u64) -> windows::core::Result<IMFSample> {
-    // SAFETY: the buffer is at least `data.len()` long and locked while
-    // it's written.
+/// An HEVC access unit delimiter NAL unit: type 35, `pic_type` 2 (I, P and
+/// B slices).
+const HEVC_AUD: [u8; 7] = [0, 0, 0, 1, 0x46, 0x01, 0x50];
+
+/// A sample holding `data` followed by `end`.
+fn sample_of(data: &[u8], end: &[u8], time_us: u64) -> windows::core::Result<IMFSample> {
+    let len = data.len() + end.len();
+    // SAFETY: the buffer is at least `len` long and locked while it's
+    // written.
     unsafe {
-        let buffer = MFCreateMemoryBuffer(data.len() as u32)?;
+        let buffer = MFCreateMemoryBuffer(len as u32)?;
         let mut target = std::ptr::null_mut();
         buffer.Lock(&mut target, None, None)?;
         std::ptr::copy_nonoverlapping(data.as_ptr(), target, data.len());
+        std::ptr::copy_nonoverlapping(end.as_ptr(), target.add(data.len()), end.len());
         buffer.Unlock()?;
-        buffer.SetCurrentLength(data.len() as u32)?;
+        buffer.SetCurrentLength(len as u32)?;
         let sample = MFCreateSample()?;
         sample.AddBuffer(&buffer)?;
         // In 100-nanosecond units.
@@ -682,13 +700,102 @@ mod tests {
             .collect()
     }
 
+    /// HEVC access units, each from its delimiter (as FFmpeg writes them).
+    fn hevc_units(stream: &[u8]) -> Vec<&[u8]> {
+        let starts: Vec<usize> =
+            (0..stream.len()).filter(|&i| stream[i..].starts_with(&[0, 0, 0, 1, 0x46])).collect();
+        starts
+            .iter()
+            .enumerate()
+            .map(|(n, &s)| &stream[s..*starts.get(n + 1).unwrap_or(&stream.len())])
+            .collect()
+    }
+
+    /// An AV1 low-overhead OBU stream split into temporal units, each from
+    /// its temporal delimiter, as an encoder hands them out.
+    fn temporal_units(stream: &[u8]) -> Vec<&[u8]> {
+        let mut starts = Vec::new();
+        let mut at = 0;
+        while at < stream.len() {
+            let header = stream[at];
+            if (header >> 3) & 0xf == 2 {
+                starts.push(at);
+            }
+            // The header, its extension byte if any, then a LEB128 size.
+            let mut i = at + 1 + usize::from(header & 0x4 != 0);
+            let mut size = 0usize;
+            for shift in (0..).step_by(7) {
+                let byte = stream[i];
+                i += 1;
+                size |= usize::from(byte & 0x7f) << shift;
+                if byte & 0x80 == 0 {
+                    break;
+                }
+            }
+            at = i + size;
+        }
+        starts
+            .iter()
+            .enumerate()
+            .map(|(n, &s)| &stream[s..*starts.get(n + 1).unwrap_or(&stream.len())])
+            .collect()
+    }
+
+    /// 10 frames of FFmpeg's test pattern, 320x240, a keyframe every 5, no
+    /// reordering, as a phone's encoder sends them.
+    fn test_stream(codec: &str) -> Vec<&'static [u8]> {
+        let units = match codec {
+            "h265" => hevc_units(include_bytes!("testdata/testsrc.h265")),
+            "av1" => temporal_units(include_bytes!("testdata/testsrc.av1")),
+            _ => access_units(include_bytes!("testdata/testsrc.h264")),
+        };
+        assert_eq!(units.len(), 10, "{codec}");
+        units
+    }
+
+    /// Whether Windows has a decoder for `codec`: H.264's comes with it,
+    /// HEVC's and AV1's are optional extensions from the Store (missing on
+    /// CI runners).
+    fn installed(codec: &str) -> bool {
+        let subtype = match codec {
+            "h265" => MFVideoFormat_HEVC,
+            "av1" => MFVideoFormat_AV1,
+            _ => return true,
+        };
+        ensure_mf_started().unwrap();
+        let input = MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: subtype };
+        let mut activates: *mut Option<IMFActivate> = std::ptr::null_mut();
+        let mut count = 0u32;
+        // SAFETY: as in create_mft, which frees the array the same way.
+        unsafe {
+            MFTEnumEx(
+                MFT_CATEGORY_VIDEO_DECODER,
+                MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_LOCALMFT,
+                Some(&input),
+                None,
+                &mut activates,
+                &mut count,
+            )
+            .unwrap();
+            if !activates.is_null() {
+                for slot in std::slice::from_raw_parts_mut(activates, count as usize) {
+                    drop(slot.take());
+                }
+                CoTaskMemFree(Some(activates.cast()));
+            }
+        }
+        count > 0
+    }
+
     /// Decodes `units` on the GPU and in software and checks every picture
     /// matches (decoding is exact). Skips when this PC has no GPU decoding
-    /// (CI runners) or no decoder for the codec (HEVC is an optional Windows
-    /// extension).
+    /// (CI runners) or no decoder for the codec.
     fn gpu_matches_software(codec: &str, units: &[&[u8]]) {
-        let Ok(mut software) = Decoder::new_for_codec(codec) else { return };
-        let Ok(mut gpu) = Decoder::new_gpu(codec) else { return };
+        if !installed(codec) {
+            return;
+        }
+        let mut software = Decoder::new_for_codec(codec).unwrap();
+        let mut gpu = Decoder::new_gpu(codec).unwrap();
         if !gpu.on_gpu() {
             return;
         }
@@ -723,46 +830,36 @@ mod tests {
     }
 
     #[test]
-    fn the_gpu_decodes_the_same_h264_pictures_as_software() {
-        gpu_matches_software("h264", &access_units(include_bytes!("testdata/testsrc.h264")));
-    }
-
-    #[test]
-    fn the_gpu_decodes_the_same_h265_pictures_as_software() {
-        // 10 frames of FFmpeg's test pattern, 320x240, HEVC, access unit delimiters.
-        let stream = include_bytes!("testdata/testsrc.h265");
-        let starts: Vec<usize> =
-            (0..stream.len()).filter(|&i| stream[i..].starts_with(&[0, 0, 0, 1, 0x46])).collect();
-        let units: Vec<&[u8]> = starts
-            .iter()
-            .enumerate()
-            .map(|(k, &at)| &stream[at..starts.get(k + 1).copied().unwrap_or(stream.len())])
-            .collect();
-        assert_eq!(units.len(), 10);
-        gpu_matches_software("h265", &units);
+    fn the_gpu_decodes_the_same_pictures_as_software() {
+        for codec in ["h264", "h265", "av1"] {
+            gpu_matches_software(codec, &test_stream(codec));
+        }
     }
 
     #[test]
     fn a_stream_decodes_picture_by_picture() {
-        // 10 frames of FFmpeg's test pattern, 320x240, a keyframe every 5,
-        // no B-frames, as a phone's encoder sends them.
-        let stream = include_bytes!("testdata/testsrc.h264");
-        let units = access_units(stream);
-        assert_eq!(units.len(), 10);
-        let mut decoder = Decoder::new_for_codec("h264").unwrap();
-        let mut pictures = Vec::new();
-        for (i, unit) in units.iter().enumerate() {
-            let got = decoder.decode(unit, i as u64 * 33_333).unwrap();
-            // Low-latency mode: each picture comes out with its own unit.
-            assert_eq!(got.len(), 1, "unit {i}");
-            pictures.extend(got);
+        for codec in ["h264", "h265", "av1"] {
+            if !installed(codec) {
+                eprintln!("{codec}: no decoder on this PC");
+                continue;
+            }
+            let mut decoder = Decoder::new_for_codec(codec).unwrap();
+            let mut pictures = Vec::new();
+            for (i, unit) in test_stream(codec).iter().enumerate() {
+                let got = decoder.decode(unit, i as u64 * 33_333).unwrap();
+                // Low-latency mode: each picture comes out with its own unit.
+                assert_eq!(got.len(), 1, "{codec} unit {i}");
+                pictures.extend(got);
+            }
+            let first = &pictures[0];
+            assert_eq!((first.width, first.height), (320, 240), "{codec}");
+            let bgrx = to_bgrx(first, 320, 240);
+            // A colorful test pattern, not a blank picture.
+            let distinct: std::collections::HashSet<&[u8; 4]> = bgrx.as_chunks::<4>().0.iter().collect();
+            assert!(distinct.len() > 50, "{codec}: {} colors", distinct.len());
         }
-        let first = &pictures[0];
-        assert_eq!((first.width, first.height), (320, 240));
-        assert_eq!(first.colors, Colors { bt601: false, full_range: false }, "tagged BT.709, limited");
-        let bgrx = to_bgrx(first, 320, 240);
-        // A colorful test pattern, not a blank picture.
-        let distinct: std::collections::HashSet<&[u8; 4]> = bgrx.as_chunks::<4>().0.iter().collect();
-        assert!(distinct.len() > 50, "{} colors", distinct.len());
+        let mut h264 = Decoder::new_for_codec("h264").unwrap();
+        let first = h264.decode(test_stream("h264")[0], 0).unwrap();
+        assert_eq!(first[0].colors, Colors { bt601: false, full_range: false }, "tagged BT.709, limited");
     }
 }
