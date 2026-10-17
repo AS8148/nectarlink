@@ -325,6 +325,10 @@ pub struct Settings {
     /// Horizontally mirror the webcam video.
     #[serde(alias = "webcam_mirror")]
     pub webcam_mirror: bool,
+    /// Where a phone's microphone plays (an output endpoint ID; `None`: a
+    /// virtual audio cable if there is one, else the default output).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone_mic_output: Option<String>,
     /// Which phone camera lens to stream (`"back"` or `"front"`).
     #[serde(default = "default_webcam_camera", alias = "webcam_camera")]
     pub webcam_camera: String,
@@ -438,6 +442,7 @@ impl Default for Settings {
             webcam_height: 720,
             webcam_mirror: false,
             webcam_camera: default_webcam_camera(),
+            phone_mic_output: None,
             timeline_retention_days: 90,
             continuity_photo_hotkey: "Ctrl+Alt+C".into(),
             continuity_scan_hotkey: "Ctrl+Alt+D".into(),
@@ -587,6 +592,7 @@ mod tests {
             webcam_height: 2160,
             webcam_mirror: true,
             webcam_camera: "front".into(),
+            phone_mic_output: Some("{0.0.0.00000000}.{cable}".into()),
             timeline_retention_days: 30,
             continuity_photo_hotkey: "Ctrl+Alt+P".into(),
             continuity_scan_hotkey: "Ctrl+Alt+S".into(),

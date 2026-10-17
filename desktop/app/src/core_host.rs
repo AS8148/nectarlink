@@ -119,6 +119,7 @@ pub fn compute_capabilities(node: Option<&Node>) -> Vec<String> {
         nectarlink_core::STORAGE_WRITE.into(),
         nectarlink_core::WEBCAM_VIRTUAL.into(),
         nectarlink_core::MEDIA_STREAM.into(),
+        nectarlink_core::MIC_LISTEN.into(),
     ];
     let mut pc_mirror_enabled = crate::pc_mirror::is_active();
     let mut remote_input_enabled = false;
@@ -312,6 +313,7 @@ async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
                 crate::battery::on_event(&event);
                 crate::storage::on_event(&event);
                 crate::webcam::on_event(&event);
+                crate::phone_mic::on_event(&event);
                 crate::automations::on_event(&event);
                 crate::bridge::app::on_home_event(&event);
             }

@@ -1557,6 +1557,42 @@ Item {
 
                         Divider { width: parent.width }
 
+                        // Phone as microphone: its sound plays into an output; a
+                        // virtual audio cable's other end is a microphone apps can pick.
+                        ListRow {
+                            width: parent.width
+                            iconPath: Icons.mic
+                            title: qsTr("Phone as microphone")
+                            description: PhoneMic.phase === "live"
+                                ? qsTr("Live from %1, playing into %2.").arg(PhoneMic.deviceName).arg(PhoneMic.outputName)
+                                : PhoneMic.phase === "asking"
+                                    ? qsTr("Tap Start on %1.").arg(PhoneMic.deviceName)
+                                    : PhoneMic.cable
+                                        ? qsTr("Plays into %1, so apps can pick its other end as a microphone.").arg(PhoneMic.outputName)
+                                        : qsTr("Plays into %1. To use it as a microphone in other apps, install a virtual audio cable such as VB-CABLE.").arg(PhoneMic.outputName)
+                            Row {
+                                spacing: 8
+                                Button {
+                                    variant: "outline"
+                                    size: "sm"
+                                    text: qsTr("Output")
+                                    onClicked: {
+                                        PhoneMic.refresh()
+                                        micOutputSheet.open()
+                                    }
+                                }
+                                Button {
+                                    size: "sm"
+                                    variant: PhoneMic.phase === "off" ? "fill" : "tonal"
+                                    enabled: PhoneMic.phase !== "off" || PhoneMic.device !== ""
+                                    text: PhoneMic.phase === "off" ? qsTr("Start") : qsTr("Stop")
+                                    onClicked: PhoneMic.phase === "off" ? PhoneMic.start(PhoneMic.device) : PhoneMic.stop()
+                                }
+                            }
+                        }
+
+                        Divider { width: parent.width }
+
                         // Row 2: Virtual camera add-on
                         ListRow {
                             width: parent.width
@@ -3125,6 +3161,34 @@ Item {
         visible: opacity > 0
         opacity: AppController.highlightTarget.startsWith("settings:") ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
+    }
+
+    Sheet {
+        id: micOutputSheet
+        cardWidth: 440
+        Column {
+            width: parent.width
+            spacing: 12
+            Txt { width: parent.width; text: qsTr("Play the phone's microphone into"); role: "headline"; wrapMode: Text.WordWrap }
+            Repeater {
+                model: { try { return JSON.parse(PhoneMic.outputs) } catch (e) { return [] } }
+                delegate: Button {
+                    required property var modelData
+                    width: parent.width
+                    variant: modelData.id === PhoneMic.output ? "tonal" : "text"
+                    iconPath: modelData.id === PhoneMic.output ? Icons.check : Icons.speaker
+                    text: modelData.name
+                    onClicked: {
+                        PhoneMic.chooseOutput(modelData.id)
+                        micOutputSheet.close()
+                    }
+                }
+            }
+            Row {
+                anchors.right: parent.right
+                Button { variant: "text"; text: qsTr("Close"); onClicked: micOutputSheet.close() }
+            }
+        }
     }
 
     Sheet {

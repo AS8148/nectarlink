@@ -47,13 +47,20 @@ impl Player {
     /// Starts playing `channels` × 16-bit PCM at `rate` on the default
     /// output device.
     pub fn start(rate: u32, channels: u16) -> std::io::Result<Player> {
+        Self::start_on(None, rate, channels)
+    }
+
+    /// As [`Player::start`], on the output device with this endpoint ID
+    /// (from [`super::audio::output_devices`]), or the default one when
+    /// it's `None` or gone.
+    pub fn start_on(device: Option<String>, rate: u32, channels: u16) -> std::io::Result<Player> {
         let (queue, packets) = sync_channel(QUEUE);
         std::thread::Builder::new().name("mirror-sound".into()).spawn(move || {
             let mut attempts = 0;
             // The device can go away (headphones unplugged): start over on
             // the new default, a few times.
             while attempts < 5 {
-                match play(rate, channels, &packets) {
+                match play(device.as_deref(), rate, channels, &packets) {
                     Ok(()) => return,
                     Err(e) => {
                         tracing::warn!(error = %e, "the sound stopped; trying the default device again");
@@ -144,18 +151,29 @@ impl Jitter {
 }
 
 /// Plays until the sender is gone (`Ok`) or the device fails (`Err`).
-fn play(rate: u32, channels: u16, packets: &Receiver<Vec<u8>>) -> windows::core::Result<()> {
+fn play(
+    device: Option<&str>,
+    rate: u32,
+    channels: u16,
+    packets: &Receiver<Vec<u8>>,
+) -> windows::core::Result<()> {
     // SAFETY: balanced below; this thread is ours and uses only the MTA.
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok()?;
     let event = Event::new()?;
-    let result = render(rate, channels, packets, event.0);
+    let result = render(device, rate, channels, packets, event.0);
     drop(event);
     // SAFETY: pairs with CoInitializeEx above; every COM object is gone.
     unsafe { CoUninitialize() };
     result
 }
 
-fn render(rate: u32, channels: u16, packets: &Receiver<Vec<u8>>, event: HANDLE) -> windows::core::Result<()> {
+fn render(
+    device: Option<&str>,
+    rate: u32,
+    channels: u16,
+    packets: &Receiver<Vec<u8>>,
+    event: HANDLE,
+) -> windows::core::Result<()> {
     let block = 2 * channels;
     let format = WAVEFORMATEX {
         wFormatTag: WAVE_FORMAT_PCM as u16,
@@ -171,7 +189,11 @@ fn render(rate: u32, channels: u16, packets: &Receiver<Vec<u8>>, event: HANDLE) 
     // GetBuffer and ReleaseBuffer.
     unsafe {
         let devices: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-        let device = devices.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        let chosen = device.and_then(|id| devices.GetDevice(&windows::core::HSTRING::from(id)).ok());
+        let device = match chosen {
+            Some(device) => device,
+            None => devices.GetDefaultAudioEndpoint(eRender, eConsole)?,
+        };
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
         // Windows converts the rate and channels to the device's own.
         client.Initialize(

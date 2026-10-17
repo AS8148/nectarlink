@@ -37,6 +37,7 @@ mod pc_audio_stream;
 mod pc_mirror;
 mod pc_notifications;
 mod pc_storage;
+mod phone_mic;
 mod photos;
 mod play_on_phone;
 mod qr;
@@ -141,6 +142,12 @@ impl Platform for DesktopPlatform {
         session: u32,
     ) -> Option<std::sync::Arc<dyn nectarlink_core::MirrorSink>> {
         mirror::sink(peer, session)
+    }
+    fn mic_sink(
+        &self,
+        peer: &nectarlink_core::DeviceId,
+    ) -> Option<std::sync::Arc<dyn nectarlink_core::MicSink>> {
+        phone_mic::sink(peer)
     }
     fn webcam_sink(
         &self,
@@ -550,6 +557,7 @@ fn main() -> ExitCode {
     storage::start();
     folder_sync::start_poller();
     webcam::init(&settings);
+    phone_mic::init(&settings);
     local_api::init(&settings);
     win::widget::write_state_snapshot(&data_dir);
     win::tray::update_hotkeys(

@@ -269,6 +269,7 @@ fn main() {
             "src/bridge/mirror.rs",
             "src/bridge/notifications.rs",
             "src/bridge/pairing.rs",
+            "src/bridge/phone_mic.rs",
             "src/bridge/photos.rs",
             "src/bridge/prefs.rs",
             "src/bridge/setup.rs",
