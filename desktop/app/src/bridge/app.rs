@@ -2145,25 +2145,27 @@ fn find_guide_file_on_disk(file_stem: &str) -> Option<String> {
 fn load_guide_doc_content(raw_key: &str) -> (String, String) {
     let key = raw_key.trim().trim_end_matches(".md").to_ascii_lowercase();
     let top_level_title = match key.as_str() {
-        "overview" => Some("NectarLink overview"),
-        "setup" => Some("Install and first-time setup"),
-        "features" => Some("Features reference"),
-        "permissions" => Some("Android permissions and why each is optional"),
-        "elevated" => Some("Elevated and Assist modes"),
-        "troubleshooting" => Some("Troubleshooting and Connection Doctor"),
-        "privacy" => Some("Privacy and security"),
+        "overview" => Some(tr!("Guide", "NectarLink overview")),
+        "setup" => Some(tr!("Guide", "Install and first-time setup")),
+        "features" => Some(tr!("Guide", "Features reference")),
+        "permissions" => Some(tr!("Guide", "Android permissions and why each is optional")),
+        "elevated" => Some(tr!("Guide", "Elevated and Assist modes")),
+        "troubleshooting" => Some(tr!("Guide", "Troubleshooting and Connection Doctor")),
+        "privacy" => Some(tr!("Guide", "Privacy and security")),
         _ => None,
     };
     if let Some(title) = top_level_title
         && let Some(disk_md) = find_guide_file_on_disk(&key)
     {
-        return (title.to_owned(), disk_md);
+        return (title, disk_md);
     }
 
     let (title, body) = match key.as_str() {
         "overview" => (
-            "NectarLink overview",
-            "NectarLink links your Android phone and your PC directly on your local network or over a USB cable.\n\n\
+            tr!("Guide", "NectarLink overview"),
+            tr!(
+                "Guide",
+                "NectarLink links your Android phone and your PC directly on your local network or over a USB cable.\n\n\
              How it works\n\
              - Devices discover each other over local Wi-Fi (mDNS) or USB (ADB reverse tunnel) and connect over QUIC (TLS 1.3).\n\
              - Every connection is mutually authenticated using Ed25519 device keys generated on each device.\n\
@@ -2171,56 +2173,74 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
              Capability tiers on Android\n\
              - Standard mode: Works right after installation with standard Android permissions.\n\
              - Elevated mode (optional): Uses Wireless debugging (set up once in the phone app) or root for phone apps in their own windows, mirroring without the screen capture prompt, and more phone controls.\n\
-             - Assist mode (optional): Uses the Android Accessibility service only when you enable Remote input so your PC mouse and keyboard can control the phone.",
+             - Assist mode (optional): Uses the Android Accessibility service only when you enable Remote input so your PC mouse and keyboard can control the phone."
+            ),
         ),
         "setup" => (
-            "Install and first-time setup",
-            "1. Install NectarLink on your Windows 11 PC and your Android phone (Android 8.0 or newer).\n\
+            tr!("Guide", "Install and first-time setup"),
+            tr!(
+                "Guide",
+                "1. Install NectarLink on your Windows 11 PC and your Android phone (Android 8.0 or newer).\n\
              2. Connect both devices to the same Wi-Fi network, or plug your phone into your PC with a USB cable.\n\
              3. Open the Pair step in the setup walkthrough, or click + (Pair a new device) at the bottom of the left rail.\n\
              4. Scan the QR code from the NectarLink Android app, or select your phone from the nearby devices list and confirm that the 6-digit code matches on both screens.\n\
-             5. Choose which features to share for that phone and grant only the Android permissions you want to use.",
+             5. Choose which features to share for that phone and grant only the Android permissions you want to use."
+            ),
         ),
         "permissions" => (
-            "Android permissions and why each is optional",
-            "NectarLink never asks for every permission up front. Each feature works independently:\n\n\
+            tr!("Guide", "Android permissions and why each is optional"),
+            tr!(
+                "Guide",
+                "NectarLink never asks for every permission up front. Each feature works independently:\n\n\
              - Notification Access: Required only if you want phone notifications, inline replies, and notification-backed chat threads on your PC.\n\
              - SMS and Contacts: Required only if you want to read and send SMS/MMS messages or look up contact names on your PC.\n\
              - Phone and Call Log: Required only if you want incoming call alerts, call history, or dialing from your PC.\n\
              - Media and Photos: Required only if you want the Photos gallery, Shelf latest photo, or folder sync.\n\
-             - Camera and Microphone: Required only while streaming your phone as a webcam, taking a Continuity Camera shot, or recording a voice note.",
+             - Camera and Microphone: Required only while streaming your phone as a webcam, taking a Continuity Camera shot, or recording a voice note."
+            ),
         ),
         "elevated" => (
-            "Elevated and Assist modes",
-            "Most NectarLink features work in Standard mode with regular Android permissions. Two optional modes unlock deeper system integration:\n\n\
+            tr!("Guide", "Elevated and Assist modes"),
+            tr!(
+                "Guide",
+                "Most NectarLink features work in Standard mode with regular Android permissions. Two optional modes unlock deeper system integration:\n\n\
              Elevated mode (Wireless debugging or root)\n\
              - Captures the phone screen without showing the Android cast confirmation prompt every time.\n\
              - Streams individual phone apps in separate desktop windows (virtual displays).\n\
              - Controls additional system quick toggles.\n\n\
              Assist mode (Android Accessibility Service)\n\
              - Injects mouse clicks, scrolling, and touch gestures when you control your phone from your PC.\n\
-             - NectarLink never reads screen text or logs keystrokes through the Accessibility service.",
+             - NectarLink never reads screen text or logs keystrokes through the Accessibility service."
+            ),
         ),
         "troubleshooting" => (
-            "Troubleshooting and Connection Doctor",
-            "If your phone and PC do not see each other:\n\n\
+            tr!("Guide", "Troubleshooting and Connection Doctor"),
+            tr!(
+                "Guide",
+                "If your phone and PC do not see each other:\n\n\
              1. Open Connection Doctor from Settings › Connection & About or the Command Palette.\n\
              2. Check that your Wi-Fi network profile in Windows is set to Private rather than Public, or click Fix in Connection Doctor to allow NectarLink through Windows Firewall.\n\
              3. Verify that both devices are on the same subnet and that guest Wi-Fi client isolation is turned off on your router.\n\
-             4. You can also connect over a USB cable with USB debugging enabled; NectarLink automatically sets up a local tunnel.",
+             4. You can also connect over a USB cable with USB debugging enabled; NectarLink automatically sets up a local tunnel."
+            ),
         ),
         "privacy" => (
-            "Privacy and security",
-            "Local by default\n\
+            tr!("Guide", "Privacy and security"),
+            tr!(
+                "Guide",
+                "Local by default\n\
              Your phone and PC talk directly over your local network or USB cable. When Connect over mobile data is on, encrypted traffic can use a relay when away from home. Automatic update checks contact GitHub Releases and can be turned off in Settings › Connection & About › Check for updates.\n\n\
              End-to-end encrypted\n\
              Every connection uses QUIC with TLS 1.3 and Ed25519 device certificates verified during pairing. Device keys are protected by Windows DPAPI and the Android Keystore.\n\n\
              Per-device sharing controls\n\
-             Sensitive capabilities such as Share PC folders, Remote input, and Reverse PC screen mirroring are turned off by default for each paired device until you turn them on.",
+             Sensitive capabilities such as Share PC folders, Remote input, and Reverse PC screen mirroring are turned off by default for each paired device until you turn them on."
+            ),
         ),
         "notifications" => (
-            "Notifications",
-            "What it does\n\
+            tr!("Guide", "Notifications"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Mirrors your phone notifications to the Home feed and Windows notification pop-ups. You can reply inline to messages, click action buttons, dismiss individual notifications or groups, and undo a recent dismissal.\n\n\
              Where to find it\n\
              - Home › Notifications.\n\
@@ -2228,64 +2248,82 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
              - Settings › General › Copy one-time codes.\n\n\
              What it needs\n\
              - Notification Access permission enabled for NectarLink on your Android phone.\n\
-             - The per-device Notifications toggle enabled on your PC.",
+             - The per-device Notifications toggle enabled on your PC."
+            ),
         ),
         "messages" => (
-            "Messages",
-            "What it does\n\
+            tr!("Guide", "Messages"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Lets you read and send SMS and MMS conversations, plus reply to notification-backed chat threads from messaging apps such as WhatsApp, Signal, and Telegram.\n\n\
              Where to find it\n\
              - Left navigation rail › Messages.\n\
              - Command Palette (Ctrl+Alt+Space) › type Text followed by a contact name.\n\n\
              What it needs\n\
              - SMS and Contacts permissions on your phone for SMS/MMS threads.\n\
-             - Notification Access on your phone for messaging app conversations.",
+             - Notification Access on your phone for messaging app conversations."
+            ),
         ),
         "calls" => (
-            "Calls",
-            "What it does\n\
+            tr!("Guide", "Calls"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Shows incoming and active phone calls on your PC with Answer, Decline, and Reject with SMS actions, plus browsable call history, contacts, and a dialpad.\n\n\
              Where to find it\n\
              - Left navigation rail › Calls.\n\
              - Incoming call banner on Home and Nectar Island.\n\n\
              What it needs\n\
              - Phone, Call Log, and Contacts permissions on your Android phone.\n\
-             - Call audio stays on your phone (or a headset paired to your phone); Elevated mode on Android 12+ unlocks mute, speakerphone, hold, and keypad controls.",
+             - Call audio stays on your phone (or a headset paired to your phone); Elevated mode on Android 12+ unlocks mute, speakerphone, hold, and keypad controls."
+            ),
         ),
         "clipboard" => (
-            "Clipboard",
-            "What it does\n\
+            tr!("Guide", "Clipboard"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Shares copied text, rich HTML/RTF text, images, and small copied file sets between your PC and phone. Keeps an encrypted local history of up to 50 items with pinning and smart context chips for links, phone numbers, addresses, and tracking codes.\n\n\
              Where to find it\n\
              - Home › Send clipboard.\n\
              - Settings › General › Sync clipboard to phone.\n\n\
              What it needs\n\
              - Automatic PC-to-phone clipboard send works whenever your phone is connected.\n\
-             - Background phone-to-PC clipboard sync on Android 10+ uses notifications, the NectarLink quick tile, or Elevated mode.",
+             - Background phone-to-PC clipboard sync on Android 10+ uses notifications, the NectarLink quick tile, or Elevated mode."
+            ),
         ),
         "transfers" => (
-            "Send files",
-            "What it does\n\
+            tr!("Guide", "Send files"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Sends files, folders, links, and text between your phone and PC at local network speed. If your phone is offline when you send, NectarLink places the item in the Waiting to send queue and delivers it automatically as soon as your phone reconnects.\n\n\
              Where to find it\n\
              - Home › Send files button, drag-and-drop anywhere on the window, Waiting to send card, and Transfers list.\n\
              - Windows File Explorer › right-click › Send to.\n\n\
              What it needs\n\
-             - Paired phone and the per-device Files toggle enabled.",
+             - Paired phone and the per-device Files toggle enabled."
+            ),
         ),
         "photos" => (
-            "Photos",
-            "What it does\n\
+            tr!("Guide", "Photos"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Browses recent photos, camera shots, and screenshots on your phone without copying your entire library first. You can view full-resolution images, copy them to the clipboard, save them to disk, or drag them directly into other Windows apps.\n\n\
              Where to find it\n\
              - Left navigation rail › Photos.\n\
              - Shelf edge panel (Ctrl+Alt+S) › Latest photo and screenshot.\n\n\
              What it needs\n\
-             - Photos and Media permission granted on your Android phone.",
+             - Photos and Media permission granted on your Android phone."
+            ),
         ),
         "mirroring" => (
-            "Screen mirroring",
-            "What it does\n\
+            tr!("Guide", "Screen mirroring"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Streams your phone screen into a low-latency desktop window with hardware-accelerated decoding, or opens individual Android apps in their own windows on your PC.\n\n\
              Where to find it\n\
              - Left navigation rail › Apps.\n\
@@ -2293,211 +2331,275 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
              What it needs\n\
              - Standard mode mirrors the full phone screen after you tap Start now on Android's screen capture prompt.\n\
              - Elevated mode (Wireless debugging or root) skips the prompt and unlocks individual app windows.\n\
-             - Assist mode or Elevated mode lets you click, scroll, and type inside the mirrored window.",
+             - Assist mode or Elevated mode lets you click, scroll, and type inside the mirrored window."
+            ),
         ),
         "pc-mirror" => (
-            "Share PC screen",
-            "What it does\n\
+            tr!("Guide", "Share PC screen"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Streams your PC's screen to your phone so you can view your desktop from across the room and use your phone as a trackpad or laser pointer.\n\n\
              Where to find it\n\
              - Started from the NectarLink app on your phone.\n\
              - Settings › Devices › Share PC screen to phone.\n\n\
              What it needs\n\
-             - The per-device Share PC screen to phone switch on your PC, or one-time approval when your phone requests to view your screen.",
+             - The per-device Share PC screen to phone switch on your PC, or one-time approval when your phone requests to view your screen."
+            ),
         ),
         "webcam" => (
-            "Phone as webcam",
-            "What it does\n\
+            tr!("Guide", "Phone as webcam"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Streams your phone camera into the NectarLink Virtual Camera on Windows so Zoom, Teams, Meet, Discord, and OBS can use your phone's rear or front camera at up to 4K.\n\n\
              Where to find it\n\
              - Home › Phone as webcam.\n\
              - Settings › Camera & Audio › Start webcam.\n\n\
              What it needs\n\
              - Camera permission on your phone.\n\
-             - For other apps to see it: Virtual camera add-on in Settings › Camera & Audio.",
+             - For other apps to see it: Virtual camera add-on in Settings › Camera & Audio."
+            ),
         ),
         "continuity-camera" => (
-            "Continuity camera",
-            "What it does\n\
+            tr!("Guide", "Continuity camera"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Triggers your phone camera from any Windows app to snap a photo or scan a document, then copies the result to the Windows clipboard and pastes it into the active window.\n\n\
              Where to find it\n\
              - Global hotkeys Ctrl+Alt+C (Take photo with phone) and Ctrl+Alt+D (Scan document with phone).\n\
              - Home › Continuity Camera.\n\n\
              What it needs\n\
-             - Camera permission on your phone.",
+             - Camera permission on your phone."
+            ),
         ),
         "speaker" => (
-            "Phone as speaker",
-            "What it does\n\
+            tr!("Guide", "Phone as speaker"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Streams your PC system audio to your connected phone in real time over the encrypted connection so you can listen through your phone speakers or headphones.\n\n\
              Where to find it\n\
              - Home › Phone as speaker.\n\
              - Settings › Camera & Audio › Stream PC audio to phone.\n\n\
              What it needs\n\
-             - Paired phone connected over local Wi-Fi or USB.",
+             - Paired phone connected over local Wi-Fi or USB."
+            ),
         ),
         "recordings" => (
-            "Voice recorder",
-            "What it does\n\
+            tr!("Guide", "Voice recorder"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Receives voice notes recorded on your phone and saves them to your PC in your chosen audio format (M4A, MP3, WAV, or FLAC).\n\n\
              Where to find it\n\
              - On your phone: Home › Record.\n\
              - Settings › Files & Sync › Voice recordings.\n\n\
              What it needs\n\
-             - Microphone permission on your phone when recording a voice note.",
+             - Microphone permission on your phone when recording a voice note."
+            ),
         ),
         "deck" => (
-            "Deck",
-            "What it does\n\
+            tr!("Guide", "Deck"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Syncs media playback between your phone and PC, switches Windows audio output and microphone devices, and turns your phone into a customizable grid of shortcut tiles, macros, and volume sliders.\n\n\
              Where to find it\n\
              - Left navigation rail › Deck.\n\n\
              What it needs\n\
-             - Paired phone over any active connection.",
+             - Paired phone over any active connection."
+            ),
         ),
         "remote-input" => (
-            "Remote input",
-            "What it does\n\
+            tr!("Guide", "Remote input"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Lets your phone act as a wireless trackpad, keyboard, presentation clicker, and on-screen laser pointer for your PC.\n\n\
              Where to find it\n\
              - On your phone: Home › Control PC.\n\
              - Settings › Devices › Remote mouse, keyboard & Deck.\n\n\
              What it needs\n\
-             - The per-device Remote mouse, keyboard & Deck switch on your PC (or approved from the one-time prompt when your phone requests control).",
+             - The per-device Remote mouse, keyboard & Deck switch on your PC (or approved from the one-time prompt when your phone requests control)."
+            ),
         ),
         "type-on-phone" => (
-            "Type on phone",
-            "What it does\n\
+            tr!("Guide", "Type on phone"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Forwards keystrokes and pasted text from your PC keyboard directly to your phone without needing to mirror the phone screen.\n\n\
              Where to find it\n\
              - Home › Type on phone.\n\
              - Command Palette › Type on phone with PC keyboard.\n\n\
              What it needs\n\
-             - Assist mode (Accessibility service), the NectarLink input method, or Elevated mode on your phone.",
+             - Assist mode (Accessibility service), the NectarLink input method, or Elevated mode on your phone."
+            ),
         ),
         "phone-controls" => (
-            "Phone controls",
-            "What it does\n\
+            tr!("Guide", "Phone controls"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Controls your phone's Do Not Disturb mode, ringer mode (Sound, Vibrate, Silent), flashlight, media volume, screen brightness, Wi-Fi, Bluetooth, and Find My Phone ring from your PC.\n\n\
              Where to find it\n\
              - Home › Phone controls and Find phone.\n\
              - Command Palette.\n\n\
              What it needs\n\
-             - Volume, flashlight, and Find My Phone work in Standard mode; Do Not Disturb requires Notification Policy access; Wi-Fi and Bluetooth toggles use Elevated mode on newer Android versions.",
+             - Volume, flashlight, and Find My Phone work in Standard mode; Do Not Disturb requires Notification Policy access; Wi-Fi and Bluetooth toggles use Elevated mode on newer Android versions."
+            ),
         ),
         "shelf" => (
-            "Drop shelf",
-            "What it does\n\
+            tr!("Guide", "Drop shelf"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Opens a lightweight slide-out panel at the edge of your monitor showing your phone's latest photo, latest screenshot, recent clipboard items, and recent received files. Drag items out into any app, or drop files onto the Shelf to send them to your phone.\n\n\
              Where to find it\n\
              - Global hotkey Ctrl+Alt+S.\n\
              - Command Palette › Open Shelf.\n\
              - Settings › Shortcuts & Rules › File shelf, to change the hotkey.\n\n\
              What it needs\n\
-             - Paired phone; Photos permission on your phone for the latest photo and screenshot tiles.",
+             - Paired phone; Photos permission on your phone for the latest photo and screenshot tiles."
+            ),
         ),
         "nectar-island" => (
-            "Nectar Island",
-            "What it does\n\
+            tr!("Guide", "Nectar Island"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Displays a compact pill at the top center of your primary monitor for incoming calls, live file transfer progress, media playback, and optional notification previews.\n\n\
              Where to find it\n\
              - Settings › General › Nectar Island.\n\n\
              What it needs\n\
-             - Turn on Nectar Island in Settings › General and pick which events should appear.",
+             - Turn on Nectar Island in Settings › General and pick which events should appear."
+            ),
         ),
         "timeline" => (
-            "Timeline",
-            "What it does\n\
+            tr!("Guide", "Timeline"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Provides a unified, searchable chronological feed of files, photos, clipboard items, calls, messages, and voice recordings shared between your phone and PC.\n\n\
              Where to find it\n\
              - Top bar › Timeline.\n\
              - Home › Timeline.\n\n\
              What it needs\n\
-             - Works automatically for all paired devices; retention period can be adjusted in Settings › Storage & Privacy.",
+             - Works automatically for all paired devices; retention period can be adjusted in Settings › Storage & Privacy."
+            ),
         ),
         "command-palette" => (
-            "Command palette",
-            "What it does\n\
+            tr!("Guide", "Command palette"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Opens a keyboard-first search bar over actions, contacts, message threads, mirrorable apps, phone quick toggles, clipboard history, and navigation pages.\n\n\
              Where to find it\n\
              - Global hotkey Ctrl+Alt+Space (or Ctrl+K inside the NectarLink window).\n\
              - Commands in the top bar.\n\n\
              What it needs\n\
-             - Works at any time with zero background memory cost when closed.",
+             - Works at any time with zero background memory cost when closed."
+            ),
         ),
         "handoff" => (
-            "Handoff",
-            "What it does\n\
+            tr!("Guide", "Handoff"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Sends web links, video links with their current playback timestamp, map coordinates or street addresses, and documents to your phone so they open immediately in the right app.\n\n\
              Where to find it\n\
              - Command Palette › Open copied link on phone and Hand off document to phone.\n\n\
              What it needs\n\
-             - Paired phone; works online or queues automatically when your phone is offline.",
+             - Paired phone; works online or queues automatically when your phone is offline."
+            ),
         ),
         "wol" => (
-            "Wake PC",
-            "What it does\n\
+            tr!("Guide", "Wake PC"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Lets your paired phone wake this PC from sleep or soft power-off over your local network using a Wake-on-LAN packet.\n\n\
              Where to find it\n\
              - Settings › Connection & About › Wake from your phone.\n\
              - On your phone: Home › Wake, shown while the PC is offline.\n\n\
              What it needs\n\
-             - A network adapter with Wake-on-LAN enabled in Windows Device Manager and BIOS/UEFI (wired Ethernet is most reliable).",
+             - A network adapter with Wake-on-LAN enabled in Windows Device Manager and BIOS/UEFI (wired Ethernet is most reliable)."
+            ),
         ),
         "folder-sync" => (
-            "Share PC folders",
-            "What it does\n\
+            tr!("Guide", "Share PC folders"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Keeps selected folders on your phone (such as DCIM/Camera or Download) and folders on your PC in sync in one-way or two-way mode, and lets your phone browse shared PC folders.\n\n\
              Where to find it\n\
              - Settings › Files & Sync › Synced folders.\n\
              - Settings › Devices › Remote PC file access, for browsing PC folders from the phone.\n\n\
              What it needs\n\
-             - Files and media access on your phone and at least one folder sync rule configured in Settings.",
+             - Files and media access on your phone and at least one folder sync rule configured in Settings."
+            ),
         ),
         "automations" => (
-            "Automations",
-            "What it does\n\
+            tr!("Guide", "Automations"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Runs automatic trigger-action rules such as locking your PC when your phone disconnects, pausing media when a call arrives, or running a command when your phone connects.\n\n\
              Where to find it\n\
              - Settings › Shortcuts & Rules › Trigger-action rules.\n\n\
              What it needs\n\
-             - Add and turn on one or more rules there.",
+             - Add and turn on one or more rules there."
+            ),
         ),
         "localsend" => (
-            "LocalSend",
-            "What it does\n\
+            tr!("Guide", "LocalSend"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Discovers and exchanges files with nearby devices running LocalSend v2 on your local network without requiring pairing.\n\n\
              Where to find it\n\
              - Home › LocalSend nearby, while LocalSend is on.\n\
              - Settings › Files & Sync › LocalSend on local network.\n\n\
              What it needs\n\
-             - LocalSend on local network turned on in Settings › Files & Sync, and both devices on the same local network.",
+             - LocalSend on local network turned on in Settings › Files & Sync, and both devices on the same local network."
+            ),
         ),
         "local-api" => (
-            "Local HTTP API",
-            "What it does\n\
+            tr!("Guide", "Local HTTP API"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Exposes an opt-in localhost HTTP/JSON and Server-Sent Events API on 127.0.0.1 (default port 53320) protected by a bearer token so scripts, CLI tools, and Stream Deck plugins can trigger NectarLink actions.\n\n\
              Where to find it\n\
              - Settings › Connection & About › Local automation API.\n\n\
              What it needs\n\
-             - Turn on Local automation API in Settings › Connection & About and read the bearer token from api-token.json.",
+             - Turn on Local automation API in Settings › Connection & About and read the bearer token from api-token.json."
+            ),
         ),
         "doctor" => (
-            "Connection Doctor",
-            "What it does\n\
+            tr!("Guide", "Connection Doctor"),
+            tr!(
+                "Guide",
+                "What it does\n\
              Inspects Windows Firewall rules, network profile type (Private vs Public), UDP discovery sockets, and paired phone reachability, and offers one-click fixes.\n\n\
              Where to find it\n\
              - Settings › Connection & About › Connection Doctor.\n\
              - Command Palette › Connection Doctor.\n\n\
              What it needs\n\
-             - Always available on your PC.",
+             - Always available on your PC."
+            ),
         ),
         _ => (
-            "Features guide",
-            "Select any feature card in the Features guide to inspect its live status, jump directly to its control with Show me, or read how it works and what permissions it uses.",
+            tr!("Guide", "Features guide"),
+            tr!(
+                "Guide",
+                "Select any feature card in the Features guide to inspect its live status, jump directly to its control with Show me, or read how it works and what permissions it uses."
+            ),
         ),
     };
-    (title.to_owned(), body.to_owned())
+    (title, body)
 }
 
 fn resolve_shelf_device(current_device_idx: i32) -> (Option<DeviceId>, String, bool) {
