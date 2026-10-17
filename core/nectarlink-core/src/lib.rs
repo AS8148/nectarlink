@@ -22,6 +22,7 @@ pub mod handoff;
 mod identity;
 pub mod localsend;
 mod media;
+pub mod mic;
 mod mirror;
 mod node;
 mod notifications;
@@ -73,6 +74,7 @@ pub use localsend::{
     peer_device_id as localsend_peer_device_id,
 };
 pub use media::{MediaAction, MediaError};
+pub use mic::{MicSink, TOGGLE as MIC_TOGGLE};
 pub use mirror::{MirrorSend, MirrorSink, MirrorStream, PC_MIRROR_TOGGLE};
 pub use nectarlink_protocol::messages::clip::{
     IMAGE_TYPES as CLIP_IMAGE_TYPES, MAX_IMAGE_BYTES as CLIP_MAX_IMAGE_BYTES,
@@ -103,6 +105,7 @@ pub use nectarlink_protocol::{
         format_mac, ipv4_broadcast, is_package_name, is_valid_storage_dir_path, is_valid_storage_id,
         is_valid_storage_name, is_valid_storage_path, magic_packet,
         media_watch::{STREAM as MEDIA_STREAM, WATCH as MEDIA_WATCH},
+        mic::{LISTEN as MIC_LISTEN, STREAM as MIC_STREAM},
         mirror::{
             AUDIO as MIRROR_AUDIO, AUDIO_PLAYBACK as MIRROR_AUDIO_PLAYBACK, AV1 as MIRROR_AV1,
             CAPTURE as MIRROR_CAPTURE, H264 as MIRROR_H264, H265 as MIRROR_H265, INPUT as MIRROR_INPUT,

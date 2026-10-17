@@ -491,6 +491,7 @@ async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: Envelope) -> 
         t if t.starts_with("sms.") && crate::sms::handle(shared, session, &env).await? => {}
         t if t.starts_with("mirror.") && crate::mirror::handle(shared, session, &env).await? => {}
         t if t.starts_with("webcam.") && crate::webcam::handle(shared, session, &env).await? => {}
+        t if t.starts_with("mic.") && crate::mic::handle(shared, session, &env).await? => {}
         t if t.starts_with("camera.capture.")
             && crate::continuity_camera::handle(shared, session, &env).await? => {}
         t if t.starts_with("remote.") && crate::remote::handle(shared, session, &env).await? => {}

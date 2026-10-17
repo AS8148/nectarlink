@@ -97,6 +97,9 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         ringer,
         phoneMedia,
         onLink = { pc, url -> LinkNotifications.show(this.context, _state.value.nameOf(pc).orEmpty(), url) },
+        onMic = { pc ->
+            app.nectarlink.android.mic.MicRequests.show(this.context, pc, _state.value.nameOf(pc).orEmpty())
+        },
         onWatch = { pc, player, title ->
             app.nectarlink.android.media.WatchOffers.show(
                 this.context,
@@ -933,6 +936,23 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         }
     }
 
+    /** Opens this phone's microphone stream to [pcId] (docs/protocol/mic.md); null if it can't. */
+    suspend fun micOpen(pcId: String): MirrorStream? {
+        startJob?.join()
+        val node = node ?: return null
+        return try {
+            node.micOpen(pcId)
+        } catch (e: NectarlinkException) {
+            _messages.tryEmit(describe(e))
+            null
+        }
+    }
+
+    /** Stops this phone's microphone stream to [pcId] and tells the PC. */
+    fun micStop(pcId: String) {
+        command { it.micStop(pcId) }
+    }
+
     fun clearWebcamRequest(pcId: String? = null) {
         if (pcId != null) WebcamRequests.dismiss(context, pcId)
         _state.update { s ->
@@ -1603,6 +1623,8 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         CLIPBOARD_CAPABILITIES +
             // Play on phone: shows a PC's playback, streamed from the PC.
             listOf("media.watch") +
+            // Phone as microphone: asks for the permission when a PC first wants it.
+            (if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)) listOf("mic.stream") else emptyList()) +
             toggles.capabilities() +
             (if (notificationAccess) NOTIFICATION_CAPABILITIES + MEDIA_CAPABILITIES else emptyList()) +
             (if (notificationAccess && NotificationListener.canReadSensitive(context)) listOf("notify.sensitive") else emptyList()) +

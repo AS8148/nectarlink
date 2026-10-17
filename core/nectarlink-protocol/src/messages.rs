@@ -91,6 +91,8 @@ pub mod types {
     pub const STORAGE_RENAME: &str = "storage.rename";
     pub const STORAGE_DELETE: &str = "storage.delete";
     pub const STORAGE_CHANGED: &str = "storage.changed";
+    pub const MIC_START: &str = "mic.start";
+    pub const MIC_STOP: &str = "mic.stop";
     pub const WEBCAM_START: &str = "webcam.start";
     pub const WEBCAM_STOP: &str = "webcam.stop";
     pub const WEBCAM_KEYFRAME: &str = "webcam.keyframe";
@@ -1566,6 +1568,19 @@ impl MirrorAudioConfig {
 }
 
 // ---- Phone as webcam (docs/protocol/webcam.md) ----
+
+/// Phone as microphone (`docs/protocol/mic.md`).
+pub mod mic {
+    /// Offered by phones that stream their microphone.
+    pub const STREAM: &str = "mic.stream";
+    /// Offered by PCs that take a phone's microphone.
+    pub const LISTEN: &str = "mic.listen";
+    pub const SERVICE: &str = "mic";
+    pub const OP_PCM: &str = "pcm";
+    pub const VERSION: u32 = 1;
+    /// Stream reset code: the microphone stopped.
+    pub const STOPPED: u32 = 13;
+}
 
 pub mod webcam {
     /// Offered by phones that stream their camera as a webcam.

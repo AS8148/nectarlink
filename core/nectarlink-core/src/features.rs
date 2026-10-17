@@ -345,6 +345,8 @@ pub const DEVICE_TOGGLES: &[(&str, bool)] = &[
     ("pc_actions", true),
     ("mirroring", true),
     ("webcam", true),
+    // The phone asks its user each time a PC wants its microphone.
+    ("mic", true),
     // Browsing the phone's storage on a PC is opt-in.
     ("storage", false),
     // Viewing this PC's screen on a phone is opt-in.
@@ -870,6 +872,12 @@ pub const FEATURES: &[FeatureDef] = &[
             WindowsBuildAtLeast(22000),
             DeviceToggle("webcam"),
         ],
+        partial: None,
+    },
+    FeatureDef {
+        id: "media.phone_mic",
+        group: FeatureGroup::Media,
+        requires: &[phone("mic.stream", UPDATE), desktop("mic.listen", UPDATE), DeviceToggle("mic")],
         partial: None,
     },
     FeatureDef {

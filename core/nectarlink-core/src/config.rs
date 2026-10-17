@@ -439,6 +439,21 @@ pub trait Platform: Send + Sync + 'static {
         Err("this device doesn't stream a camera".into())
     }
 
+    /// Where a phone's microphone goes on this PC when it starts streaming
+    /// (`docs/protocol/mic.md`). `None` refuses the stream.
+    fn mic_sink(&self, _peer: &nectarlink_protocol::DeviceId) -> Option<std::sync::Arc<dyn crate::MicSink>> {
+        None
+    }
+
+    /// A paired PC asked for this phone's microphone: ask the user, then
+    /// stream with [`Node::mic_open`](crate::Node::mic_open).
+    fn mic_requested(&self, _peer: &nectarlink_protocol::DeviceId) -> Result<(), String> {
+        Err("this device doesn't stream its microphone".into())
+    }
+
+    /// The PC stopped listening to this phone's microphone: stop recording.
+    fn mic_stop_requested(&self, _peer: &nectarlink_protocol::DeviceId) {}
+
     /// The PC stopped using this phone's webcam: stop streaming.
     fn webcam_stop_requested(&self, _peer: &nectarlink_protocol::DeviceId) {}
 

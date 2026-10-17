@@ -2406,7 +2406,9 @@ impl Event {
             NodeEvent::CameraCaptureRequested { .. }
             | NodeEvent::CameraCaptureReceived { .. }
             | NodeEvent::CameraCaptureCancelled { .. }
-            | NodeEvent::PcMirrorRequested { .. } => return None,
+            | NodeEvent::PcMirrorRequested { .. }
+            // A phone's microphone arrives on PCs only.
+            | NodeEvent::Mic { .. } => return None,
             NodeEvent::RemoteInputRequested { device } => {
                 Event::RemoteInputRequested { id: device.to_string() }
             }
@@ -2644,6 +2646,11 @@ pub trait Platform: Send + Sync {
     fn webcam_requested(&self, pc_id: String, options: WebcamOptions) -> bool;
     /// The PC stopped watching the webcam stream.
     fn webcam_stop_requested(&self, pc_id: String);
+    /// A PC asked for this phone's microphone (`docs/protocol/mic.md`): ask
+    /// the user, then stream with `mic_open`. False if it couldn't ask.
+    fn mic_requested(&self, pc_id: String) -> bool;
+    /// The PC stopped listening to this phone's microphone: stop recording.
+    fn mic_stop_requested(&self, pc_id: String);
     /// The PC needs a fresh H.264 keyframe on the webcam stream.
     fn webcam_keyframe_requested(&self, pc_id: String);
     /// A PC asked this phone to capture a photo or scan a document (`mode` is
@@ -2855,6 +2862,12 @@ impl core::Platform for PlatformAdapter {
     }
     fn webcam_stop_requested(&self, peer: &DeviceId) {
         self.0.webcam_stop_requested(peer.to_string());
+    }
+    fn mic_requested(&self, peer: &DeviceId) -> Result<(), String> {
+        if self.0.mic_requested(peer.to_string()) { Ok(()) } else { Err("not asked".into()) }
+    }
+    fn mic_stop_requested(&self, peer: &DeviceId) {
+        self.0.mic_stop_requested(peer.to_string());
     }
     fn webcam_keyframe_requested(&self, peer: &DeviceId) {
         self.0.webcam_keyframe_requested(peer.to_string());
@@ -3947,6 +3960,25 @@ impl NectarlinkNode {
         let id = parse_id(&pc_id)?;
         let node = self.node.clone();
         self.run(async move { Ok(Arc::new(MirrorStream(node.webcam_open(id).await?))) }).await
+    }
+
+    /// Opens this phone's microphone stream to a paired PC (`docs/protocol/mic.md`):
+    /// a config packet (`mirror_audio_config`) first, then 16-bit PCM.
+    pub async fn mic_open(&self, pc_id: String) -> Result<Arc<MirrorStream>> {
+        let id = parse_id(&pc_id)?;
+        let node = self.node.clone();
+        self.run(async move { Ok(Arc::new(MirrorStream(node.mic_open(id).await?))) }).await
+    }
+
+    /// Stops this phone's microphone stream to a paired PC and tells the PC.
+    pub async fn mic_stop(&self, pc_id: String) -> Result<()> {
+        let id = parse_id(&pc_id)?;
+        let node = self.node.clone();
+        self.run(async move {
+            node.mic_stop(id).await;
+            Ok(())
+        })
+        .await
     }
 
     /// Stops this phone's webcam stream to a paired PC and tells the PC.

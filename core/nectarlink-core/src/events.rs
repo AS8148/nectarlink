@@ -220,6 +220,11 @@ pub enum NodeEvent {
         device: DeviceId,
         on: bool,
     },
+    /// A paired phone's microphone started or stopped arriving on this PC.
+    Mic {
+        device: DeviceId,
+        on: bool,
+    },
     /// A paired PC requested a Continuity Camera capture on this phone.
     CameraCaptureRequested {
         device: DeviceId,

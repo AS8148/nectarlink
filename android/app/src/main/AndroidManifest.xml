@@ -319,6 +319,20 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Phone as microphone. -->
+        <service
+            android:name=".mic.MicService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <activity
+            android:name=".mic.MicStartActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <service
             android:name=".webcam.WebcamService"
             android:exported="false"

@@ -70,6 +70,8 @@ capability is missing.
 | `storage.read` | Lists folders and reads files in shared storage or picked SAF folders ([storage](storage.md)) | All files access or picked SAF folder |
 | `storage.write` | Creates folders, writes/uploads files, renames and deletes entries in shared storage or picked SAF folders ([storage](storage.md)) | All files access or picked SAF folder |
 | `camera.stream` | Streams a camera for webcam use ([webcam](webcam.md)) | camera permission |
+| `mic.stream` | Streams its microphone when its user agrees ([mic](mic.md)) | app update (asks for the microphone permission when first used) |
+| `media.watch` | Shows a PC's playback streamed to it (Play on phone, [media](media.md) §4) | app update |
 | `camera.capture` | Captures a photo or document scan on request ([Continuity Camera](v0.md#12-continuity-camera-cameracapture)) | camera permission |
 
 ## Desktop
@@ -92,6 +94,8 @@ capability is missing.
 | `deck.actions` | Shares its Deck layout and live tile state and runs Deck actions ([deck](deck.md)) | app update |
 | `pc.audio` | Reports active audio output devices in `deck.state` and accepts `pc.audio.set` volume/mute changes ([deck](deck.md)) | app update |
 | `camera.virtual` | Receives and decodes a phone's camera stream ([webcam](webcam.md)) | app update |
+| `mic.listen` | Takes a phone's microphone and plays it into an output ([mic](mic.md)) | app update |
+| `media.stream` | Streams a player's picture and sound to a phone that watches (Play on phone, [media](media.md) §4) | app update |
 | `addon.vcam` | The virtual camera add-on is installed ([webcam](webcam.md)) | installing the add-on |
 | `camera.continuity` | Requests and receives Continuity Camera photos and document scans ([Continuity Camera](v0.md#12-continuity-camera-cameracapture)) | app update |
 

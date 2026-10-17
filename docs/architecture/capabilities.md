@@ -137,6 +137,8 @@ Available. Everything else in the matrix is identical on both devices.
 | `mirroring.control` | phone `mirror.capture`, `mirror.input` (Assist) | None | Locked → Assist · ~1 min |
 | `mirroring.app_windows` | phone `mirror.virtual_display` (Elevated), Elevated, Android ≥ 11 | None | Locked → Elevated |
 | `camera.webcam` | phone `camera.stream` (camera permission), desktop `camera.virtual`, desktop `addon.vcam`, Windows build ≥ 22000, toggle `webcam` | None | Locked → install virtual camera · ~1 min |
+| `media.play_on_phone` | desktop `media.stream`, phone `media.watch`, toggle `media` | None | Available |
+| `media.phone_mic` | phone `mic.stream`, desktop `mic.listen`, toggle `mic` | None | Available |
 
 The full registry is `FEATURES` in `core/nectarlink-core/src/features.rs`.
 

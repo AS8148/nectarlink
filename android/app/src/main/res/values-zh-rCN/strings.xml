@@ -348,6 +348,13 @@
     <string name="pc_mirror_viewport_desc">%1$s 屏幕</string>
     <string name="action_record_pc">录制</string>
     <string name="channel_recorder">录音机</string>
+    <string name="channel_mic">电脑麦克风</string>
+    <string name="channel_mic_requests">麦克风请求</string>
+    <string name="mic_notification_title">正在为 %1$s 使用麦克风</string>
+    <string name="mic_notification_text">电脑正在接收此手机的麦克风。</string>
+    <string name="mic_request_title">%1$s 想使用此手机的麦克风</string>
+    <string name="mic_request_text">轻触即可开始。在你或电脑停止之前会一直开启。</string>
+    <string name="mic_request_start">开始</string>
     <string name="recorder_notification_recording">正在为 %1$s 录音</string>
     <string name="recorder_notification_paused">录音已暂停（%1$s）</string>
     <string name="recorder_permission_title">允许使用麦克风</string>

@@ -363,6 +363,14 @@
     <!-- Voice recorder to PC -->
     <string name="action_record_pc">Record</string>
     <string name="channel_recorder">Voice recorder</string>
+    <!-- Phone as microphone. -->
+    <string name="channel_mic">Microphone for your PC</string>
+    <string name="channel_mic_requests">Microphone requests</string>
+    <string name="mic_notification_title">Microphone on for %1$s</string>
+    <string name="mic_notification_text">Your PC hears this phone\'s microphone.</string>
+    <string name="mic_request_title">%1$s wants this phone\'s microphone</string>
+    <string name="mic_request_text">Tap to start. It stays on until you or the PC stop it.</string>
+    <string name="mic_request_start">Start</string>
     <string name="recorder_notification_recording">Recording for %1$s</string>
     <string name="recorder_notification_paused">Recording paused (%1$s)</string>
     <string name="recorder_permission_title">Allow microphone access</string>

@@ -63,6 +63,8 @@ internal class PhonePlatform(
     private val onLink: (String, String) -> Boolean,
     /** Shows a PC's Play on phone offer: (PC's ID, player, title) → shown. */
     private val onWatch: (String, String, String?) -> Boolean,
+    /** Asks the user to start the microphone for a PC: PC's ID → asked. */
+    private val onMic: (String) -> Boolean,
     /** Shows or updates a watched task from a PC: (PC's ID, task) → shown. */
     private val onTask: (String, TaskNotify) -> Boolean,
     /** The phone's calls (created after this). */
@@ -200,6 +202,13 @@ internal class PhonePlatform(
             camera = options.camera,
         )
         return onWebcam(pcId, request)
+    }
+
+    override fun micRequested(pcId: String): Boolean = onMic(pcId)
+
+    override fun micStopRequested(pcId: String) {
+        app.nectarlink.android.mic.MicRequests.dismiss(context, pcId)
+        app.nectarlink.android.mic.MicService.stop(context)
     }
 
     override fun webcamStopRequested(pcId: String) {

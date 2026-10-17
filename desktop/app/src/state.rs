@@ -71,6 +71,8 @@ impl Changes {
     pub const DEVICE_METRICS: Changes = Changes(1 << 27);
     /// Offline send queue items changed.
     pub const QUEUE: Changes = Changes(1 << 28);
+    /// Phone as microphone state or output (kept by crate::phone_mic).
+    pub const MIC: Changes = Changes(1 << 29);
 
     pub fn is_empty(self) -> bool {
         self.0 == 0
@@ -541,6 +543,7 @@ impl AppState {
             | NodeEvent::StorageRequested { .. }
             | NodeEvent::StorageChanged { .. }
             | NodeEvent::Webcam { .. }
+            | NodeEvent::Mic { .. }
             | NodeEvent::PcAudioFrame { .. }
             | NodeEvent::CameraCaptureRequested { .. }
             | NodeEvent::CameraCaptureCancelled { .. } => Changes::NONE,

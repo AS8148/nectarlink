@@ -154,6 +154,8 @@ pub(crate) struct Shared {
     pub(crate) watch_offers: Mutex<HashMap<DeviceId, (String, std::time::Instant)>>,
     /// Stop signals for phone webcam streams arriving here, by phone.
     pub(crate) webcam_stops: Mutex<HashMap<DeviceId, Arc<tokio::sync::Notify>>>,
+    /// Stop signals for phone microphone streams arriving here, by phone.
+    pub(crate) mic_stops: Mutex<HashMap<DeviceId, Arc<tokio::sync::Notify>>>,
     /// Per-peer rate limiters and prompt state for remote input.
     pub(crate) remote: Mutex<crate::remote::RemoteState>,
     /// Per-peer prompt state and open folders for the storage service.
@@ -1411,6 +1413,7 @@ impl Node {
             pc_mirror_sessions: Mutex::new(std::collections::HashSet::new()),
             watch_offers: Mutex::new(HashMap::new()),
             webcam_stops: Mutex::new(HashMap::new()),
+            mic_stops: Mutex::new(HashMap::new()),
             remote: Mutex::new(Default::default()),
             storage: Mutex::new(Default::default()),
             clipboard_history,
@@ -1798,6 +1801,16 @@ impl Node {
             if let Some(session) = self.shared.session(&peer) {
                 self.shared.runtime.spawn(async move {
                     let _ = crate::mirror::stop(&session, crate::MIRROR_SCREEN).await;
+                });
+            }
+        }
+        if toggle == crate::mic::TOGGLE && !enabled {
+            self.shared.stop_mic(&peer);
+            let platform = self.shared.platform.clone();
+            drop(self.shared.runtime.spawn_blocking(move || platform.mic_stop_requested(&peer)));
+            if let Some(session) = self.shared.session(&peer) {
+                self.shared.runtime.spawn(async move {
+                    let _ = crate::mic::stop(&session).await;
                 });
             }
         }
@@ -2498,6 +2511,29 @@ impl Node {
     pub async fn webcam_open(&self, peer: DeviceId) -> Result<crate::MirrorStream> {
         let session = self.connected(&peer)?;
         crate::webcam::open(&self.shared, &session).await
+    }
+
+    // ---- Phone as microphone (docs/protocol/mic.md) ----
+
+    /// Asks a paired phone to stream its microphone; the phone asks its
+    /// user. Sound then arrives through [`Platform::mic_sink`](crate::Platform::mic_sink).
+    pub async fn mic_start(&self, peer: DeviceId) -> Result<()> {
+        let session = self.connected(&peer)?;
+        crate::mic::start(&self.shared, &session).await
+    }
+
+    /// Stops a microphone stream with `peer` (either direction) and tells `peer`.
+    pub async fn mic_stop(&self, peer: DeviceId) {
+        self.shared.stop_mic(&peer);
+        if let Ok(session) = self.connected(&peer) {
+            let _ = crate::mic::stop(&session).await;
+        }
+    }
+
+    /// Opens this phone's microphone stream to a paired PC.
+    pub async fn mic_open(&self, peer: DeviceId) -> Result<crate::MirrorStream> {
+        let session = self.connected(&peer)?;
+        crate::mic::open(&self.shared, &session).await
     }
 
     // ---- Continuity Camera (docs/protocol/v0.md §Continuity Camera) ----

@@ -41,6 +41,8 @@ struct RecordingPlatform {
     mirror_asks: Mutex<Vec<String>>,
     mirror_reject: std::sync::atomic::AtomicBool,
     watch_offers: Mutex<Vec<String>>,
+    mic_asks: Mutex<Vec<String>>,
+    mic: Arc<TestMicSink>,
     /// What a PC got of a phone's screen.
     screen: Arc<ScreenSink>,
     webcam_asks: Mutex<Vec<String>>,
@@ -170,6 +172,16 @@ impl Platform for RecordingPlatform {
         input: nectarlink_core::MirrorInput,
     ) {
         self.mirror_asks.lock().unwrap().push(format!("{input:?} on {session}"));
+    }
+    fn mic_sink(&self, _peer: &nectarlink_core::DeviceId) -> Option<Arc<dyn nectarlink_core::MicSink>> {
+        Some(self.mic.clone())
+    }
+    fn mic_requested(&self, _peer: &nectarlink_core::DeviceId) -> Result<(), String> {
+        self.mic_asks.lock().unwrap().push("start".into());
+        Ok(())
+    }
+    fn mic_stop_requested(&self, _peer: &nectarlink_core::DeviceId) {
+        self.mic_asks.lock().unwrap().push("stop".into());
     }
     fn webcam_sink(&self, _peer: &nectarlink_core::DeviceId) -> Option<Arc<dyn nectarlink_core::WebcamSink>> {
         self.webcam_asks.lock().unwrap().push("sink".into());
@@ -590,6 +602,23 @@ impl nectarlink_core::WebcamSink for TestWebcamSink {
             if keyframe { "key" } else { "frame" },
             data.len()
         ));
+    }
+    fn ended(&self) {
+        self.got.lock().unwrap().push("ended".into());
+    }
+}
+
+#[derive(Debug, Default)]
+struct TestMicSink {
+    got: Mutex<Vec<String>>,
+}
+
+impl nectarlink_core::MicSink for TestMicSink {
+    fn config(&self, config: nectarlink_core::MirrorAudioConfig) {
+        self.got.lock().unwrap().push(format!("config {} Hz x{}", config.rate, config.channels));
+    }
+    fn audio(&self, _time_us: u64, data: Vec<u8>) {
+        self.got.lock().unwrap().push(format!("audio {}", data.len()));
     }
     fn ended(&self) {
         self.got.lock().unwrap().push("ended".into());
@@ -5656,6 +5685,77 @@ async fn play_on_phone_needs_a_phone_that_can_watch() {
     let offer = pc.node.offer_watch(phone.node.device_id(), "Chrome".into(), None).await;
     assert!(matches!(offer, Err(Error::Unsupported)), "{offer:?}");
     assert!(phone.platform.watch_offers.lock().unwrap().is_empty());
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_streams_its_microphone_when_its_user_agrees() {
+    use nectarlink_core::{MIC_LISTEN, MIC_STREAM, MirrorAudioConfig, MirrorSend, PacketKind};
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[MIC_LISTEN]).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &[MIC_STREAM]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+
+    // The PC asks; the phone asks its user (the platform), nothing streams yet.
+    with_timeout("mic_start", pc.node.mic_start(phone_id)).await.unwrap();
+    assert_eq!(*phone.platform.mic_asks.lock().unwrap(), ["start"]);
+
+    // The user agreed: the phone streams 48 kHz mono.
+    let stream = Arc::new(with_timeout("mic_open", phone.node.mic_open(pc_id)).await.unwrap());
+    let config = MirrorAudioConfig { codec: nectarlink_core::MIRROR_PCM.into(), rate: 48_000, channels: 1 };
+    let sender = stream.clone();
+    let sent = tokio::task::spawn_blocking(move || {
+        [
+            sender.send(PacketKind::Config, 0, config.to_cbor()),
+            sender.send(PacketKind::Frame, 10_000, vec![0u8; 960]),
+            sender.send(PacketKind::Frame, 20_000, vec![1u8; 960]),
+        ]
+    })
+    .await
+    .unwrap();
+    assert!(sent.iter().all(|s| *s == MirrorSend::Queued), "{sent:?}");
+    wait_for(&mut pc, "mic on", |e| matches!(e, NodeEvent::Mic { on: true, .. }).then_some(())).await;
+    let deadline = std::time::Instant::now() + WAIT;
+    while pc.platform.mic.got.lock().unwrap().len() < 3 {
+        assert!(std::time::Instant::now() < deadline, "{:?}", pc.platform.mic.got.lock().unwrap());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(pc.platform.mic.got.lock().unwrap()[..3], ["config 48000 Hz x1", "audio 960", "audio 960"]);
+
+    // The PC stops listening: the phone is told to stop recording.
+    pc.node.mic_stop(phone_id).await;
+    wait_for(&mut pc, "mic off", |e| matches!(e, NodeEvent::Mic { on: false, .. }).then_some(())).await;
+    let deadline = std::time::Instant::now() + WAIT;
+    while !phone.platform.mic_asks.lock().unwrap().contains(&"stop".to_owned()) {
+        assert!(std::time::Instant::now() < deadline, "the phone wasn't told to stop");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    // With the microphone off for the PC on the phone, the PC's ask is refused.
+    phone.node.set_device_toggle(pc_id, "mic", false).unwrap();
+    let denied = pc.node.mic_start(phone_id).await;
+    assert!(matches!(denied, Err(Error::Denied)), "{denied:?}");
+    assert_eq!(phone.platform.mic_asks.lock().unwrap().iter().filter(|a| *a == "start").count(), 1);
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pc_without_mic_listen_refuses_a_phones_microphone() {
+    use nectarlink_core::{MIC_STREAM, MirrorAudioConfig, PacketKind};
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[]).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &[MIC_STREAM]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let stream = Arc::new(with_timeout("mic_open", phone.node.mic_open(pc.node.device_id())).await.unwrap());
+    let config = MirrorAudioConfig { codec: nectarlink_core::MIRROR_PCM.into(), rate: 48_000, channels: 1 };
+    let sender = stream.clone();
+    tokio::task::spawn_blocking(move || sender.send(PacketKind::Config, 0, config.to_cbor())).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(pc.platform.mic.got.lock().unwrap().is_empty());
     pc.node.shutdown().await;
     phone.node.shutdown().await;
 }
