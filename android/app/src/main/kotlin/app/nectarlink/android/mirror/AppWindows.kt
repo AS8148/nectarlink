@@ -31,7 +31,6 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
@@ -162,11 +161,8 @@ class AppWindows(
     /** The PC resized an app window: fit to encoder limits and tell the helper. */
     fun resize(pc: String, session: UInt, width: Int, height: Int) {
         val window = windows[pc to session] ?: return
-        val w = width.coerceAtLeast(240)
-        val h = height.coerceAtLeast(240)
-        val scale = minOf(1f, window.maxSize.toFloat() / max(w, h))
-        fun fit(v: Int) = max(240, ((v * scale) / 16).roundToInt() * 16)
-        val (newW, newH) = fit(w) to fit(h)
+        val (phoneW, phoneH) = screen()
+        val (newW, newH) = WindowShape.fit(width, height, window.maxSize, phoneW, phoneH)
         if (newW == window.width && newH == window.height) return
         window.width = newW
         window.height = newH
@@ -187,10 +183,10 @@ class AppWindows(
         Elevated.handleOn(window.display, window.width.toFloat(), window.height.toFloat(), event)
     }
 
-    /** The phone's screen size scaled to fit [maxSize] (multiples of 16, for encoders), and its density likewise. */
-    private fun size(maxSize: Int): Triple<Int, Int, Int> {
+    /** The phone's screen, in pixels. */
+    private fun screen(): Pair<Int, Int> {
         val windows = context.getSystemService(WindowManager::class.java)
-        val (w, h) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             windows.maximumWindowMetrics.bounds.let { it.width() to it.height() }
         } else {
             val metrics = android.util.DisplayMetrics()
@@ -198,12 +194,16 @@ class AppWindows(
             windows.defaultDisplay.getRealMetrics(metrics)
             metrics.widthPixels to metrics.heightPixels
         }
-        // Upright, like a phone held normally.
+    }
+
+    /** The phone's screen shape scaled to fit [maxSize] (see [WindowShape]), upright, and its density likewise. */
+    private fun size(maxSize: Int): Triple<Int, Int, Int> {
+        val (w, h) = screen()
         val (shortSide, longSide) = minOf(w, h) to maxOf(w, h)
-        val scale = minOf(1f, maxSize.coerceAtLeast(320).toFloat() / longSide)
-        fun fit(v: Int) = max(16, ((v * scale) / 16).toInt() * 16)
+        val (fitW, fitH) = WindowShape.fit(shortSide, longSide, maxSize.coerceAtLeast(320), w, h)
+        val scale = fitH.toFloat() / longSide
         val dpi = (context.resources.displayMetrics.densityDpi * scale).roundToInt().coerceIn(120, 640)
-        return Triple(fit(shortSide), fit(longSide), dpi)
+        return Triple(fitW, fitH, dpi)
     }
 
     /** The PC turned keeping the phone awake, or its screen off, on or off. */
