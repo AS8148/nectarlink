@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 <#
 .SYNOPSIS
-    Runs the same checks as CI: formatting, lints, tests, license headers,
-    generated files and the dependency policy. Exits non-zero if any step
+    Runs the same checks as CI: formatting, lints, tests (the QML ones too),
+    license headers, generated files and the dependency policy. Exits non-zero if any step
     fails.
 
 .DESCRIPTION
@@ -60,6 +60,7 @@ try {
     Invoke-Step "Clippy" { cargo clippy --workspace --all-targets --locked -- -D warnings }
     if (-not $Fast) {
         Invoke-Step "Tests" { cargo test --workspace --locked }
+        Invoke-Step "QML tests" { & (Join-Path $PSScriptRoot "qml-tests.ps1") }
     }
     Invoke-Step "License headers" { & (Join-Path $PSScriptRoot "check-headers.ps1") }
     Invoke-Step "Generated files" { cargo xtask tokens --check }

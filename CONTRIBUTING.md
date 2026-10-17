@@ -46,6 +46,12 @@ Before opening a pull request, run the same checks as CI:
 ./scripts/check.ps1
 ```
 
+The desktop app's shared QML components have tests in
+`desktop/app/tests/qml` (`tst_*.qml`, Qt Quick Test), which check.ps1 runs
+through `./scripts/qml-tests.ps1`. The Rust singletons the components read
+are stubbed in `desktop/app/tests/qml/stubs`; a test that needs one more
+adds it there.
+
 ## Ground rules for code
 
 These come from the plan and will grow into a full style guide:

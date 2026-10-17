@@ -68,6 +68,9 @@ jobs:
         run: cargo clippy --locked -p nectarlink-desktop -p nectarlink-vcam -p s1-qt-rust --all-targets -- -D warnings
       - name: Tests
         run: cargo test --locked -p nectarlink-desktop -p nectarlink-vcam
+      - name: QML tests
+        shell: pwsh
+        run: ./scripts/qml-tests.ps1
       - name: Release build
         run: cargo build --locked --release -p nectarlink-desktop -p nectarlink-vcam
       - name: Install NSIS
