@@ -590,6 +590,11 @@ pub(crate) async fn open(shared: &Arc<Shared>, session: &Session, audio: bool) -
     Ok(MirrorStream::spawn_stream(send, recv, audio, on_end))
 }
 
+/// Send priorities: sound before video, as a gap in it is the more
+/// noticeable; both after the control stream (`session::CONTROL_PRIORITY`).
+pub(crate) const VIDEO_PRIORITY: i32 = 1;
+pub(crate) const AUDIO_PRIORITY: i32 = 2;
+
 impl MirrorStream {
     pub(crate) fn spawn_stream(
         mut send: SendStream,
@@ -597,9 +602,8 @@ impl MirrorStream {
         audio: bool,
         on_end: Option<(Arc<Shared>, i64, std::time::Instant)>,
     ) -> MirrorStream {
-        // Sound and video go out as soon as they're written; sound first, as a
-        // gap in it is the more noticeable.
-        let _ = send.set_priority(if audio { 2 } else { 1 });
+        // Sound and video go out as soon as they're written; sound first.
+        let _ = send.set_priority(if audio { AUDIO_PRIORITY } else { VIDEO_PRIORITY });
         let (queue, mut packets) =
             mpsc::channel::<(PacketKind, u64, Vec<u8>)>(if audio { AUDIO_QUEUE } else { QUEUE });
         let closed = Arc::new(AtomicBool::new(false));

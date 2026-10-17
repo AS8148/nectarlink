@@ -336,7 +336,16 @@ impl Session {
     }
 }
 
+/// The control stream goes out before media streams ([`crate::mirror`]):
+/// with a few app windows filling the link, heartbeats queued behind video
+/// timed out and closed a live session.
+const CONTROL_PRIORITY: i32 = 8;
+const _: () = assert!(
+    CONTROL_PRIORITY > crate::mirror::AUDIO_PRIORITY && CONTROL_PRIORITY > crate::mirror::VIDEO_PRIORITY
+);
+
 async fn writer(mut send: SendStream, mut outbox: mpsc::Receiver<Envelope>) {
+    let _ = send.set_priority(CONTROL_PRIORITY);
     while let Some(env) = outbox.recv().await {
         if let Err(e) = write_frame(&mut send, &env.to_cbor()).await {
             tracing::debug!(error = %e, "control stream write failed");
