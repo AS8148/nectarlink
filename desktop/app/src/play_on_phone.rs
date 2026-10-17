@@ -12,7 +12,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use nectarlink_core::{DeviceId, Error, FeatureState, LinkState, MediaAction, PlayOnPhone};
@@ -38,6 +38,87 @@ pub fn phone() -> Option<(DeviceId, String)> {
         };
         online.iter().find(|d| watches(&d.id)).or_else(|| online.first()).map(|d| (d.id, d.info.name.clone()))
     })
+}
+
+/// Apps (by player ID or name) that play music, never a video worth
+/// watching on a phone, unless they say otherwise.
+const MUSIC_APPS: &[&str] = &[
+    "spotify",
+    "applemusic",
+    "itunes",
+    "zunemusic",
+    "foobar2000",
+    "musicbee",
+    "aimp",
+    "winamp",
+    "tidal",
+    "deezer",
+    "amazonmusic",
+    "youtube music",
+    "soundcloud",
+];
+
+/// Whether a player looks like it plays a video: it says so, or it is
+/// anything but a music app (browsers say "music" for every video).
+pub(crate) fn plays_video(id: &str, app: &str, says_video: bool) -> bool {
+    if says_video {
+        return true;
+    }
+    let (id, app) = (id.to_ascii_lowercase(), app.to_ascii_lowercase());
+    !MUSIC_APPS.iter().any(|m| id.contains(m) || app.contains(m))
+}
+
+/// The player of this PC's to offer for Play on phone: the first one playing
+/// a video.
+pub fn watchable() -> Option<String> {
+    crate::media::local_views()
+        .into_iter()
+        .map(|v| v.player)
+        .find(|p| p.playing && plays_video(&p.id, &p.app, crate::win::media_sessions::says_video(&p.id)))
+        .map(|p| p.id)
+}
+
+/// When a phone was last asked to watch (its notification is up).
+static ASKED: Mutex<Option<Instant>> = Mutex::new(None);
+/// How long a phone has to accept before the toggle gives up waiting.
+const ASK_FOR: Duration = Duration::from_secs(60);
+
+/// Where Play on phone is: `"off"`, `"asking"` (the phone's notification
+/// is up) or `"watching"`.
+pub fn state() -> &'static str {
+    if crate::pc_mirror::is_watching() {
+        *ASKED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        return "watching";
+    }
+    match *ASKED.lock().unwrap_or_else(|e| e.into_inner()) {
+        Some(at) if at.elapsed() < ASK_FOR => "asking",
+        _ => "off",
+    }
+}
+
+fn asked() {
+    *ASKED.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+    core_host::host().hub.changed(crate::state::Changes::MEDIA);
+    // The toggle stops waiting when the phone doesn't answer.
+    core_host::spawn(async {
+        tokio::time::sleep(ASK_FOR).await;
+        core_host::host().hub.changed(crate::state::Changes::MEDIA);
+    });
+}
+
+/// The Play on phone toggle: on plays the video playing now on the phone;
+/// off stops the phone watching (or waiting to).
+pub fn set_on(on: bool) {
+    if on {
+        match watchable() {
+            Some(player) => play(player),
+            None => core_host::host().hub.changed(crate::state::Changes::MEDIA),
+        }
+        return;
+    }
+    *ASKED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    crate::pc_mirror::stop_watching();
+    core_host::host().hub.changed(crate::state::Changes::MEDIA);
 }
 
 /// What this PC's `player` plays: its title, and where it is, in seconds.
@@ -89,6 +170,7 @@ pub fn play(player: String) {
                     let shown = (!title.is_empty()).then_some(title);
                     match node.offer_watch(phone, player.clone(), shown).await {
                         Ok(()) => {
+                            asked();
                             show_message(tr!("PlayOnPhone", "Tap the notification on %1 to watch.", name))
                         }
                         // A phone that can't watch yet: the page opens there instead.
@@ -224,5 +306,21 @@ impl Watched {
 impl Drop for Watched {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plays_video;
+
+    #[test]
+    fn music_apps_are_not_offered_unless_they_say_video() {
+        assert!(plays_video("chrome", "YouTube", false), "a browser's video says music");
+        assert!(plays_video("F0DC299D809B9700", "Zen", false));
+        assert!(plays_video(r"C:/Program Files/VideoLAN/VLC/vlc.exe", "vlc", false));
+        assert!(!plays_video("Spotify.exe", "Spotify", false));
+        assert!(!plays_video("chrome", "YouTube Music", false), "named by its site");
+        assert!(!plays_video("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic", "Media Player", false));
+        assert!(plays_video("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic", "Media Player", true));
     }
 }

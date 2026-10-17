@@ -44,6 +44,10 @@ pub mod qobject {
         #[qproperty(QString, active_colors, cxx_name = "activeColors")]
         /// The phone Play on phone plays on (its name), or "" when none is online.
         #[qproperty(QString, play_on_phone_name, cxx_name = "playOnPhoneName")]
+        /// Whether a video plays on this PC that Play on phone can take.
+        #[qproperty(bool, can_play_on_phone, cxx_name = "canPlayOnPhone")]
+        /// Play on phone: "off", "asking" (the phone's notification is up) or "watching".
+        #[qproperty(QString, play_on_phone_state, cxx_name = "playOnPhoneState")]
         type MediaList = super::MediaListRust;
     }
 
@@ -101,6 +105,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "isPlaying"]
         fn is_playing(self: &MediaList, row: i32) -> bool;
+        /// The Play on phone toggle.
+        #[qinvokable]
+        #[cxx_name = "setPlayOnPhone"]
+        fn set_play_on_phone(self: &MediaList, on: bool);
     }
 
     impl cxx_qt::Threading for MediaList {}
@@ -114,6 +122,8 @@ pub struct MediaListRust {
     active_art: QString,
     active_colors: QString,
     play_on_phone_name: QString,
+    can_play_on_phone: bool,
+    play_on_phone_state: QString,
     rows: Vec<PlayerView>,
 }
 
@@ -186,7 +196,7 @@ impl cxx_qt::Initialize for qobject::MediaList {
     fn initialize(self: Pin<&mut Self>) {
         super::subscribe(
             self.qt_thread(),
-            Changes::MEDIA | Changes::DEVICES | Changes::CAPABILITIES,
+            Changes::MEDIA | Changes::DEVICES | Changes::CAPABILITIES | Changes::REMOTE,
             Self::refresh,
         );
     }
@@ -243,8 +253,20 @@ impl qobject::MediaList {
         if *self.play_on_phone_name() != phone {
             self.as_mut().set_play_on_phone_name(phone);
         }
+        let can = !self.play_on_phone_name().is_empty() && crate::play_on_phone::watchable().is_some();
+        if self.can_play_on_phone != can {
+            self.as_mut().set_can_play_on_phone(can);
+        }
+        let watch = QString::from(crate::play_on_phone::state());
+        if *self.play_on_phone_state() != watch {
+            self.as_mut().set_play_on_phone_state(watch);
+        }
         let revision = self.revision.wrapping_add(1);
         self.set_revision(revision);
+    }
+
+    pub fn set_play_on_phone(&self, on: bool) {
+        crate::play_on_phone::set_on(on);
     }
 
     pub fn first_for(&self, device: &QString) -> i32 {

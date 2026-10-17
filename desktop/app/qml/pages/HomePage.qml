@@ -2007,64 +2007,29 @@ Item {
                         }
                     }
 
-                    Rectangle {
-                        id: pcSpeakerBar
+                    SwitchBar {
                         width: parent.width
-                        height: 44
-                        radius: Theme.radiusMd
-                        color: Preferences.streamPcAudioToPhone
-                            ? (Theme.graphite ? Theme.surfaceContent : Theme.secondaryContainer)
-                            : (Theme.graphite ? "transparent" : Theme.surfaceContainerHigh)
-                        border.width: Theme.graphite || Preferences.streamPcAudioToPhone ? 1 : 0
-                        border.color: Preferences.streamPcAudioToPhone ? Theme.primary : Theme.outlineVariant
-                        Row {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 12
-                            anchors.right: pcSpeakerSwitch.left
-                            anchors.rightMargin: 8
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 10
-                            Icon {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 17; height: 17
-                                path: Icons.speaker
-                                color: Preferences.streamPcAudioToPhone
-                                    ? (Theme.graphite ? Theme.surface : Theme.secondaryContainerContent)
-                                    : Theme.surfaceContent
-                            }
-                            Column {
-                                width: parent.width - 27
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 1
-                                Txt {
-                                    width: parent.width
-                                    role: "label"
-                                    elide: Text.ElideRight
-                                    color: Preferences.streamPcAudioToPhone
-                                        ? (Theme.graphite ? Theme.surface : Theme.secondaryContainerContent)
-                                        : Theme.surfaceContent
-                                    text: qsTr("Phone as speaker")
-                                }
-                                Txt {
-                                    visible: Preferences.streamPcAudioToPhone
-                                    width: parent.width
-                                    role: "caption"
-                                    elide: Text.ElideRight
-                                    color: Theme.graphite ? Theme.surface : Theme.secondaryContainerContent
-                                    opacity: 0.85
-                                    text: qsTr("Streaming PC audio")
-                                }
-                            }
-                        }
-                        Toggle {
-                            id: pcSpeakerSwitch
-                            anchors.right: parent.right
-                            anchors.rightMargin: 10
-                            anchors.verticalCenter: parent.verticalCenter
-                            label: qsTr("Phone as speaker")
-                            checked: Preferences.streamPcAudioToPhone
-                            onToggled: (on) => Preferences.streamPcAudioToPhone = on
-                        }
+                        iconPath: Icons.speaker
+                        title: qsTr("Phone as speaker")
+                        caption: checked ? qsTr("Streaming PC audio") : ""
+                        checked: Preferences.streamPcAudioToPhone
+                        onToggled: (on) => Preferences.streamPcAudioToPhone = on
+                    }
+
+                    // Play on phone: the video playing on this PC, on the phone.
+                    // Greyed out until a video plays.
+                    SwitchBar {
+                        readonly property string watch: MediaList.playOnPhoneState
+                        width: parent.width
+                        iconPath: Icons.video
+                        title: qsTr("Play on phone")
+                        enabled: watch !== "off" || MediaList.canPlayOnPhone
+                        checked: watch !== "off"
+                        caption: watch === "watching" ? qsTr("Watching on %1").arg(MediaList.playOnPhoneName)
+                            : watch === "asking" ? qsTr("Tap the notification on %1").arg(MediaList.playOnPhoneName)
+                            : MediaList.canPlayOnPhone ? ""
+                            : qsTr("Play a video on this PC first")
+                        onToggled: (on) => MediaList.setPlayOnPhone(on)
                     }
 
                     LockChip {

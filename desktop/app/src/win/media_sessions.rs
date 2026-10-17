@@ -20,6 +20,7 @@ use windows::{
         GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
         GlobalSystemMediaTransportControlsSessionPlaybackStatus,
     },
+    Media::MediaPlaybackType,
     Storage::Streams::DataReader,
     Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx},
     core::HSTRING,
@@ -38,6 +39,14 @@ const WINDOWS_TO_UNIX_SECS: i64 = 11_644_473_600;
 type OnChange = Box<dyn Fn(Vec<MediaPlayer>) + Send + Sync>;
 
 static MANAGER: OnceLock<GlobalSystemMediaTransportControlsSessionManager> = OnceLock::new();
+/// Players that say they play a video (most browsers say "music" for
+/// everything, so this is a hint, not the whole answer).
+static VIDEO: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Whether this PC's player `id` says it plays a video.
+pub fn says_video(id: &str) -> bool {
+    VIDEO.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|v| v.contains(id))
+}
 
 /// Watches this PC's media; `on_change` gets every player after each
 /// change (on the watcher's thread).
@@ -225,6 +234,17 @@ fn player(
     let album = text(properties.AlbumTitle()).filter(|a| !is_opaque_id(a));
     if title.is_none() {
         return Ok(None);
+    }
+    let video =
+        properties.PlaybackType().and_then(|t| t.Value()).is_ok_and(|t| t == MediaPlaybackType::Video);
+    {
+        let mut guard = VIDEO.lock().unwrap_or_else(|e| e.into_inner());
+        let set = guard.get_or_insert_default();
+        if video {
+            set.insert(id.clone());
+        } else {
+            set.remove(&id);
+        }
     }
     let info = session.GetPlaybackInfo()?;
     let playing = info.PlaybackStatus()? == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;

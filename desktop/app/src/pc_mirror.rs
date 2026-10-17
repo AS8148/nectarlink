@@ -89,6 +89,20 @@ pub fn is_active() -> bool {
     active_peer().is_some()
 }
 
+/// Whether a phone watches one of this PC's players (Play on phone).
+pub fn is_watching() -> bool {
+    ACTIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|s| s.watching)
+}
+
+/// Stops a phone watching one of this PC's players; screen sharing goes on.
+pub fn stop_watching() {
+    let peer =
+        ACTIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|s| s.watching).map(|s| s.peer);
+    if let Some(peer) = peer {
+        stop_for(&peer);
+    }
+}
+
 /// Starts or replaces the active PC-to-phone screen mirror stream for `peer`.
 pub fn start(peer: DeviceId, options: MirrorStart) {
     stop_all();
@@ -173,8 +187,7 @@ pub fn handle_input(peer: &DeviceId, session: u32, input: MirrorInput) {
     if session != nectarlink_core::MIRROR_SCREEN {
         return;
     }
-    let watching = ACTIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|s| s.watching);
-    if active_peer() != Some(*peer) || watching {
+    if active_peer() != Some(*peer) || is_watching() {
         return;
     }
     let remote_input_on = core_host::node()
