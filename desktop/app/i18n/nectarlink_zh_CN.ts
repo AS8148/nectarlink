@@ -2,6 +2,69 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="zh_CN" sourcelanguage="en">
 <context>
+    <name>App</name>
+    <message>
+        <location filename="rust_strings.h" line="7"/>
+        <source>Already on clipboard.</source>
+        <translation>已在剪贴板上。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="8"/>
+        <source>Copied to clipboard.</source>
+        <translation>已复制到剪贴板。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="9"/>
+        <source>Could not copy to the clipboard.</source>
+        <translation>无法复制到剪贴板。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="10"/>
+        <source>No phone is paired yet.</source>
+        <translation>尚未配对手机。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="11"/>
+        <source>Send cancelled</source>
+        <translation>已取消发送</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="12"/>
+        <source>Sending to %1…</source>
+        <translation>正在发送到 %1…</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="13"/>
+        <source>Sent text to %1.</source>
+        <translation>已将文本发送到 %1。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="14"/>
+        <source>Some history couldn&apos;t be cleared. Try again.</source>
+        <translation>部分历史记录无法清除，请重试。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="15"/>
+        <source>Some messages couldn&apos;t be cleared. Try again.</source>
+        <translation>部分消息无法清除，请重试。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="16"/>
+        <source>That file is no longer in its saved location.</source>
+        <translation>该文件已不在保存的位置。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="17"/>
+        <source>The photo couldn&apos;t be copied to the clipboard.</source>
+        <translation>无法将照片复制到剪贴板。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="18"/>
+        <source>The received file history couldn&apos;t be cleared. Try again.</source>
+        <translation>无法清除已接收文件的历史记录，请重试。</translation>
+    </message>
+</context>
+<context>
     <name>AppsPage</name>
     <message>
         <location filename="../qml/pages/AppsPage.qml" line="79"/>
@@ -189,6 +252,14 @@
         <location filename="../qml/components/CallCard.qml" line="301"/>
         <source>Call volume up</source>
         <translation>提高通话音量</translation>
+    </message>
+</context>
+<context>
+    <name>Calls</name>
+    <message>
+        <location filename="rust_strings.h" line="19"/>
+        <source>That call is over.</source>
+        <translation>该通话已结束。</translation>
     </message>
 </context>
 <context>
@@ -499,6 +570,69 @@
     </message>
 </context>
 <context>
+    <name>Clipboard</name>
+    <message>
+        <location filename="rust_strings.h" line="20"/>
+        <source>Copied from %1.</source>
+        <translation>已从 %1 复制。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="21"/>
+        <source>Copied to clipboard</source>
+        <translation>已复制到剪贴板</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="22"/>
+        <source>Sending copied files to %1…</source>
+        <translation>正在将复制的文件发送到 %1…</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="23"/>
+        <source>Sent to %1.</source>
+        <translation>已发送到 %1。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="24"/>
+        <source>That clip is no longer in clipboard history.</source>
+        <translation>该剪贴内容已不在剪贴板历史中。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="25"/>
+        <source>That image can&apos;t be read.</source>
+        <translation>无法读取该图片。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="26"/>
+        <source>That image is too large to send.</source>
+        <translation>该图片太大，无法发送。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="27"/>
+        <source>That&apos;s too much text to send at once.</source>
+        <translation>文本太多，无法一次发送。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="28"/>
+        <source>The clipboard is turned off for %1.</source>
+        <translation>已为 %1 关闭剪贴板。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="29"/>
+        <source>There&apos;s no text, image, or file on the clipboard.</source>
+        <translation>剪贴板上没有文本、图片或文件。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="30"/>
+        <source>Update NectarLink on %1 to send it images.</source>
+        <translation>请更新 %1 上的 NectarLink 以向其发送图片。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="31"/>
+        <source>What you copied is marked private by its app, so it wasn&apos;t sent.</source>
+        <translation>你复制的内容被其应用标记为私密，因此未发送。</translation>
+    </message>
+</context>
+<context>
     <name>CommandPalette</name>
     <message>
         <location filename="../qml/components/CommandPalette.qml" line="129"/>
@@ -544,6 +678,72 @@
         <location filename="../qml/components/CommandPalette.qml" line="403"/>
         <source>%1 · %2 ms</source>
         <translation>%1 · %2 毫秒</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="32"/>
+        <source>Calling %1 on %2…</source>
+        <translation>正在通过 %2 呼叫 %1…</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="33"/>
+        <source>Opened Recordings folder. Start a voice note in NectarLink on %1 to send it here.</source>
+        <translation>已打开录音文件夹。在 %1 上的 NectarLink 中开始语音备忘，即可发送到这里。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="34"/>
+        <source>Ringing %1…</source>
+        <translation>正在让 %1 响铃…</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="35"/>
+        <source>Starting phone webcam…</source>
+        <translation>正在启动手机摄像头…</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="36"/>
+        <source>Stopped phone webcam.</source>
+        <translation>已停止手机摄像头。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="37"/>
+        <source>Syncing devices…</source>
+        <translation>正在同步设备…</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="38"/>
+        <source>That file is no longer in its saved location.</source>
+        <translation>该文件已不在保存的位置。</translation>
+    </message>
+</context>
+<context>
+    <name>ContinuityCamera</name>
+    <message>
+        <location filename="rust_strings.h" line="39"/>
+        <source>Couldn’t copy image to clipboard: %1</source>
+        <translation>无法将图片复制到剪贴板：%1</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="40"/>
+        <source>Image is on your clipboard. Press Ctrl+V in your target app.</source>
+        <translation>图片已在剪贴板上。在目标应用中按 Ctrl+V。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="41"/>
+        <source>Pair your phone first to take a photo or scan a document.</source>
+        <translation>请先配对手机，再拍照或扫描文档。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="42"/>
+        <source>Pasted into %1</source>
+        <translation>已粘贴到 %1</translation>
+    </message>
+</context>
+<context>
+    <name>CoreHost</name>
+    <message>
+        <location filename="rust_strings.h" line="43"/>
+        <source>Dropped %1 queued item(s) for %2 (device unpaired).</source>
+        <translation>已为 %2 丢弃 %1 个排队项目（设备已取消配对）。</translation>
     </message>
 </context>
 <context>
@@ -964,6 +1164,39 @@
     </message>
 </context>
 <context>
+    <name>Errors</name>
+    <message>
+        <location filename="rust_strings.h" line="44"/>
+        <source>Something went wrong: %1</source>
+        <translation>出现问题：%1</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="45"/>
+        <source>That device isn&apos;t paired anymore.</source>
+        <translation>该设备已不再配对。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="46"/>
+        <source>The device declined.</source>
+        <translation>设备已拒绝。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="47"/>
+        <source>The device didn&apos;t answer in time.</source>
+        <translation>设备未及时响应。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="48"/>
+        <source>The device isn&apos;t connected right now.</source>
+        <translation>设备当前未连接。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="49"/>
+        <source>The device&apos;s app doesn&apos;t support that yet.</source>
+        <translation>设备上的应用尚不支持此功能。</translation>
+    </message>
+</context>
+<context>
     <name>FeaturesGuidePage</name>
     <message>
         <location filename="../qml/pages/FeaturesGuidePage.qml" line="91"/>
@@ -1162,6 +1395,19 @@
         <location filename="../qml/pages/FeaturesGuidePage.qml" line="1111"/>
         <source>Close</source>
         <translation>关闭</translation>
+    </message>
+</context>
+<context>
+    <name>FolderSync</name>
+    <message>
+        <location filename="rust_strings.h" line="50"/>
+        <source>Folders are up to date.</source>
+        <translation>文件夹已是最新。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="51"/>
+        <source>Synced %1 file(s).</source>
+        <translation>已同步 %1 个文件。</translation>
     </message>
 </context>
 <context>
@@ -2121,6 +2367,69 @@
     </message>
 </context>
 <context>
+    <name>Links</name>
+    <message>
+        <location filename="rust_strings.h" line="52"/>
+        <source>%1: tap the notification on your phone to continue watching.</source>
+        <translation>%1：轻触手机上的通知以继续观看。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="53"/>
+        <source>%1: tap the notification on your phone to open in Maps.</source>
+        <translation>%1：轻触手机上的通知以在地图中打开。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="54"/>
+        <source>Copy a link or address first</source>
+        <translation>请先复制链接或地址</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="55"/>
+        <source>Copy a web link (https://…), geo: URI, or street address, then choose this again.</source>
+        <translation>复制网页链接（https://…）、geo: URI 或街道地址，然后再次选择此项。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="56"/>
+        <source>Copy a web link, video URL, or street address, then choose this again to open it on your phone.</source>
+        <translation>复制网页链接、视频网址或街道地址，然后再次选择此项，即可在手机上打开。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="57"/>
+        <source>Couldn&apos;t send it</source>
+        <translation>无法发送</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="58"/>
+        <source>No phone to open it on</source>
+        <translation>没有可打开它的手机</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="59"/>
+        <source>Pair a phone first, or enable opening links on your phone.</source>
+        <translation>请先配对手机，或在手机上启用打开链接。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="60"/>
+        <source>Sent to %1</source>
+        <translation>已发送到 %1</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="61"/>
+        <source>Tap the notification on your phone to open it.</source>
+        <translation>轻触手机上的通知以打开。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="62"/>
+        <source>That&apos;s not a link or address</source>
+        <translation>这不是链接或地址</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="63"/>
+        <source>Update NectarLink on %1.</source>
+        <translation>请更新 %1 上的 NectarLink。</translation>
+    </message>
+</context>
+<context>
     <name>LockChip</name>
     <message>
         <location filename="../qml/components/LockChip.qml" line="15"/>
@@ -2404,6 +2713,32 @@
         <location filename="../qml/MainWindow.qml" line="977"/>
         <source>Paste into active window</source>
         <translation>粘贴到当前窗口</translation>
+    </message>
+</context>
+<context>
+    <name>Media</name>
+    <message>
+        <location filename="rust_strings.h" line="64"/>
+        <source>Media is turned off for that device.</source>
+        <translation>已为该设备关闭媒体。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="65"/>
+        <source>That player can&apos;t do that.</source>
+        <translation>该播放器无法执行此操作。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="66"/>
+        <source>That player isn&apos;t playing anymore.</source>
+        <translation>该播放器已不再播放。</translation>
+    </message>
+</context>
+<context>
+    <name>Messages</name>
+    <message>
+        <location filename="rust_strings.h" line="67"/>
+        <source>Group texts can&apos;t be sent from the PC yet.</source>
+        <translation>暂不支持从电脑发送群组短信。</translation>
     </message>
 </context>
 <context>
@@ -2720,6 +3055,39 @@
     </message>
 </context>
 <context>
+    <name>Mirror</name>
+    <message>
+        <location filename="rust_strings.h" line="68"/>
+        <source>Couldn&apos;t start recording.</source>
+        <translation>无法开始录制。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="69"/>
+        <source>Saved %1 to Downloads\Nectarlink.</source>
+        <translation>已将 %1 保存到 Downloads\Nectarlink。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="70"/>
+        <source>Screenshot copied to clipboard.</source>
+        <translation>截图已复制到剪贴板。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="71"/>
+        <source>The screenshot couldn&apos;t be copied to the clipboard.</source>
+        <translation>无法将截图复制到剪贴板。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="72"/>
+        <source>The screenshot couldn&apos;t be saved.</source>
+        <translation>无法保存截图。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="73"/>
+        <source>Wait for the screen to appear first.</source>
+        <translation>请等待屏幕先显示出来。</translation>
+    </message>
+</context>
+<context>
     <name>MirrorWindow</name>
     <message>
         <location filename="../qml/MirrorWindow.qml" line="24"/>
@@ -2946,6 +3314,14 @@
         <location filename="../qml/components/NotificationItem.qml" line="643"/>
         <source>Dismiss</source>
         <translation>忽略</translation>
+    </message>
+</context>
+<context>
+    <name>Notifications</name>
+    <message>
+        <location filename="rust_strings.h" line="74"/>
+        <source>Code copied</source>
+        <translation>已复制验证码</translation>
     </message>
 </context>
 <context>
@@ -3217,6 +3593,77 @@
         <location filename="../qml/pages/PairingPanel.qml" line="353"/>
         <source>Cancel</source>
         <translation>取消</translation>
+    </message>
+</context>
+<context>
+    <name>PhoneMic</name>
+    <message>
+        <location filename="rust_strings.h" line="75"/>
+        <source>Tap Start on %1 to use its microphone.</source>
+        <translation>在 %1 上轻触“开始”以使用其麦克风。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="76"/>
+        <source>The microphone is turned off for this PC on %1.</source>
+        <translation>%1 上已为此电脑关闭麦克风。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="77"/>
+        <source>Update NectarLink on %1 to use its microphone.</source>
+        <translation>请更新 %1 上的 NectarLink 以使用其麦克风。</translation>
+    </message>
+</context>
+<context>
+    <name>Photos</name>
+    <message>
+        <location filename="rust_strings.h" line="78"/>
+        <source>Copied to clipboard.</source>
+        <translation>已复制到剪贴板。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="79"/>
+        <source>No recent photos found on the phone.</source>
+        <translation>手机上没有最近的照片。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="80"/>
+        <source>Opening latest photo…</source>
+        <translation>正在打开最新照片…</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="81"/>
+        <source>Saved %1 items to %2.</source>
+        <translation>已将 %1 个项目保存到 %2。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="82"/>
+        <source>Saved %1 to %2.</source>
+        <translation>已将 %1 保存到 %2。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="83"/>
+        <source>That photo isn&apos;t on the phone anymore.</source>
+        <translation>该照片已不在手机上。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="84"/>
+        <source>The phone doesn&apos;t share photos or files with this PC.</source>
+        <translation>手机未与此电脑共享照片或文件。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="85"/>
+        <source>The phone isn&apos;t connected right now.</source>
+        <translation>手机当前未连接。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="86"/>
+        <source>The photo couldn&apos;t be copied to the clipboard.</source>
+        <translation>无法将照片复制到剪贴板。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="87"/>
+        <source>The photo couldn&apos;t be copied. It&apos;s in Downloads\Nectarlink.</source>
+        <translation>无法复制照片。它在 Downloads\Nectarlink 中。</translation>
     </message>
 </context>
 <context>
@@ -3492,6 +3939,39 @@
     </message>
 </context>
 <context>
+    <name>PlayOnPhone</name>
+    <message>
+        <location filename="rust_strings.h" line="88"/>
+        <source>Connect your phone to play on it.</source>
+        <translation>请连接手机后再在其上播放。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="89"/>
+        <source>Media is turned off for %1.</source>
+        <translation>已为 %1 关闭媒体。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="90"/>
+        <source>Opening in %1 on %2. Tap the notification there.</source>
+        <translation>正在 %2 上用 %1 打开。请轻触那里的通知。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="91"/>
+        <source>Sent to %1. Tap the notification there.</source>
+        <translation>已发送到 %1。请轻触那里的通知。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="92"/>
+        <source>Tap the notification on %1 to watch.</source>
+        <translation>轻触 %1 上的通知即可观看。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="93"/>
+        <source>Update NectarLink on %1 to play on it.</source>
+        <translation>请更新 %1 上的 NectarLink 以在其上播放。</translation>
+    </message>
+</context>
+<context>
     <name>SadBee</name>
     <message>
         <location filename="../qml/setup/SadBee.qml" line="23"/>
@@ -3695,7 +4175,7 @@
     </message>
     <message>
         <location filename="../qml/pages/SettingsPage.qml" line="155"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1024"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1044"/>
         <source>Calls</source>
         <translation>通话</translation>
     </message>
@@ -3716,7 +4196,7 @@
     </message>
     <message>
         <location filename="../qml/pages/SettingsPage.qml" line="159"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2035"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2086"/>
         <source>Voice recordings</source>
         <translation>语音录音</translation>
     </message>
@@ -3842,6 +4322,7 @@
     </message>
     <message>
         <location filename="../qml/pages/SettingsPage.qml" line="531"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="894"/>
         <source>System</source>
         <translation>跟随系统</translation>
     </message>
@@ -3921,904 +4402,937 @@
         <translation>用桌面壁纸为窗口着色。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="901"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="904"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="890"/>
+        <source>Language</source>
+        <translation>语言</translation>
+    </message>
+    <message>
+        <location filename="../qml/pages/SettingsPage.qml" line="891"/>
+        <source>NectarLink follows Windows unless you pick one.</source>
+        <translation>除非你另行选择，NectarLink 会跟随 Windows 的语言。</translation>
+    </message>
+    <message>
+        <location filename="../qml/pages/SettingsPage.qml" line="921"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="924"/>
         <source>Start with Windows</source>
         <translation>随 Windows 启动</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="902"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="922"/>
         <source>Launch in the tray when you sign in.</source>
         <translation>登录时在托盘中启动。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="933"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="936"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="953"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="956"/>
         <source>Stay in system tray</source>
         <translation>保持在系统托盘</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="934"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="954"/>
         <source>Keep running when the window is closed.</source>
         <translation>关闭窗口后继续运行。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="961"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="964"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="981"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="984"/>
         <source>Nectar Island</source>
         <translation>Nectar 岛</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="962"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="982"/>
         <source>Top-screen pill for calls, transfers &amp; media.</source>
         <translation>屏幕顶部的胶囊条，用于通话、传输与媒体。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="993"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="996"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1013"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1016"/>
         <source>Battery alerts</source>
         <translation>电池提醒</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="994"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1014"/>
         <source>Notify when phone battery is low or full.</source>
         <translation>手机电量低或充满时通知。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1015"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1035"/>
         <source>Island triggers</source>
         <translation>岛触发条件</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1016"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1036"/>
         <source>Choose when the top pill appears.</source>
         <translation>选择顶部胶囊条何时出现。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1025"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1045"/>
         <source>Transfers</source>
         <translation>传输</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1026"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1046"/>
         <source>Media</source>
         <translation>媒体</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1027"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1047"/>
         <source>Alerts</source>
         <translation>提醒</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1100"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1103"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1120"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1123"/>
         <source>Sync clipboard to phone</source>
         <translation>同步剪贴板到手机</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1101"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1121"/>
         <source>Share copied text and images with your phone.</source>
         <translation>与手机共享复制的文字和图片。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1114"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1117"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1134"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1137"/>
         <source>Clipboard follows control</source>
         <translation>剪贴板跟随控制</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1115"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1135"/>
         <source>Send your clipboard to the phone when you start controlling it, or when the mouse moves into its window.</source>
         <translation>开始控制手机或将鼠标移入其窗口时，把剪贴板发送到手机。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1141"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1144"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1161"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1164"/>
         <source>Copy one-time codes</source>
         <translation>复制一次性验证码</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1142"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1162"/>
         <source>Auto-copy verification codes from texts.</source>
         <translation>自动从短信中复制验证码。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1173"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1176"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1193"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1196"/>
         <source>Copy received files</source>
         <translation>复制收到的文件</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1174"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1194"/>
         <source>Ready to Ctrl+V incoming files anywhere.</source>
         <translation>随时可按 Ctrl+V 粘贴收到的文件。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1189"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1192"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1209"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1212"/>
         <source>Suggest clipboard actions</source>
         <translation>建议剪贴板操作</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1190"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1210"/>
         <source>Open links, maps, numbers &amp; emails from phone clips.</source>
         <translation>打开手机剪贴内容中的链接、地图、号码与邮箱。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1265"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1285"/>
         <source>No phones paired yet</source>
         <translation>尚未配对手机</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1270"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1290"/>
         <source>Pair your phone to get started.</source>
         <translation>配对你的手机即可开始。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1279"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1299"/>
         <source>Pair a phone</source>
         <translation>配对手机</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1320"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1340"/>
         <source>Connected</source>
         <translation>已连接</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1320"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1340"/>
         <source>Not connected</source>
         <translation>未连接</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1332"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="3215"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1352"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3266"/>
         <source>Unpair</source>
         <translation>取消配对</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1420"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1461"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2762"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="3114"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="3127"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1440"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1481"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2813"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3165"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3178"/>
         <source>Open</source>
         <translation>打开</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1516"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1519"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1536"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1539"/>
         <source>Stream PC audio to phone</source>
         <translation>将电脑音频串流到手机</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1517"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1537"/>
         <source>Listen to PC audio through your phone.</source>
         <translation>通过手机收听电脑音频。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1548"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1551"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1568"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1571"/>
         <source>Pause media during calls</source>
         <translation>通话时暂停媒体</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1549"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1569"/>
         <source>Auto-pause PC media when phone rings.</source>
         <translation>手机响铃时自动暂停电脑媒体。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1565"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1583"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1586"/>
+        <source>Mute this PC while a phone watches</source>
+        <translation>手机观看时将此电脑静音</translation>
+    </message>
+    <message>
+        <location filename="../qml/pages/SettingsPage.qml" line="1584"/>
+        <source>With Play on phone, the phone still gets the sound.</source>
+        <translation>使用“在手机上播放”时，手机仍会收到声音。</translation>
+    </message>
+    <message>
+        <location filename="../qml/pages/SettingsPage.qml" line="1599"/>
         <source>Phone as microphone</source>
         <translation>手机作为麦克风</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1567"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1601"/>
         <source>Live from %1, playing into %2.</source>
         <translation>正在接收 %1，播放到 %2。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1569"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1603"/>
         <source>Tap Start on %1.</source>
         <translation>请在 %1 上轻触“开始”。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1571"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1605"/>
         <source>Plays into %1, so apps can pick its other end as a microphone.</source>
         <translation>播放到 %1，应用可以把它的另一端选作麦克风。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1572"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1606"/>
         <source>Plays into %1. To use it as a microphone in other apps, install a virtual audio cable such as VB-CABLE.</source>
         <translation>播放到 %1。要在其他应用中用作麦克风，请安装虚拟音频线，例如 VB-CABLE。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1578"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1612"/>
         <source>Output</source>
         <translation>输出</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1588"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1622"/>
         <source>Start</source>
         <translation>开始</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1588"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1622"/>
         <source>Stop</source>
         <translation>停止</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1600"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1631"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1639"/>
+        <source>Microphone volume</source>
+        <translation>麦克风音量</translation>
+    </message>
+    <message>
+        <location filename="../qml/pages/SettingsPage.qml" line="1632"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1640"/>
+        <source>%1%</source>
+        <translation>%1%</translation>
+    </message>
+    <message>
+        <location filename="../qml/pages/SettingsPage.qml" line="1651"/>
         <source>Virtual camera add-on</source>
         <translation>虚拟摄像头插件</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1602"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1653"/>
         <source>Registered for Zoom, Teams &amp; Meet.</source>
         <translation>已注册到 Zoom、Teams 与 Meet。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1603"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1654"/>
         <source>One-time setup (admin required) for Zoom, Teams &amp; Meet.</source>
         <translation>为 Zoom、Teams 与 Meet 进行一次性设置（需要管理员权限）。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1622"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2961"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1673"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3012"/>
         <source>Ready</source>
         <translation>就绪</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1630"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2116"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2486"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1681"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2167"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2537"/>
         <source>Remove</source>
         <translation>移除</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1630"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1681"/>
         <source>Set up</source>
         <translation>设置</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1641"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1692"/>
         <source>Phone</source>
         <translation>手机</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1676"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1727"/>
         <source>Camera</source>
         <translation>摄像头</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1679"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1730"/>
         <source>Back</source>
         <translation>后置</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1680"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1731"/>
         <source>Front</source>
         <translation>前置</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1710"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1712"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1761"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1763"/>
         <source>Mirror image</source>
         <translation>镜像</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1723"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1774"/>
         <source>Resolution</source>
         <translation>分辨率</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1755"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1806"/>
         <source>Preview · %1</source>
         <translation>预览 · %1</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1756"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1807"/>
         <source>Pair a phone to use its camera as a webcam</source>
         <translation>配对手机即可将其摄像头用作电脑摄像头</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1767"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1818"/>
         <source>Stop webcam</source>
         <translation>停止摄像头</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1768"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1819"/>
         <source>Start webcam</source>
         <translation>启动摄像头</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1824"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1827"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1875"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1878"/>
         <source>Follow phone Do not disturb</source>
         <translation>跟随手机免打扰</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1825"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1876"/>
         <source>Mute pop-ups while phone is on DND.</source>
         <translation>手机处于免打扰时静音弹窗。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1856"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1859"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1907"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1910"/>
         <source>Forward PC notifications</source>
         <translation>转发电脑通知</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1857"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1908"/>
         <source>Send PC alerts to phone while away.</source>
         <translation>离开时把电脑提醒发送到手机。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1870"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1921"/>
         <source>Quiet hours</source>
         <translation>免打扰时段</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1871"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1922"/>
         <source>Configure automatic DND schedule in Windows.</source>
         <translation>在 Windows 中配置自动免打扰时间表。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1875"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1926"/>
         <source>Set a schedule</source>
         <translation>设置时间表</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1919"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1970"/>
         <source>Show</source>
         <translation>显示</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1920"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1971"/>
         <source>No pop-ups</source>
         <translation>不弹出提示</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1921"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="1972"/>
         <source>Hide</source>
         <translation>隐藏</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1962"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1965"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2013"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2016"/>
         <source>File Explorer Send to</source>
         <translation>文件资源管理器“发送到”</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1963"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2014"/>
         <source>Send files from right-click menu.</source>
         <translation>从右键菜单发送文件。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1994"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="1997"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2045"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2048"/>
         <source>Your PC in your pocket</source>
         <translation>口袋里的电脑</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="1995"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2046"/>
         <source>Share Downloads, Documents, Desktop &amp; Pictures.</source>
         <translation>共享下载、文档、桌面和图片文件夹。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2008"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2011"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2059"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2062"/>
         <source>LocalSend on local network</source>
         <translation>局域网内的 LocalSend</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2009"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2060"/>
         <source>Share with nearby LocalSend devices without pairing.</source>
         <translation>无需配对即可与附近的 LocalSend 设备共享。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2021"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2024"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2072"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2075"/>
         <source>Open files shared from the phone</source>
         <translation>打开手机共享的文件</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2022"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2073"/>
         <source>Opens a shared photo or document as soon as it arrives.</source>
         <translation>手机共享的照片或文档一到就自动打开。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2055"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2171"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2246"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2317"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2392"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2106"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2222"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2297"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2368"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2443"/>
         <source>Reset</source>
         <translation>重置</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2062"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2113"/>
         <source>Choose folder</source>
         <translation>选择文件夹</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2077"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2128"/>
         <source>Synced folders</source>
         <translation>同步文件夹</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2078"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2129"/>
         <source>One-way or two-way folder sync between phone and PC.</source>
         <translation>手机与电脑之间的单向或双向文件夹同步。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2085"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2136"/>
         <source>Sync now</source>
         <translation>立即同步</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2092"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2143"/>
         <source>Add DCIM → Pictures</source>
         <translation>添加 DCIM → 图片</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2108"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2159"/>
         <source>Two-way sync · conflict copies kept</source>
         <translation>双向同步 · 保留冲突副本</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2108"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2159"/>
         <source>One-way · phone to PC</source>
         <translation>单向 · 手机到电脑</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2162"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2213"/>
         <source>Command palette</source>
         <translation>命令面板</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2163"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2214"/>
         <source>Open from any app.</source>
         <translation>可在任何应用中打开。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2208"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2259"/>
         <source>Command palette shortcut</source>
         <translation>命令面板快捷键</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2237"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2288"/>
         <source>File shelf</source>
         <translation>文件收纳架</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2238"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2289"/>
         <source>Toggle screen-edge shelf.</source>
         <translation>切换屏幕边缘收纳架。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2283"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2334"/>
         <source>Shelf shortcut</source>
         <translation>收纳架快捷键</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2308"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2359"/>
         <source>Take photo</source>
         <translation>拍照</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2309"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2360"/>
         <source>Capture &amp; paste photo.</source>
         <translation>拍摄并粘贴照片。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2354"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2405"/>
         <source>Take photo shortcut</source>
         <translation>拍照快捷键</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2383"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2434"/>
         <source>Scan document</source>
         <translation>扫描文档</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2384"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2435"/>
         <source>Scan &amp; paste document.</source>
         <translation>扫描并粘贴文档。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2429"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2480"/>
         <source>Scan document shortcut</source>
         <translation>扫描文档快捷键</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2445"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2496"/>
         <source>Trigger-action rules</source>
         <translation>触发-动作规则</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2446"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2497"/>
         <source>Run actions when your phone connects, disconnects, or rings.</source>
         <translation>手机连接、断开或响铃时执行动作。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2453"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2504"/>
         <source>Lock PC on disconnect</source>
         <translation>断开时锁定电脑</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2460"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2511"/>
         <source>Pause media on ring</source>
         <translation>响铃时暂停媒体</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2513"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2564"/>
         <source>OBS Studio</source>
         <translation>OBS Studio</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2514"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2565"/>
         <source>For Deck tiles that run obs: commands. Turn on OBS&apos;s WebSocket server in Tools › WebSocket Server Settings.</source>
         <translation>用于运行 obs: 命令的面板磁贴。请在 OBS 的“工具 › WebSocket 服务器设置”中开启 WebSocket 服务器。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2522"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2573"/>
         <source>Port</source>
         <translation>端口</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2546"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2597"/>
         <source>OBS WebSocket port</source>
         <translation>OBS WebSocket 端口</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2553"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2604"/>
         <source>Password</source>
         <translation>密码</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2575"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2626"/>
         <source>OBS WebSocket password</source>
         <translation>OBS WebSocket 密码</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2581"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2632"/>
         <source>Saved</source>
         <translation>已保存</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2581"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2632"/>
         <source>None</source>
         <translation>无</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2590"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2641"/>
         <source>Save</source>
         <translation>保存</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2601"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2652"/>
         <source>Test connection</source>
         <translation>测试连接</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2608"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2659"/>
         <source>Remove password</source>
         <translation>移除密码</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2648"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2669"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2699"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2720"/>
         <source>Clipboard history</source>
         <translation>剪贴板历史记录</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2652"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2703"/>
         <source>%1 clips · %2 · kept 7 days</source>
         <translation>%1 条剪贴板记录 · %2 · 保留 7 天</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2661"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2716"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2752"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2809"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2840"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2877"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2712"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2767"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2803"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2860"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2891"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2928"/>
         <source>Clear</source>
         <translation>清除</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2702"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="2721"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2753"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2772"/>
         <source>Notification history</source>
         <translation>通知历史记录</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2706"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2757"/>
         <source>%1 alerts · %2 · kept 24h</source>
         <translation>%1 条提醒 · %2 · 保留 24 小时</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2738"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2789"/>
         <source>Cross-device timeline</source>
         <translation>跨设备时间线</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2742"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2793"/>
         <source>1 item stored (max 5,000).</source>
         <translation>已存储 1 个项目（上限 5,000）。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2743"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2794"/>
         <source>%1 items stored (max 5,000).</source>
         <translation>已存储 %1 个项目（上限 5,000）。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2768"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2819"/>
         <source>30d</source>
         <translation>30 天</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2769"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2820"/>
         <source>90d</source>
         <translation>90 天</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2770"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2821"/>
         <source>1y</source>
         <translation>1 年</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2771"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2822"/>
         <source>All</source>
         <translation>全部</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2786"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2837"/>
         <source>Cached messages</source>
         <translation>缓存的消息</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2794"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2845"/>
         <source>1 chat</source>
         <translation>1 个会话</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2794"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2845"/>
         <source>%1 chats</source>
         <translation>%1 个会话</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2795"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2846"/>
         <source>1 message</source>
         <translation>1 条消息</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2795"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2846"/>
         <source>%1 messages</source>
         <translation>%1 条消息</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2796"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2847"/>
         <source>%1 · %2 · %3 · kept 90 days</source>
         <translation>%1 · %2 · %3 · 保留 90 天</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2830"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2881"/>
         <source>Photo thumbnails</source>
         <translation>照片缩略图</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2834"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2885"/>
         <source>%1 cached · %2 · kept 30 days</source>
         <translation>已缓存 %1 · %2 · 保留 30 天</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2868"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2919"/>
         <source>Transfer history</source>
         <translation>传输历史记录</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2871"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2922"/>
         <source>%1 records · kept with timeline</source>
         <translation>%1 条记录 · 随时间线保留</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2888"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2939"/>
         <source>Clear all local history &amp; caches</source>
         <translation>清除所有本地历史记录和缓存</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2889"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2940"/>
         <source>Wipes local history and caches; keeps paired devices and settings.</source>
         <translation>清除本地历史记录和缓存；保留已配对设备和设置。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2894"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2945"/>
         <source>Clear everything…</source>
         <translation>清除全部…</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2917"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2968"/>
         <source>Connection Doctor</source>
         <translation>连接诊断</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2918"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2969"/>
         <source>Diagnose and fix firewall, network, or VPN issues.</source>
         <translation>诊断并修复防火墙、网络或 VPN 问题。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2922"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2973"/>
         <source>Check</source>
         <translation>检查</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2930"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2981"/>
         <source>Connect over mobile data</source>
         <translation>通过移动数据连接</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2931"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2982"/>
         <source>Stay connected over LTE/5G or relay when away from Wi-Fi.</source>
         <translation>离开 Wi-Fi 时通过 LTE/5G 或中继保持连接。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2941"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2992"/>
         <source>Wake from your phone</source>
         <translation>从手机唤醒</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2946"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2997"/>
         <source>No active network adapter found.</source>
         <translation>未找到可用的网络适配器。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2948"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="2999"/>
         <source>%1 · Wake on Magic Packet ready.</source>
         <translation>%1 · Magic Packet 网络唤醒已就绪。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2949"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3000"/>
         <source>%1 · Enable Wake on Magic Packet in Device Manager.</source>
         <translation>%1 · 请在设备管理器中启用 Magic Packet 网络唤醒。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2962"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3013"/>
         <source>Off in Windows</source>
         <translation>在 Windows 中已关闭</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2963"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3014"/>
         <source>Check settings</source>
         <translation>检查设置</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2964"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3015"/>
         <source>No adapter</source>
         <translation>无适配器</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2972"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="3011"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3023"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3062"/>
         <source>Local automation API</source>
         <translation>本地自动化 API</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2974"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3025"/>
         <source>Listening on 127.0.0.1:%1 · Token in %2</source>
         <translation>正在监听 127.0.0.1:%1 · 令牌位于 %2</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="2975"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3026"/>
         <source>Local HTTP/SSE server (127.0.0.1:%1) for scripts and tools.</source>
         <translation>供脚本和工具使用的本地 HTTP/SSE 服务器（127.0.0.1:%1）。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3021"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3072"/>
         <source>NectarLink %1</source>
         <translation>NectarLink %1</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3024"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3075"/>
         <source>This PC: %1</source>
         <translation>本机：%1</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3036"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3087"/>
         <source>Update download</source>
         <translation>更新下载</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3057"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3108"/>
         <source>Update to %1</source>
         <translation>更新到 %1</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3058"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="3077"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="3080"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3109"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3128"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3131"/>
         <source>Check for updates</source>
         <translation>检查更新</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3067"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3118"/>
         <source>Open logs</source>
         <translation>打开日志</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3078"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3129"/>
         <source>Looks for a new version on GitHub once a day.</source>
         <translation>每天在 GitHub 上检查一次新版本。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3091"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="3094"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3142"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3145"/>
         <source>Install updates automatically</source>
         <translation>自动安装更新</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3092"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3143"/>
         <source>When nobody is using the PC and nothing is in progress.</source>
         <translation>在无人使用电脑且没有任务进行时。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3109"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3160"/>
         <source>Setup walkthrough</source>
         <translation>设置引导</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3110"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3161"/>
         <source>Re-open the setup guide.</source>
         <translation>重新打开设置指南。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3122"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3173"/>
         <source>Features guide</source>
         <translation>功能指南</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3123"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3174"/>
         <source>What each feature needs and where to find it.</source>
         <translation>了解各项功能需要什么以及在哪里找到。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3172"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3223"/>
         <source>Play the phone&apos;s microphone into</source>
         <translation>将手机麦克风播放到</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3189"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3240"/>
         <source>Close</source>
         <translation>关闭</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3202"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3253"/>
         <source>Unpair %1?</source>
         <translation>取消配对 %1？</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3208"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3259"/>
         <source>Both devices forget each other. You can pair them again any time.</source>
         <translation>两台设备将互相遗忘。你可以随时重新配对。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3213"/>
-        <location filename="../qml/pages/SettingsPage.qml" line="3247"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3264"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3298"/>
         <source>Cancel</source>
         <translation>取消</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3233"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3284"/>
         <source>Clear all local history &amp; caches?</source>
         <translation>清除所有本地历史记录和缓存？</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3242"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3293"/>
         <source>Deletes clipboard history, Timeline, notification history, cached messages, photo thumbnails and transfer history on this PC. Paired devices, settings and downloaded files are kept.</source>
         <translation>删除本机的剪贴板历史记录、时间线、通知历史记录、缓存的消息、照片缩略图和传输历史记录。已配对设备、设置和已下载的文件会保留。</translation>
     </message>
     <message>
-        <location filename="../qml/pages/SettingsPage.qml" line="3250"/>
+        <location filename="../qml/pages/SettingsPage.qml" line="3301"/>
         <source>Clear everything</source>
         <translation>清除全部</translation>
     </message>
@@ -5186,6 +5700,84 @@
     </message>
 </context>
 <context>
+    <name>Timeline</name>
+    <message>
+        <location filename="rust_strings.h" line="94"/>
+        <source>Copied link to clipboard.</source>
+        <translation>已将链接复制到剪贴板。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="95"/>
+        <source>Copied to clipboard.</source>
+        <translation>已复制到剪贴板。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="96"/>
+        <source>No phone is paired yet.</source>
+        <translation>尚未配对手机。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="97"/>
+        <source>Phone microphone</source>
+        <translation>手机麦克风</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="98"/>
+        <source>Phone webcam</source>
+        <translation>手机摄像头</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="99"/>
+        <source>Screen mirroring</source>
+        <translation>屏幕镜像</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="100"/>
+        <source>Sending to %1…</source>
+        <translation>正在发送到 %1…</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="101"/>
+        <source>Sent clip to %1.</source>
+        <translation>已将剪贴内容发送到 %1。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="102"/>
+        <source>That clip is no longer in clipboard history.</source>
+        <translation>该剪贴内容已不在剪贴板历史中。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="103"/>
+        <source>That entry couldn&apos;t be removed. Try again.</source>
+        <translation>无法删除该条目，请重试。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="104"/>
+        <source>That file was moved or deleted.</source>
+        <translation>该文件已被移动或删除。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="105"/>
+        <source>That isn&apos;t a web link.</source>
+        <translation>这不是网页链接。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="106"/>
+        <source>That photo was moved or deleted.</source>
+        <translation>该照片已被移动或删除。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="107"/>
+        <source>The Timeline couldn&apos;t be cleared. Try again.</source>
+        <translation>无法清除时间线，请重试。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="108"/>
+        <source>The photo couldn&apos;t be copied to the clipboard.</source>
+        <translation>无法将照片复制到剪贴板。</translation>
+    </message>
+</context>
+<context>
     <name>TimelinePage</name>
     <message>
         <location filename="../qml/pages/TimelinePage.qml" line="30"/>
@@ -5467,6 +6059,24 @@
         <location filename="../qml/components/TransferItem.qml" line="162"/>
         <source>Cancel</source>
         <translation>取消</translation>
+    </message>
+</context>
+<context>
+    <name>Transfers</name>
+    <message>
+        <location filename="rust_strings.h" line="109"/>
+        <source>Files are turned off for that device.</source>
+        <translation>已为该设备关闭文件。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="110"/>
+        <source>That&apos;s too many files to send at once.</source>
+        <translation>文件太多，无法一次发送。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="111"/>
+        <source>There&apos;s nothing to send in there.</source>
+        <translation>那里没有可发送的内容。</translation>
     </message>
 </context>
 <context>
