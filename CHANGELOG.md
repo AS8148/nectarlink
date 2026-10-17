@@ -42,8 +42,8 @@ change things that need a step from you, and its notes say so.
   Chinese, by [@zzz1465720680](https://github.com/zzz1465720680)
   ([#16](https://github.com/thtbee/nectarlink/pull/16),
   [#17](https://github.com/thtbee/nectarlink/pull/17)), or the language
-  you pick in **Settings › General**. Its messages and errors are
-  translated too, with the timeline's wording from
+  you pick in **Settings › General**. Its messages, errors and the
+  Features guide are translated too, with the timeline's wording from
   [@zzz1465720680](https://github.com/zzz1465720680)
   ([#18](https://github.com/thtbee/nectarlink/pull/18)).
 
