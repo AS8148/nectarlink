@@ -882,6 +882,26 @@ Item {
                     Column {
                         width: parent.width
 
+                        // Language: the system's, or one of those the app speaks
+                        // (each named in its own language).
+                        ListRow {
+                            width: parent.width
+                            iconPath: Icons.globe
+                            title: qsTr("Language")
+                            description: qsTr("NectarLink follows Windows unless you pick one.")
+                            Segmented {
+                                options: [
+                                    { value: "", label: qsTr("System") },
+                                    { value: "en", label: "English" },
+                                    { value: "zh_CN", label: "简体中文" }
+                                ]
+                                value: Preferences.language
+                                onPicked: (v) => Preferences.language = v
+                            }
+                        }
+
+                        Divider { width: parent.width }
+
                         // Row 1: Start with Windows | Stay in system tray
                         Item {
                             id: startupPairRow

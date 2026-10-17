@@ -42,17 +42,36 @@ QPointer<QQmlEngine> &qmlEngineRef()
     static QPointer<QQmlEngine> engine;
     return engine;
 }
+
+// Every QML engine registered, for retranslating them all when the
+// language changes (gone ones drop out on their own).
+QList<QPointer<QQmlEngine>> &allEngines()
+{
+    static QList<QPointer<QQmlEngine>> engines;
+    return engines;
+}
+
+void remember(QQmlEngine *engine)
+{
+    auto &engines = allEngines();
+    engines.removeIf([](const QPointer<QQmlEngine> &e) { return e.isNull(); });
+    if (!engines.contains(engine))
+        engines.append(engine);
+}
 } // namespace
 
 void register_qml_engine(QQmlEngine *engine)
 {
-    if (engine)
+    if (engine) {
         qmlEngineRef() = engine;
+        remember(engine);
+    }
 }
 
 void register_qml_app_engine(QQmlApplicationEngine &engine)
 {
     qmlEngineRef() = &engine;
+    remember(&engine);
 }
 
 #include <QtCore/QDateTime>
@@ -178,10 +197,37 @@ bool start_external_drag(rust::Str file_path, rust::Str text_fallback)
     return drag.exec(Qt::CopyAction) != Qt::IgnoreAction;
 }
 
-bool install_system_translator(rust::Str dir)
+namespace {
+// The translators installed now, replaced when the language changes.
+QPointer<QTranslator> &qtTranslator()
+{
+    static QPointer<QTranslator> t;
+    return t;
+}
+QPointer<QTranslator> &appTranslator()
+{
+    static QPointer<QTranslator> t;
+    return t;
+}
+
+void drop(QPointer<QTranslator> &translator)
+{
+    if (translator) {
+        QCoreApplication::removeTranslator(translator);
+        delete translator.data();
+    }
+    translator = nullptr;
+}
+} // namespace
+
+bool install_translator(rust::Str dir, rust::Str language)
 {
     const QString folder = QString::fromUtf8(dir.data(), static_cast<qsizetype>(dir.size()));
-    const QLocale locale = QLocale::system();
+    const QString chosen = QString::fromUtf8(language.data(), static_cast<qsizetype>(language.size()));
+    const QLocale locale = chosen.isEmpty() ? QLocale::system() : QLocale(chosen);
+    QLocale::setDefault(locale);
+    drop(qtTranslator());
+    drop(appTranslator());
 
     // Qt's own strings: file dialogs, context menus, the standard buttons.
     // windeployqt stages a merged `qt_<locale>.qm` in `translations/` beside the
@@ -191,29 +237,44 @@ bool install_system_translator(rust::Str dir)
         folder + QStringLiteral("/translations"),
         QLibraryInfo::path(QLibraryInfo::TranslationsPath),
     };
-    bool qtInstalled = false;
     for (const QString &qtDir : qtDirs) {
         for (const char *name : {"qtbase", "qt"}) {
             auto *qt = new QTranslator(QCoreApplication::instance());
             if (qt->load(locale, QString::fromLatin1(name), QStringLiteral("_"), qtDir)) {
                 QCoreApplication::installTranslator(qt);
-                qtInstalled = true;
+                qtTranslator() = qt;
                 break;
             }
             delete qt;
         }
-        if (qtInstalled)
+        if (qtTranslator())
             break;
     }
 
     // NectarLink's own strings, staged beside the executable. A locale with no
-    // translation (`nectarlink_es_ES.qm` missing) simply stays English.
+    // translation (`nectarlink_es_ES.qm` missing), or English, stays English.
+    bool installed = false;
     auto *app = new QTranslator(QCoreApplication::instance());
-    if (!app->load(locale, QStringLiteral("nectarlink"), QStringLiteral("_"), folder)) {
+    if (app->load(locale, QStringLiteral("nectarlink"), QStringLiteral("_"), folder)) {
+        installed = QCoreApplication::installTranslator(app);
+        appTranslator() = app;
+    } else {
         delete app;
-        return false;
     }
-    return QCoreApplication::installTranslator(app);
+
+    // Windows already open show the new language at once.
+    for (const QPointer<QQmlEngine> &engine : allEngines()) {
+        if (engine)
+            engine->retranslate();
+    }
+    return installed;
+}
+
+rust::String translate(rust::Str context, rust::Str text)
+{
+    const std::string c(context.data(), context.size());
+    const std::string t(text.data(), text.size());
+    return rust::String(QCoreApplication::translate(c.c_str(), t.c_str()).toStdString());
 }
 
 

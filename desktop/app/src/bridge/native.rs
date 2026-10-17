@@ -34,10 +34,12 @@ pub mod ffi {
         /// Starts a native OS drag-and-drop operation for a local file or text.
         fn start_external_drag(file_path: &str, text_fallback: &str) -> bool;
 
-        /// Installs the NectarLink and Qt translations for the system locale,
-        /// looking in `dir` for the .qm files. Must run after the
-        /// `QGuiApplication` exists and before any QML engine loads. Returns
-        /// true when NectarLink's own translation was installed.
-        fn install_system_translator(dir: &str) -> bool;
+        /// Installs the NectarLink and Qt translations for `language` (a
+        /// locale name, or "" for the system's), looking in `dir` for the
+        /// .qm files and replacing those installed before. Run after the
+        /// `QGuiApplication` exists; before any QML engine loads, or later to
+        /// retranslate the open windows. Returns true when NectarLink's own
+        /// translation was installed.
+        fn install_translator(dir: &str, language: &str) -> bool;
     }
 }

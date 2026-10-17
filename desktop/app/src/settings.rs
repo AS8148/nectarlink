@@ -290,6 +290,9 @@ pub struct Settings {
     /// Pause PC media playback while a phone call is ringing or active.
     #[serde(alias = "pause_media_on_call", alias = "auto_pause_media")]
     pub pause_media_on_call: bool,
+    /// The app's language: a locale name from `i18n::LANGUAGES`, or "" for
+    /// the system's.
+    pub language: String,
     /// Play on phone: mute this PC's speakers while a phone watches its
     /// playback (the phone still gets the sound).
     pub mute_while_watched: bool,
@@ -434,6 +437,7 @@ impl Default for Settings {
             auto_copy_otp: false,
             pause_media_on_call: true,
             mute_while_watched: true,
+            language: String::new(),
             sync_dnd: false,
             send_to_menu: true,
             auto_update: true,
@@ -585,6 +589,7 @@ mod tests {
             auto_copy_otp: true,
             pause_media_on_call: false,
             mute_while_watched: false,
+            language: "zh_CN".into(),
             sync_dnd: true,
             send_to_menu: false,
             auto_update: false,
