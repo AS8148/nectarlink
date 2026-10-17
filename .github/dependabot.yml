@@ -12,6 +12,9 @@ updates:
     ignore:
       # Moves with cxx-qt only (see Cargo.toml).
       - dependency-name: cxx
+      # Moves with windows, whose own windows-core it has to be: the
+      # implement macro and windows' COM types come from that one crate.
+      - dependency-name: windows-core
   - package-ecosystem: gradle
     directory: /android
     schedule:

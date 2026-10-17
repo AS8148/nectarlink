@@ -28,7 +28,7 @@ windows = { workspace = true, features = [
     "Win32_System_SystemServices",
     "Win32_System_Variant",
 ] }
-windows-core = "0.62"
+windows-core.workspace = true
 
 [build-dependencies]
 embed-resource.workspace = true
