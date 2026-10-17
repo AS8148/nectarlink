@@ -270,6 +270,19 @@ enum Command {
         #[arg(long, default_value_t = 120)]
         wait: u64,
     },
+    /// Phone as microphone, as a phone (add --as-phone): wait for the PC to
+    /// ask for the microphone, then stream SECONDS of sound to it: silence,
+    /// or a 16-bit mono 48 kHz WAV given with --wav.
+    Mic {
+        device: String,
+        #[arg(long, default_value_t = 10)]
+        seconds: u64,
+        #[arg(long)]
+        wav: Option<PathBuf>,
+        /// How long to wait for the PC to ask, in seconds.
+        #[arg(long, default_value_t = 120)]
+        wait: u64,
+    },
     /// List the apps a paired phone can open in windows of their own.
     Apps {
         device: String,
@@ -967,6 +980,10 @@ fn stream_sound(sound: &nectarlink_core::MirrorStream, rate: u32, channels: u8, 
 
 /// PCs that asked for the screen or an app (whether they want the sound,
 /// and the session), for `screen`.
+/// PCs that asked for the microphone.
+static MIC_ASKS: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<DeviceId>> =
+    std::sync::OnceLock::new();
+
 /// Play on phone offers from PCs: (PC, player, title).
 static WATCH_OFFERS: std::sync::OnceLock<
     tokio::sync::mpsc::UnboundedSender<(DeviceId, String, Option<String>)>,
@@ -1760,6 +1777,14 @@ fn sample_storage_tree(root: &std::path::Path) {
 struct TerminalPlatform;
 
 impl Platform for TerminalPlatform {
+    fn mic_requested(&self, peer: &DeviceId) -> std::result::Result<(), String> {
+        let asks = MIC_ASKS.get().ok_or("not lending the microphone (run `mic`)")?;
+        println!("{} asks for the microphone.", peer.short());
+        asks.send(*peer).map_err(|e| e.to_string())
+    }
+    fn mic_stop_requested(&self, peer: &DeviceId) {
+        println!("{} stopped listening.", peer.short());
+    }
     fn watch_offered(
         &self,
         from: &DeviceId,
@@ -3223,6 +3248,67 @@ async fn run(cli: &Cli, node: &Node) -> Result<()> {
                     None => println!("No sound came."),
                 }
             }
+        }
+        Command::Mic { device, seconds, wav, wait } => {
+            if !cli.as_phone {
+                bail!("phones lend their microphone: add --as-phone");
+            }
+            let samples = match wav {
+                Some(path) => {
+                    let bytes = std::fs::read(path).context("can't read the WAV")?;
+                    // The samples after a canonical 44-byte header.
+                    bytes.get(44..).context("not a WAV")?.to_vec()
+                }
+                None => vec![0u8; 48_000 * 2 * *seconds as usize],
+            };
+            let (asked, mut asks) = tokio::sync::mpsc::unbounded_channel();
+            let _ = MIC_ASKS.set(asked);
+            let mut caps = cli.offers.clone();
+            caps.push(nectarlink_core::MIC_STREAM.into());
+            node.update_power(node_power(cli), caps).await;
+            let id = resolve(node, device)?;
+            wait_until_online(node, id).await?;
+            println!("Waiting for the PC to ask for the microphone.");
+            let asked_by = tokio::time::timeout(std::time::Duration::from_secs(*wait), asks.recv())
+                .await
+                .ok()
+                .flatten()
+                .context("the PC didn't ask")?;
+            if asked_by != id {
+                bail!("another PC asked");
+            }
+            let stream = node.mic_open(id).await.context("can't open the microphone stream")?;
+            let seconds = *seconds as usize;
+            // Sending waits for room, so it runs off the async threads.
+            let sent = tokio::task::spawn_blocking(move || {
+                let config = nectarlink_core::MirrorAudioConfig {
+                    codec: nectarlink_core::MIRROR_PCM.into(),
+                    rate: 48_000,
+                    channels: 1,
+                };
+                stream.send(nectarlink_core::PacketKind::Config, 0, config.to_cbor());
+                let started = std::time::Instant::now();
+                let mut sent = 0usize;
+                // 10 ms at a time, in real time.
+                for (i, chunk) in samples.chunks(960).take(seconds * 100).enumerate() {
+                    let due = std::time::Duration::from_millis(i as u64 * 10);
+                    if let Some(wait) = due.checked_sub(started.elapsed()) {
+                        std::thread::sleep(wait);
+                    }
+                    if stream.send(nectarlink_core::PacketKind::Frame, i as u64 * 10_000, chunk.to_vec())
+                        == nectarlink_core::MirrorSend::Closed
+                    {
+                        println!("The PC stopped listening.");
+                        break;
+                    }
+                    sent += chunk.len();
+                }
+                stream.close();
+                sent
+            })
+            .await?;
+            node.mic_stop(id).await;
+            println!("Sent {} ms of sound.", sent / 96);
         }
         Command::Watch { device, out, seconds, sound, wait } => {
             if !cli.as_phone {
