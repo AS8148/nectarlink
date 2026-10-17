@@ -139,6 +139,9 @@ pub struct Place {
 
 /// How often the picture's place is looked up again.
 const FOLLOW_EVERY: Duration = Duration::from_millis(500);
+/// How long a browser's player may take to show up in UI Automation
+/// before the whole page is streamed instead.
+const FIND_PLAYER: Duration = Duration::from_secs(2);
 
 impl Place {
     /// The window the picture is in.
@@ -160,6 +163,7 @@ impl Watched {
             browser::use_physical_pixels();
             let automation = Automation::new().ok();
             let mut window: Option<Window> = None;
+            let started = std::time::Instant::now();
             while !stopped.load(Ordering::Relaxed) {
                 // The window it played in, while it's still there; else find it again.
                 if window.as_ref().is_none_or(|w| browser::frame_of(w.hwnd).is_none()) {
@@ -169,7 +173,14 @@ impl Watched {
                 let place = window.as_ref().and_then(|w| {
                     let frame = browser::frame_of(w.hwnd)?;
                     let on_screen = match &automation {
-                        Some(a) if browser::is_browser(&w.program) => a.video_rect(w)?,
+                        // A browser builds what UI Automation sees of a page
+                        // only once asked: give the player a moment to show
+                        // up before streaming the whole page.
+                        Some(a) if browser::is_browser(&w.program) => match a.player_rect(w) {
+                            Some(player) => player,
+                            None if started.elapsed() < FIND_PLAYER => return None,
+                            None => a.page_rect(w).unwrap_or(frame),
+                        },
                         _ => frame,
                     };
                     let in_window = RECT {

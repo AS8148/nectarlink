@@ -225,16 +225,32 @@ impl Automation {
 
     /// Where on screen the video plays in `window`, in physical pixels:
     /// YouTube's player when it's there, else the page, else the window.
+    #[cfg(test)]
     pub fn video_rect(&self, window: &Window) -> Option<RECT> {
-        let root = self.root(window);
-        let element = root.as_ref().and_then(|root| {
-            self.find(root, UIA_ClassNamePropertyId, VARIANT::from("video-stream html5-main-video")).or_else(
-                || self.find(root, UIA_ControlTypePropertyId, VARIANT::from(UIA_DocumentControlTypeId.0)),
-            )
-        });
+        self.player_rect(window).or_else(|| self.page_rect(window)).or_else(|| frame_of(window.hwnd))
+    }
+
+    /// Where YouTube's player is in `window`, once the browser exposes its
+    /// page (a moment after it's first asked).
+    pub fn player_rect(&self, window: &Window) -> Option<RECT> {
+        let root = self.root(window)?;
+        self.rect_of(self.find(
+            &root,
+            UIA_ClassNamePropertyId,
+            VARIANT::from("video-stream html5-main-video"),
+        ))
+    }
+
+    /// Where the page is in `window`.
+    pub fn page_rect(&self, window: &Window) -> Option<RECT> {
+        let root = self.root(window)?;
+        self.rect_of(self.find(&root, UIA_ControlTypePropertyId, VARIANT::from(UIA_DocumentControlTypeId.0)))
+    }
+
+    fn rect_of(&self, element: Option<IUIAutomationElement>) -> Option<RECT> {
         // SAFETY: a COM call on a live element.
         let rect = element.and_then(|e| unsafe { e.CurrentBoundingRectangle() }.ok());
-        rect.filter(|r| r.right - r.left >= 64 && r.bottom - r.top >= 64).or_else(|| frame_of(window.hwnd))
+        rect.filter(|r| r.right - r.left >= 64 && r.bottom - r.top >= 64)
     }
 }
 

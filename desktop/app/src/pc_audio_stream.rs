@@ -297,6 +297,11 @@ fn capture_and_stream_once() -> Result<(), String> {
 
     'capture: while is_enabled() {
         std::thread::sleep(Duration::from_millis(2));
+        // Another phone asked for the sound (it watches the PC's playback):
+        // start over for that one.
+        if target() != wanted && target().is_some_and(|t| peers.contains(&t)) {
+            break 'capture;
+        }
         // SAFETY: Drain available capture packets from `IAudioCaptureClient`.
         unsafe {
             loop {
