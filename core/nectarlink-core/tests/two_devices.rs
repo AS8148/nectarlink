@@ -4326,6 +4326,34 @@ async fn localsend_is_off_by_default_and_persists_setting() {
     dev2.node.shutdown().await;
 }
 
+/// Apps turn LocalSend on from their UI thread, outside the node's runtime.
+#[tokio::test(flavor = "multi_thread")]
+async fn localsend_turns_on_from_a_thread_outside_the_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut dev = start_localsend_in(dir, "PC", DeviceKind::Desktop, free_tcp_port()).await;
+    let node = dev.node.clone();
+    std::thread::spawn(move || {
+        node.set_localsend_enabled(true).unwrap();
+        node.refresh_localsend();
+    })
+    .join()
+    .expect("turning LocalSend on outside the runtime doesn't panic");
+    for _ in 0..40 {
+        if dev.node.localsend_receiving() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(dev.node.localsend_receiving());
+    dev.node.set_localsend_enabled(false).unwrap();
+    wait_for(&mut dev, "localsend changed event", |e| match e {
+        NodeEvent::LocalSendChanged => Some(()),
+        _ => None,
+    })
+    .await;
+    dev.node.shutdown().await;
+}
+
 #[tokio::test]
 async fn localsend_coexists_when_port_is_already_bound() {
     let occupied = std::net::TcpListener::bind(("0.0.0.0", 0)).expect("bind occupied port");

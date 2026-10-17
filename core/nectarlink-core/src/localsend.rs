@@ -396,6 +396,8 @@ impl LocalSendState {
         if !self.enabled() {
             return;
         }
+        // Called from apps' UI threads too, outside the runtime.
+        let _runtime = shared.runtime.enter();
         if let Some(running) = self.running.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             let _ = running.announce_tx.send(());
         }
@@ -412,6 +414,9 @@ impl LocalSendState {
     }
 
     pub fn start(&self, shared: &Arc<Shared>) {
+        // Called from apps' UI threads too (turning LocalSend on), outside the
+        // runtime: its servers and announcer run on the node's.
+        let _runtime = shared.runtime.enter();
         let mut guard = self.running.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
             return;
