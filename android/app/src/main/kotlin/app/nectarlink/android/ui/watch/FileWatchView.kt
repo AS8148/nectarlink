@@ -54,6 +54,19 @@ class LocalPlayback {
         runCatching { if (player.isPlaying) player.pause() else player.start() }
         playing = runCatching { player.isPlaying }.getOrDefault(false)
     }
+
+    /** Where it is, in milliseconds. */
+    fun positionMs(): Long =
+        player?.let { runCatching { it.currentPosition.toLong() }.getOrNull() } ?: resumeAtMs ?: 0
+
+    /** How long it is, in milliseconds (0 until it's known). */
+    fun durationMs(): Long =
+        player?.let { runCatching { it.duration.toLong() }.getOrNull() }?.takeIf { it > 0 } ?: 0
+
+    fun seekTo(positionMs: Long) {
+        val player = player ?: return
+        runCatching { player.seekTo(positionMs, MediaPlayer.SEEK_CLOSEST) }
+    }
 }
 
 /**

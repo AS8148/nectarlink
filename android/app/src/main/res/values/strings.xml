@@ -280,6 +280,9 @@
     <!-- Play on phone: what a PC plays, streamed to the phone. -->
     <string name="watch_offer_title">Watch from %1$s</string>
     <string name="watch_offer_untitled">What\'s playing on your PC</string>
+    <string name="watch_back_10">Back 10 seconds</string>
+    <string name="watch_forward_10">Forward 10 seconds</string>
+    <string name="watch_seek">Position</string>
     <string name="watch_file_failed">Couldn’t play this video.</string>
     <string name="watch_offer_action">Watch</string>
     <string name="watch_from">From %1$s</string>

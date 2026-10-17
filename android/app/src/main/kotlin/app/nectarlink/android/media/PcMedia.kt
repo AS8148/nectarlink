@@ -68,6 +68,27 @@ class PcMedia(
     /** Whether each PC player plays, by "pc/player" (for Play on phone's controls). */
     val playing: kotlinx.coroutines.flow.StateFlow<Map<String, Boolean>> = _playing
 
+    /**
+     * Where a PC player is in what it plays: [positionMs] as of [atElapsedMs]
+     * (`SystemClock.elapsedRealtime`), moving on while [playing].
+     */
+    data class Timeline(
+        val positionMs: Long,
+        val durationMs: Long,
+        val playing: Boolean,
+        val canSeek: Boolean,
+        val atElapsedMs: Long,
+    ) {
+        /** Where it is now. */
+        fun positionAt(elapsedMs: Long): Long =
+            (positionMs + if (playing) (elapsedMs - atElapsedMs).coerceAtLeast(0) else 0).coerceIn(0, durationMs)
+    }
+
+    private val _timelines = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Timeline>>(emptyMap())
+
+    /** Each PC player's [Timeline] that has one, by "pc/player" (Play on phone's seek bar). */
+    val timelines: kotlinx.coroutines.flow.StateFlow<Map<String, Timeline>> = _timelines
+
     private val _summaryFlow = kotlinx.coroutines.flow.MutableStateFlow<Summary?>(null)
     val summaryFlow: kotlinx.coroutines.flow.StateFlow<Summary?> = _summaryFlow
 
@@ -106,12 +127,29 @@ class PcMedia(
             }
             if (list.isEmpty()) players.remove(pc) else players[pc] = list
             _playing.value = players.flatMap { (id, all) -> all.map { "$id/${it.id}" to it.playing } }.toMap()
+            val now = android.os.SystemClock.elapsedRealtime()
+            _timelines.value = players.flatMap { (id, all) ->
+                all.mapNotNull { p ->
+                    val duration = p.duration?.toLong()?.takeIf { it > 0 } ?: return@mapNotNull null
+                    "$id/${p.id}" to Timeline(
+                        positionMs = (p.position?.toLong() ?: 0).coerceIn(0, duration),
+                        durationMs = duration,
+                        playing = p.playing,
+                        canSeek = MediaAction.SEEK in p.actions,
+                        atElapsedMs = now,
+                    )
+                }
+            }.toMap()
             render()
         }
     }
 
     /** Asks the PC [pc]'s [player] to [action] (Play on phone's controls). */
     fun command(pc: String, player: String, action: MediaAction) = send(pc, player, action, null)
+
+    /** Asks the PC [pc]'s [player] to go to [positionMs] (Play on phone's seek bar). */
+    fun seek(pc: String, player: String, positionMs: Long) =
+        send(pc, player, MediaAction.SEEK, positionMs.coerceAtLeast(0).toULong())
 
     private fun command(action: MediaAction, position: ULong? = null) {
         val (pc, player) = shown ?: return

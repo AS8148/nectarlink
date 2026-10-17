@@ -27,11 +27,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -145,6 +149,27 @@ private fun WatchScreen(
     var controls by remember { mutableStateOf(true) }
     var shownAt by remember { mutableIntStateOf(0) }
 
+    // Where it is: the phone's own player for a file, else the PC player's
+    // timeline (moving on between its updates), ticking while the controls show.
+    val timelines by core.pcMedia.timelines.collectAsStateWithLifecycle()
+    var now by remember { mutableLongStateOf(android.os.SystemClock.elapsedRealtime()) }
+    LaunchedEffect(controls) {
+        while (controls) {
+            now = android.os.SystemClock.elapsedRealtime()
+            delay(TICK_MS)
+        }
+    }
+    val timeline = timelines["$pcId/$player"]
+    // Read with `now`, so they're read again every tick.
+    val durationMs = if (local != null) now.let { local.durationMs() } else timeline?.durationMs ?: 0
+    val positionMs = if (local != null) now.let { local.positionMs() } else timeline?.positionAt(now) ?: 0
+    val canSeek = durationMs > 0 && (local != null || timeline?.canSeek == true)
+    val seekTo: (Long) -> Unit = { target ->
+        val at = target.coerceIn(0, durationMs)
+        if (local != null) local.seekTo(at) else core.pcMedia.seek(pcId, player, at)
+        shownAt++
+    }
+
     // The controls fade a few seconds after they show or are used.
     LaunchedEffect(controls, shownAt) {
         if (controls) {
@@ -224,7 +249,16 @@ private fun WatchScreen(
                         CloseIcon()
                     }
                 }
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Row(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (canSeek) {
+                        SkipButton(R.drawable.ic_fast_rewind, stringResource(R.string.watch_back_10)) {
+                            seekTo(positionMs - SKIP_MS)
+                        }
+                    }
                     val label = stringResource(if (isPlaying) R.string.media_pause else R.string.media_play)
                     IconButton(
                         onClick = {
@@ -247,9 +281,87 @@ private fun WatchScreen(
                             modifier = Modifier.size(30.dp),
                         )
                     }
+                    if (canSeek) {
+                        SkipButton(R.drawable.ic_fast_forward, stringResource(R.string.watch_forward_10)) {
+                            seekTo(positionMs + SKIP_MS)
+                        }
+                    }
+                }
+                if (canSeek) {
+                    SeekBar(
+                        positionMs = positionMs,
+                        durationMs = durationMs,
+                        onDrag = { shownAt++ },
+                        onSeek = seekTo,
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SkipButton(icon: Int, label: String, onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        colors = IconButtonDefaults.iconButtonColors(
+            containerColor = Color.Black.copy(alpha = 0.5f),
+            contentColor = Color.White,
+        ),
+        modifier = Modifier.size(48.dp).semantics { contentDescription = label },
+    ) {
+        Icon(painter = painterResource(icon), contentDescription = null, modifier = Modifier.size(24.dp))
+    }
+}
+
+/** Where it is and how long it is, with a bar to go anywhere in it. */
+@Composable
+private fun SeekBar(positionMs: Long, durationMs: Long, onDrag: () -> Unit, onSeek: (Long) -> Unit) {
+    // While a finger drags, the bar follows it rather than the player.
+    var dragging by remember { mutableStateOf(false) }
+    var dragged by remember { mutableFloatStateOf(0f) }
+    val shown = if (dragging) dragged else positionMs.toFloat()
+    val seekLabel = stringResource(R.string.watch_seek)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))))
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(clock(shown.toLong()), style = MaterialTheme.typography.labelMedium, color = Color.White)
+        Slider(
+            value = shown.coerceIn(0f, durationMs.toFloat()),
+            onValueChange = {
+                dragging = true
+                dragged = it
+                onDrag()
+            },
+            onValueChangeFinished = {
+                dragging = false
+                onSeek(dragged.toLong())
+            },
+            valueRange = 0f..durationMs.toFloat(),
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = Color.White,
+                inactiveTrackColor = Color.White.copy(alpha = 0.3f),
+            ),
+            modifier = Modifier.weight(1f).semantics { contentDescription = seekLabel },
+        )
+        Text(clock(durationMs), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.75f))
+    }
+}
+
+/** 75_000 ms is "1:15"; an hour or more "1:02:03". */
+internal fun clock(ms: Long): String {
+    val total = (ms / 1000).coerceAtLeast(0)
+    val (hours, minutes, seconds) = Triple(total / 3600, total / 60 % 60, total % 60)
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%d:%02d".format(minutes, seconds)
     }
 }
 
@@ -265,3 +377,9 @@ private fun CloseIcon() {
 
 /** How long the controls stay after they show or are used. */
 private const val CONTROLS_MS = 3_000L
+
+/** How far back and forward the skip buttons go. */
+private const val SKIP_MS = 10_000L
+
+/** How often the time shown moves on. */
+private const val TICK_MS = 500L
