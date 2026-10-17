@@ -64,12 +64,16 @@ interface PairingActions {
     fun pairNearby(id: String)
     fun confirm(matches: Boolean)
     fun reset()
+
+    /** A pairing link for another phone or tablet to scan, or null. */
+    suspend fun showCode(): String?
 }
 
 /**
  * Pairing with a PC: scan the QR code it shows, or pick it from the PCs
- * nearby and compare a 6-digit code. `onDone` runs after success (or when
- * the user backs out, if `cancellable`).
+ * nearby and compare a 6-digit code. Pairing with another phone or tablet:
+ * one shows a code ("Show a code") and the other scans it. `onDone` runs
+ * after success (or when the user backs out, if `cancellable`).
  */
 @Composable
 fun PairingScreen(
@@ -79,6 +83,7 @@ fun PairingScreen(
     onDone: () -> Unit,
 ) {
     var nearby by rememberSaveable { mutableStateOf(false) }
+    var showing by rememberSaveable { mutableStateOf(false) }
     val pairing = state.pairing
     val reducedMotion = LocalReducedMotion.current
     DisposableEffect(Unit) {
@@ -104,7 +109,11 @@ fun PairingScreen(
                 is PairingState.Comparing, is PairingState.Confirmed -> stringResource(R.string.pair_check_code)
                 is PairingState.Paired -> stringResource(R.string.pair_done_title)
                 is PairingState.Failed -> stringResource(R.string.pair_failed_title)
-                else -> if (nearby) stringResource(R.string.pair_nearby_title) else stringResource(R.string.pair_title)
+                else -> when {
+                    showing -> stringResource(R.string.pair_show_title)
+                    nearby -> stringResource(R.string.pair_nearby_title)
+                    else -> stringResource(R.string.pair_title)
+                }
             },
             style = MaterialTheme.typography.headlineMedium,
             textAlign = TextAlign.Center,
@@ -112,7 +121,7 @@ fun PairingScreen(
         Spacer(Modifier.height(20.dp))
 
         AnimatedContent(
-            targetState = pairing to nearby,
+            targetState = Triple(pairing, nearby, showing),
             transitionSpec = {
                 if (reducedMotion) {
                     EnterTransition.None togetherWith ExitTransition.None
@@ -122,12 +131,12 @@ fun PairingScreen(
             },
             modifier = Modifier.weight(1f),
             label = "pairing",
-        ) { (current, showNearby) ->
+        ) { (current, showNearby, showCode) ->
             when (current) {
-                PairingState.Idle -> if (showNearby) {
-                    NearbyList(state.discovered, actions::pairNearby)
-                } else {
-                    Scan(actions::join)
+                PairingState.Idle -> when {
+                    showCode -> ShowCode(actions)
+                    showNearby -> NearbyList(state.discovered, actions::pairNearby)
+                    else -> Scan(actions::join)
                 }
                 PairingState.Joining -> Working(stringResource(R.string.pair_joining))
                 is PairingState.Connecting ->
@@ -148,12 +157,83 @@ fun PairingScreen(
         }
 
         if (pairing == PairingState.Idle) {
-            FilledTonalButton(onClick = { nearby = !nearby }) {
-                Text(stringResource(if (nearby) R.string.action_scan_instead else R.string.action_pair_nearby))
+            if (!showing) {
+                FilledTonalButton(onClick = { nearby = !nearby }) {
+                    Text(stringResource(if (nearby) R.string.action_scan_instead else R.string.action_pair_nearby))
+                }
+            }
+            TextButton(onClick = {
+                showing = !showing
+                nearby = false
+            }) {
+                Text(stringResource(if (showing) R.string.action_scan_instead else R.string.action_show_code))
             }
         }
         if (cancellable && pairing !is PairingState.Paired) {
             TextButton(onClick = { actions.reset(); onDone() }) { Text(stringResource(R.string.action_cancel)) }
+        }
+    }
+}
+
+/** This device's pairing code, for another phone or tablet to scan. */
+@Composable
+private fun ShowCode(actions: PairingActions) {
+    var link by androidx.compose.runtime.remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { link = actions.showCode() }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            stringResource(R.string.pair_show_hint),
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(20.dp))
+        val current = link
+        val label = stringResource(R.string.pair_show_qr_desc)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.8f)
+                .aspectRatio(1f)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                .background(androidx.compose.ui.graphics.Color.White)
+                .padding(16.dp)
+                .semantics { contentDescription = label },
+            contentAlignment = Alignment.Center,
+        ) {
+            if (current == null) {
+                CircularProgressIndicator()
+            } else {
+                QrCode(current)
+            }
+        }
+    }
+}
+
+/** [text] as a QR code, black on the white it sits on. */
+@Composable
+private fun QrCode(text: String) {
+    val matrix = androidx.compose.runtime.remember(text) {
+        runCatching {
+            com.google.zxing.qrcode.QRCodeWriter().encode(
+                text,
+                com.google.zxing.BarcodeFormat.QR_CODE,
+                0,
+                0,
+                mapOf(com.google.zxing.EncodeHintType.MARGIN to 0),
+            )
+        }.getOrNull()
+    } ?: return
+    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+        val cell = size.minDimension / matrix.width
+        for (y in 0 until matrix.height) {
+            for (x in 0 until matrix.width) {
+                if (matrix.get(x, y)) {
+                    drawRect(
+                        androidx.compose.ui.graphics.Color.Black,
+                        topLeft = androidx.compose.ui.geometry.Offset(x * cell, y * cell),
+                        size = androidx.compose.ui.geometry.Size(cell, cell),
+                    )
+                }
+            }
         }
     }
 }

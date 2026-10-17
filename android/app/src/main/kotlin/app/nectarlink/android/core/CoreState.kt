@@ -144,6 +144,10 @@ data class Device(
     /** Whether this PC is allowed to browse this phone's storage in File Explorer (off by default). */
     val storageEnabled: Boolean = false,
 ) {
+    /** A paired phone or tablet rather than a PC. */
+    val isAndroid: Boolean
+        get() = kind == app.nectarlink.core.DeviceKind.PHONE || kind == app.nectarlink.core.DeviceKind.TABLET
+
     val online: Boolean get() = link is Link.Online
 
     /** Whether a feature works with this device now (the capability matrix). */

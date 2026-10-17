@@ -5,7 +5,11 @@
 
     <!-- Pairing -->
     <string name="pair_title">Pair with your PC</string>
-    <string name="pair_scan_hint">On your PC, open NectarLink. Point the camera at the code it shows.</string>
+    <string name="pair_show_title">Pair a phone or tablet</string>
+    <string name="pair_show_hint">On your other phone or tablet, open NectarLink, tap Pair, and scan this code.</string>
+    <string name="pair_show_qr_desc">Pairing code for another phone or tablet</string>
+    <string name="action_show_code">Pair a phone or tablet instead</string>
+    <string name="pair_scan_hint">On your PC, open NectarLink. Point the camera at the code it shows. Another phone or tablet shows its code under Pair a phone or tablet.</string>
     <string name="pair_nearby_title">Pair nearby</string>
     <string name="pair_nearby_hint">On your PC, open NectarLink and keep its pairing screen open. It shows up here.</string>
     <string name="pair_looking">Looking for PCs…</string>
@@ -237,6 +241,9 @@
     <string name="action_allow_camera">Allow camera</string>
     <string name="action_ring_pc">Ring PC</string>
     <string name="action_stop_ringing">Stop ringing</string>
+    <string name="action_ring_device">Ring</string>
+    <string name="peer_kind_phone">Phone</string>
+    <string name="peer_kind_tablet">Tablet</string>
     <string name="action_unpair">Unpair</string>
     <string name="action_pair_new">Pair another PC</string>
     <string name="action_refresh">Refresh</string>
@@ -671,6 +678,7 @@
 
     <!-- PC notifications & Browse PC files -->
     <string name="channel_pc_notifications">PC notifications</string>
+    <string name="channel_peer_notifications">Notifications from your other phone or tablet</string>
     <string name="action_browse_pc_files">Browse PC files</string>
     <string name="pc_files_title">Files on %1$s</string>
     <string name="pc_files_root">Home</string>
@@ -1269,10 +1277,10 @@
     <string name="guide_doctor_privacy">Diagnostics run locally between your phone and paired PC.</string>
     <string name="guide_doctor_limits">Some phone makers\' battery savers must be set to Unrestricted.</string>
     <string name="pair_link_title">Pair with %1$s?</string>
-    <string name="pair_link_body">A pairing link was opened. Pair only if you just scanned or opened this PC\'s code yourself. A paired PC can receive this phone\'s notifications and messages.</string>
+    <string name="pair_link_body">A pairing link was opened. Pair only if you just scanned or opened this device\'s code yourself. A paired device can receive this phone\'s notifications and messages.</string>
     <string name="pair_link_confirm">Pair</string>
     <string name="pair_link_cancel">Cancel</string>
-    <string name="pair_link_unknown_pc">this PC</string>
+    <string name="pair_link_unknown_pc">this device</string>
     <string name="data_clear_failed">Some history couldn\'t be cleared. Try again.</string>
     <string name="channel_updates">Updates</string>
     <string name="update_ready_title">NectarLink %1$s is ready</string>

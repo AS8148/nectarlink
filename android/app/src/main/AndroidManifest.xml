@@ -193,6 +193,10 @@
             android:name=".files.TransferNotifications$CancelReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".notifications.PcNotificationPoster$DismissReceiver"
+            android:exported="false" />
+
         <!-- Android's answers while installing an update. -->
         <receiver
             android:name=".update.AppUpdater$InstallResult"

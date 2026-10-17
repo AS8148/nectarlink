@@ -654,13 +654,15 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                 }
             }
             is Event.NotificationPosted -> scope.launch(Dispatchers.Default) {
-                pcNotificationPoster.post(event.id, event.notification)
+                val (peer, name) = peerOf(event.id)
+                pcNotificationPoster.post(event.id, event.notification, peer, name)
             }
             is Event.NotificationRemoved -> scope.launch(Dispatchers.Default) {
                 pcNotificationPoster.cancel(event.id, event.key)
             }
             is Event.NotificationsReset -> scope.launch(Dispatchers.Default) {
-                pcNotificationPoster.reset(event.id, event.items)
+                val (peer, name) = peerOf(event.id)
+                pcNotificationPoster.reset(event.id, event.items, peer, name)
             }
             is Event.PcAudioFrame -> pcSpeakerPlayer.playFrame(
                 event.sampleRate.toInt(),
@@ -946,6 +948,17 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             _messages.tryEmit(describe(e))
             null
         }
+    }
+
+    /** Whether [id] is a paired phone or tablet (not a PC), and its name. */
+    private fun peerOf(id: String): Pair<Boolean, String> {
+        val device = _state.value.devices.firstOrNull { it.id == id }
+        return (device?.isAndroid == true) to device?.name.orEmpty()
+    }
+
+    /** Dismisses a paired phone's or tablet's notification there (dismissed here). */
+    fun dismissPeerNotification(id: String, key: String) {
+        command { it.dismissPeerNotification(id, key) }
     }
 
     /** Stops this phone's microphone stream to [pcId] and tells the PC. */
@@ -1623,6 +1636,8 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         CLIPBOARD_CAPABILITIES +
             // Play on phone: shows a PC's playback, streamed from the PC.
             listOf("media.watch") +
+            // Shows a paired phone's or tablet's notifications.
+            listOf("notify.show") +
             // Phone as microphone: asks for the permission when a PC first wants it.
             (if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)) listOf("mic.stream") else emptyList()) +
             toggles.capabilities() +
@@ -1694,6 +1709,21 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                 else -> PairingFailure.Unreachable
             }
             _state.update { s -> s.copy(pairing = PairingState.Failed(failure)) }
+        }
+    }
+
+    /**
+     * A pairing link for another phone or tablet to scan (this device hosts the pairing,
+     * as a PC does); null if the core can't make one now.
+     */
+    suspend fun pairingLink(): String? {
+        startJob?.join()
+        val node = node ?: return null
+        return try {
+            node.pairingStartQr()
+        } catch (e: NectarlinkException) {
+            _messages.tryEmit(describe(e))
+            null
         }
     }
 

@@ -483,6 +483,7 @@ private fun App(
             override fun pairNearby(id: String) = core.pairNearby(id)
             override fun confirm(matches: Boolean) = core.confirmCode(matches)
             override fun reset() = core.resetPairing()
+            override suspend fun showCode(): String? = core.pairingLink()
         }
     }
 

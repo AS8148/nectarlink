@@ -533,7 +533,7 @@ fun HomeScreen(
                 }
             }
         }
-        if (state.devices.isEmpty()) {
+        if (state.devices.none { !it.isAndroid }) {
             item(key = "no_paired_pc_card", contentType = "empty_pc") {
                 NoPairedPcCard(
                     onPairNew = onPairNew,
@@ -544,7 +544,7 @@ fun HomeScreen(
                 )
             }
         }
-        items(state.devices, key = { it.id }, contentType = { "pc_card" }) { device ->
+        items(state.devices.filter { !it.isAndroid }, key = { it.id }, contentType = { "pc_card" }) { device ->
             Box(
                 modifier = Modifier.guideHighlightRing(
                     highlighted = pulsingTarget == GuideHighlightTarget.HOME_PC_CARD ||
@@ -567,6 +567,10 @@ fun HomeScreen(
                     onBrowsePcFiles = { browseFilesPcId = it },
                 )
             }
+        }
+        // Another phone or tablet paired with this one.
+        items(state.devices.filter { it.isAndroid }, key = { it.id }, contentType = { "peer_card" }) { device ->
+            PeerCard(device = device, onRing = onRing, onSendFiles = onSendFiles)
         }
         if (state.sendQueue.isNotEmpty()) {
             item(key = "send_queue", contentType = "send_queue") {
@@ -1189,6 +1193,88 @@ private fun KeyboardBanner(from: String, onStop: () -> Unit) {
             )
             Spacer(Modifier.width(12.dp))
             Button(onClick = onStop) { Text(stringResource(R.string.keyboard_stop)) }
+        }
+    }
+}
+
+@Composable
+private fun PeerCard(
+    device: Device,
+    onRing: (String, Boolean) -> Unit,
+    onSendFiles: (String, List<Uri>) -> Unit,
+) {
+    val context = LocalContext.current
+    val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) onSendFiles(device.id, uris)
+    }
+    var ringing by remember(device.id) { mutableStateOf(false) }
+    val isGlass = LocalGlassTheme.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .liquidGlassCard(
+                cornerRadius = 28.dp,
+                isGlass = isGlass,
+                baseColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tintColor = MaterialTheme.colorScheme.primary,
+                outlineColor = if (isGlass) MaterialTheme.colorScheme.outlineVariant else Color.Transparent,
+            )
+            .padding(22.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(device.name, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    text = stringResource(
+                        if (device.kind == app.nectarlink.core.DeviceKind.TABLET) R.string.peer_kind_tablet else R.string.peer_kind_phone,
+                    ) + " · " + linkText(device.link),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            device.battery?.let { battery ->
+                Text(
+                    text = if (battery.charging) stringResource(R.string.battery_charging, battery.level.toInt())
+                    else stringResource(R.string.battery_level, battery.level.toInt()),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(
+                contentPadding = CardButtonPadding,
+                enabled = device.online && device.has("pair.ring"),
+                onClick = {
+                    ringing = !ringing
+                    onRing(device.id, ringing)
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(imageVector = BellIcon, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                ButtonLabel(stringResource(if (ringing) R.string.action_stop_ringing else R.string.action_ring_device))
+            }
+            FilledTonalButton(
+                contentPadding = CardButtonPadding,
+                enabled = !device.online || device.has("pair.files"),
+                onClick = { pickFiles.launch(arrayOf("*/*")) },
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(imageVector = SendArrowIcon, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                ButtonLabel(stringResource(R.string.action_send_files))
+            }
+        }
+        FilledTonalButton(
+            contentPadding = CardButtonPadding,
+            enabled = !device.online || device.has("pair.clipboard"),
+            onClick = { context.startActivity(SendActivity.sendClipboardIntent(context, device.id)) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(imageVector = ClipboardIcon, contentDescription = null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(6.dp))
+            ButtonLabel(stringResource(R.string.action_send_clipboard))
         }
     }
 }

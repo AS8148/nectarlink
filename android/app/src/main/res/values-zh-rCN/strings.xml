@@ -3,7 +3,11 @@
 <resources>
     <string name="app_name">NectarLink</string>
     <string name="pair_title">与电脑配对</string>
-    <string name="pair_scan_hint">在电脑上打开NectarLink，将摄像头对准它显示的二维码。</string>
+    <string name="pair_show_title">配对手机或平板</string>
+    <string name="pair_show_hint">在你的另一部手机或平板上打开 NectarLink，轻触“配对”，然后扫描此代码。</string>
+    <string name="pair_show_qr_desc">供另一部手机或平板使用的配对代码</string>
+    <string name="action_show_code">改为配对手机或平板</string>
+    <string name="pair_scan_hint">在电脑上打开NectarLink，将摄像头对准它显示的二维码。另一部手机或平板会在“配对手机或平板”中显示它的二维码。</string>
     <string name="pair_nearby_title">就近配对</string>
     <string name="pair_nearby_hint">在电脑上打开NectarLink并停留在配对界面，它就会出现在这里。</string>
     <string name="pair_looking">正在查找电脑…</string>
@@ -229,6 +233,9 @@
     <string name="action_allow_camera">允许使用相机</string>
     <string name="action_ring_pc">让电脑响铃</string>
     <string name="action_stop_ringing">停止响铃</string>
+    <string name="action_ring_device">响铃</string>
+    <string name="peer_kind_phone">手机</string>
+    <string name="peer_kind_tablet">平板</string>
     <string name="action_unpair">取消配对</string>
     <string name="action_pair_new">配对另一台电脑</string>
     <string name="action_refresh">刷新</string>
@@ -615,6 +622,7 @@
     <string name="companion_wake_off">关联你的电脑，让 Android 在其 BLE 信标进入范围时唤醒 NectarLink</string>
     <string name="companion_wake_associate">关联</string>
     <string name="channel_pc_notifications">电脑通知</string>
+    <string name="channel_peer_notifications">来自你另一部手机或平板的通知</string>
     <string name="action_browse_pc_files">浏览电脑文件</string>
     <string name="pc_files_title">%1$s 上的文件</string>
     <string name="pc_files_root">首页</string>
@@ -1131,10 +1139,10 @@
     <string name="guide_doctor_privacy">诊断在手机与已配对电脑之间本地运行。</string>
     <string name="guide_doctor_limits">部分手机厂商的省电模式必须设为不受限制。</string>
     <string name="pair_link_title">要与 %1$s 配对吗？</string>
-    <string name="pair_link_body">已打开一个配对链接。仅当您刚刚亲自扫描或打开此电脑的配对码时才进行配对。已配对的电脑可以接收此手机的通知和消息。</string>
+    <string name="pair_link_body">已打开一个配对链接。仅当您刚刚亲自扫描或打开此设备的配对码时才进行配对。已配对的设备可以接收此手机的通知和消息。</string>
     <string name="pair_link_confirm">配对</string>
     <string name="pair_link_cancel">取消</string>
-    <string name="pair_link_unknown_pc">此电脑</string>
+    <string name="pair_link_unknown_pc">此设备</string>
     <string name="data_clear_failed">部分历史记录无法清除。请重试。</string>
     <string name="channel_updates">更新</string>
     <string name="update_ready_title">NectarLink %1$s 已就绪</string>

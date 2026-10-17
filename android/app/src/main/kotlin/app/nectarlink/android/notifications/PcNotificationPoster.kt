@@ -5,6 +5,7 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -12,6 +13,7 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import app.nectarlink.android.NectarlinkApplication
 import app.nectarlink.android.R
 import app.nectarlink.android.ui.MainActivity
 import java.util.concurrent.ConcurrentHashMap
@@ -20,7 +22,9 @@ typealias MirroredNotification = app.nectarlink.core.Notification
 
 /**
  * Posts notifications mirrored from a paired PC (`notify.push` / `notify.list` / `notify.dismiss`)
- * into Android's system notification shade.
+ * into Android's system notification shade, and those of a paired phone or tablet
+ * (`notify.posted`), on a channel of their own: dismissing one of those here dismisses it on
+ * that device too.
  */
 class PcNotificationPoster(context: Context) {
     private val context = context.applicationContext
@@ -35,9 +39,21 @@ class PcNotificationPoster(context: Context) {
             NotificationManager.IMPORTANCE_DEFAULT,
         )
         manager?.createNotificationChannel(channel)
+        manager?.createNotificationChannel(
+            NotificationChannel(
+                PEER_CHANNEL_ID,
+                this.context.getString(R.string.channel_peer_notifications),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
+        )
     }
 
-    fun post(deviceId: String, n: MirroredNotification) {
+    /**
+     * Posts [n] from [deviceId]. For a paired phone or tablet ([fromPeer]), it goes on the
+     * peer channel, says which device it came from ([deviceName]), and dismissing it here
+     * dismisses it there.
+     */
+    fun post(deviceId: String, n: MirroredNotification, fromPeer: Boolean = false, deviceName: String = "") {
         val nm = manager ?: return
         if (!canPostNotifications()) return
         val keys = activeKeysByDevice.getOrPut(deviceId) { ConcurrentHashMap.newKeySet() }
@@ -50,16 +66,34 @@ class PcNotificationPoster(context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val title = n.title?.takeIf(String::isNotBlank) ?: n.appName.ifBlank { context.getString(R.string.your_pc) }
+        val fallback = if (fromPeer) deviceName else context.getString(R.string.your_pc)
+        val title = n.title?.takeIf(String::isNotBlank) ?: n.appName.ifBlank { fallback }
         val body = n.text.orEmpty()
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        val sub = if (fromPeer && deviceName.isNotBlank()) {
+            listOf(n.appName, deviceName).filter(String::isNotBlank).joinToString(" · ")
+        } else {
+            n.appName
+        }
+        val builder = NotificationCompat.Builder(context, if (fromPeer) PEER_CHANNEL_ID else CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(body)
-            .setSubText(n.appName.takeIf(String::isNotBlank))
+            .setSubText(sub.takeIf(String::isNotBlank))
             .setAutoCancel(true)
             .setSilent(n.silent)
             .setContentIntent(tapIntent)
+        if (fromPeer) {
+            builder.setDeleteIntent(
+                PendingIntent.getBroadcast(
+                    context,
+                    notificationId(deviceId, n.key),
+                    Intent(context, DismissReceiver::class.java)
+                        .putExtra(DismissReceiver.EXTRA_DEVICE, deviceId)
+                        .putExtra(DismissReceiver.EXTRA_KEY, n.key),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+        }
 
         if (body.length > 48) {
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -81,14 +115,14 @@ class PcNotificationPoster(context: Context) {
         manager?.cancel(notificationId(deviceId, key))
     }
 
-    fun reset(deviceId: String, items: List<MirroredNotification>) {
+    fun reset(deviceId: String, items: List<MirroredNotification>, fromPeer: Boolean = false, deviceName: String = "") {
         val newKeys = items.map { it.key }.toSet()
         val previous = activeKeysByDevice[deviceId]?.toSet().orEmpty()
         for (removedKey in previous - newKeys) {
             manager?.cancel(notificationId(deviceId, removedKey))
         }
         for (item in items) {
-            post(deviceId, item)
+            post(deviceId, item, fromPeer, deviceName)
         }
     }
 
@@ -112,5 +146,20 @@ class PcNotificationPoster(context: Context) {
 
     companion object {
         const val CHANNEL_ID = "pc_notifications"
+        const val PEER_CHANNEL_ID = "peer_notifications"
+    }
+
+    /** The user dismissed a paired phone's or tablet's notification here: dismiss it there. */
+    class DismissReceiver : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val device = intent.getStringExtra(EXTRA_DEVICE) ?: return
+            val key = intent.getStringExtra(EXTRA_KEY) ?: return
+            (context.applicationContext as NectarlinkApplication).core.dismissPeerNotification(device, key)
+        }
+
+        companion object {
+            const val EXTRA_DEVICE = "device"
+            const val EXTRA_KEY = "key"
+        }
     }
 }
