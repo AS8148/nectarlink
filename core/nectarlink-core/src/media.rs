@@ -12,12 +12,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use iroh::endpoint::{RecvStream, SendStream};
 use nectarlink_protocol::{
     DeviceId, Envelope, ErrorCode,
     messages::{
-        MediaCommand, MediaPlayer, MediaState, MediaWatch, media_actions, media_limits::PLAYERS, media_watch,
-        types,
+        MediaCommand, MediaFileMeta, MediaFileRead, MediaPlayer, MediaState, MediaWatch, StreamHeader,
+        WatchFile, media_actions, media_limits::PLAYERS, media_watch, types,
     },
+    read_frame, write_frame,
 };
 
 use crate::{Error, Result, events::NodeEvent, node::Shared, session::Session};
@@ -229,16 +231,37 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
     Ok(true)
 }
 
-/// Play on phone, on the PC: offers `peer` what `player` plays. The offer
-/// is what lets that phone start mirroring with `watch` (see
-/// [`watch_allowed`]).
+/// A Play on phone offer this PC made a phone.
+#[derive(Debug, Clone)]
+pub(crate) struct WatchOffer {
+    player: String,
+    /// When it was made, or last taken or left.
+    at: std::time::Instant,
+    /// The file the phone may read, for a file it plays itself.
+    file: Option<std::path::PathBuf>,
+}
+
+/// Play on phone, on the PC: offers `peer` what `player` plays, streamed,
+/// or with `file` (and where it had got to, `position_ms`), that video
+/// file for the phone to play itself. The offer is what lets that phone
+/// start mirroring with `watch` (see [`watch_allowed`]), or read the file
+/// (see [`serve_file`]).
 pub(crate) async fn offer_watch(
     shared: &Arc<Shared>,
     peer: DeviceId,
     player: String,
     title: Option<String>,
+    file: Option<(std::path::PathBuf, u64)>,
 ) -> Result<()> {
-    let watch = MediaWatch { player, title };
+    let described = match &file {
+        Some((path, position)) => {
+            let size = tokio::fs::metadata(path).await.map_err(|e| Error::Internal(e.to_string()))?.len();
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            Some(WatchFile { name, size, position: *position })
+        }
+        None => None,
+    };
+    let watch = MediaWatch { player, title, file: described };
     if !watch.is_valid() {
         return Err(Error::Internal("not a player to offer".into()));
     }
@@ -252,12 +275,12 @@ pub(crate) async fn offer_watch(
         return Err(Error::Denied);
     }
     let session = shared.session(&peer).ok_or(Error::Offline)?;
-    let player = watch.player.clone();
-    shared
-        .watch_offers
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(peer, (player, std::time::Instant::now()));
+    let offer = WatchOffer {
+        player: watch.player.clone(),
+        at: std::time::Instant::now(),
+        file: file.map(|(path, _)| path),
+    };
+    shared.watch_offers.lock().unwrap_or_else(|e| e.into_inner()).insert(peer, offer);
     let env = Envelope::new(types::MEDIA_WATCH, &watch)?;
     let answer =
         session.request(env, crate::session::REQUEST_TIMEOUT).await.and_then(|r| Ok(r.expect(types::OK)?));
@@ -272,8 +295,8 @@ pub(crate) async fn offer_watch(
 pub(crate) fn watch_allowed(shared: &Shared, peer: &DeviceId, player: &str) -> bool {
     let mut offers = shared.watch_offers.lock().unwrap_or_else(|e| e.into_inner());
     match offers.get_mut(peer) {
-        Some((offered, at)) if offered == player && at.elapsed() < WATCH_OFFER => {
-            *at = std::time::Instant::now();
+        Some(offer) if offer.player == player && offer.at.elapsed() < WATCH_OFFER => {
+            offer.at = std::time::Instant::now();
             true
         }
         _ => false,
@@ -288,14 +311,112 @@ pub(crate) fn watch_open(shared: &Shared, peer: &DeviceId) -> bool {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(peer)
-        .is_some_and(|(_, at)| at.elapsed() < WATCH_OFFER)
+        .is_some_and(|offer| offer.at.elapsed() < WATCH_OFFER)
 }
 
 /// Watching stopped: the offer stays open for a while from now.
 pub(crate) fn renew_watch(shared: &Shared, peer: &DeviceId) {
-    if let Some((_, at)) = shared.watch_offers.lock().unwrap_or_else(|e| e.into_inner()).get_mut(peer) {
-        *at = std::time::Instant::now();
+    if let Some(offer) = shared.watch_offers.lock().unwrap_or_else(|e| e.into_inner()).get_mut(peer) {
+        offer.at = std::time::Instant::now();
     }
+}
+
+/// The file `peer` may read, while its offer is open (reading renews it).
+fn offered_file(shared: &Shared, peer: &DeviceId) -> Option<std::path::PathBuf> {
+    let mut offers = shared.watch_offers.lock().unwrap_or_else(|e| e.into_inner());
+    let offer = offers.get_mut(peer).filter(|offer| offer.at.elapsed() < WATCH_OFFER)?;
+    offer.at = std::time::Instant::now();
+    offer.file.clone()
+}
+
+/// How long a `media/file` read may take to arrive or answer.
+const FILE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The PC's side of a `media/file` stream (its header already read): one
+/// read of the offered file, if `peer` has one open.
+pub(crate) async fn serve_file(
+    shared: Arc<Shared>,
+    peer: DeviceId,
+    mut send: SendStream,
+    mut recv: RecvStream,
+) {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let Ok(Ok(Some(bytes))) = tokio::time::timeout(FILE_TIMEOUT, read_frame(&mut recv)).await else {
+        return;
+    };
+    let Ok(env) = Envelope::from_cbor(&bytes) else { return };
+    let reply_error = |code, msg: &'static str| Envelope::error(code, msg).reply_to(env.id);
+    let read = match env.expect_body::<MediaFileRead>(types::MEDIA_FILE) {
+        Ok(read) => read,
+        Err(_) => {
+            let _ =
+                write_frame(&mut send, &reply_error(ErrorCode::BadMessage, "invalid media.file").to_cbor())
+                    .await;
+            let _ = send.finish();
+            return;
+        }
+    };
+    let Some(path) = offered_file(&shared, &peer) else {
+        let _ = write_frame(&mut send, &reply_error(ErrorCode::Denied, "no file offered").to_cbor()).await;
+        let _ = send.finish();
+        return;
+    };
+    let opened = async {
+        let mut file = tokio::fs::File::open(&path).await?;
+        let size = file.metadata().await?.len();
+        let length = read.length.min(media_watch::MAX_READ).min(size.saturating_sub(read.offset));
+        file.seek(std::io::SeekFrom::Start(read.offset.min(size))).await?;
+        let mut data = vec![0u8; length as usize];
+        file.read_exact(&mut data).await?;
+        std::io::Result::Ok((size, data))
+    }
+    .await;
+    let (size, data) = match opened {
+        Ok(read) => read,
+        Err(e) => {
+            tracing::warn!(error = %e, "can't read the offered file");
+            let _ =
+                write_frame(&mut send, &reply_error(ErrorCode::Internal, "can't read it").to_cbor()).await;
+            let _ = send.finish();
+            return;
+        }
+    };
+    let meta = MediaFileMeta { size, length: data.len() as u64 };
+    let Ok(reply) = Envelope::new(types::MEDIA_FILE_META, &meta).map(|e| e.reply_to(env.id)) else { return };
+    if write_frame(&mut send, &reply.to_cbor()).await.is_ok() && send.write_all(&data).await.is_ok() {
+        let _ = send.finish();
+    }
+}
+
+/// The phone's side: reads up to `length` bytes of the file `peer` (a PC)
+/// offered, from `offset`. Returns the file's size and the bytes.
+pub(crate) async fn read_file(session: &Session, offset: u64, length: u64) -> Result<(u64, Vec<u8>)> {
+    let (mut send, mut recv) = session.open_bi().await?;
+    let header = StreamHeader {
+        svc: media_watch::SERVICE.into(),
+        op: media_watch::OP_FILE.into(),
+        v: media_watch::VERSION,
+    };
+    write_frame(&mut send, &Envelope::new(types::STREAM, &header)?.to_cbor()).await?;
+    let read = MediaFileRead { offset, length: length.min(media_watch::MAX_READ) };
+    write_frame(&mut send, &Envelope::new(types::MEDIA_FILE, &read)?.with_id(1).to_cbor()).await?;
+    let _ = send.finish();
+    let reply = match tokio::time::timeout(FILE_TIMEOUT, read_frame(&mut recv)).await {
+        Ok(Ok(Some(bytes))) => Envelope::from_cbor(&bytes)?,
+        Ok(Ok(None)) => return Err(Error::Offline),
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => return Err(Error::Timeout),
+    };
+    let meta: MediaFileMeta = reply.expect_body(types::MEDIA_FILE_META)?;
+    if meta.length > media_watch::MAX_READ {
+        return Err(Error::Protocol("media.file sent too much".into()));
+    }
+    let mut data = vec![0u8; meta.length as usize];
+    tokio::time::timeout(FILE_TIMEOUT, recv.read_exact(&mut data))
+        .await
+        .map_err(|_| Error::Timeout)?
+        .map_err(|e| Error::Network(e.to_string()))?;
+    Ok((meta.size, data))
 }
 
 /// The phone's side of `media.watch`: show the offer.
@@ -311,10 +432,12 @@ async fn watch_offered(shared: &Arc<Shared>, peer: &DeviceId, watch: MediaWatch)
     }
     let platform = shared.platform.clone();
     let peer = *peer;
-    let MediaWatch { player, title } = watch;
-    match tokio::task::spawn_blocking(move || platform.watch_offered(&peer, &player, title.as_deref()))
-        .await
-        .unwrap_or_else(|e| Err(e.to_string()))
+    let MediaWatch { player, title, file } = watch;
+    match tokio::task::spawn_blocking(move || {
+        platform.watch_offered(&peer, &player, title.as_deref(), file.as_ref())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
     {
         Ok(()) => Envelope::empty(types::OK),
         Err(reason) => {

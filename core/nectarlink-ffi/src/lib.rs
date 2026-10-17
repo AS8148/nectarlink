@@ -764,6 +764,24 @@ pub enum Event {
     },
 }
 
+/// Play on phone: a video file a PC offers for the phone to play itself
+/// (`docs/protocol/media.md` §4), read with `watch_file_read`.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct WatchFileOffer {
+    /// Its file name, for the player to tell the format by.
+    pub name: String,
+    pub size: u64,
+    /// Where the PC had got to, milliseconds.
+    pub position_ms: u64,
+}
+
+/// Bytes of an offered file (`watch_file_read`), and the file's size.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct WatchFileChunk {
+    pub size: u64,
+    pub data: Vec<u8>,
+}
+
 /// One file or folder returned by `list_remote_storage` (`storage.list`).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RemoteStorageEntry {
@@ -2585,8 +2603,15 @@ pub trait Platform: Send + Sync {
     fn open_link(&self, from_id: String, url: String) -> bool;
     /// Play on phone: a paired PC offers to stream what its `player` plays
     /// (`title`). Show the offer; taking it starts PC mirroring with
-    /// `watch` set to `player`. False if it couldn't be shown.
-    fn watch_offered(&self, from_id: String, player: String, title: Option<String>) -> bool;
+    /// `watch` set to `player`, or with `file`, plays that video file read
+    /// with `watch_file_read`. False if it couldn't be shown.
+    fn watch_offered(
+        &self,
+        from_id: String,
+        player: String,
+        title: Option<String>,
+        file: Option<WatchFileOffer>,
+    ) -> bool;
     /// A paired PC sent an ongoing or completed task notification (`task.notify`).
     /// False if it couldn't be shown.
     fn task_notify(&self, from_id: String, task: TaskNotify) -> bool;
@@ -2793,8 +2818,16 @@ impl core::Platform for PlatformAdapter {
     fn open_link(&self, from: &DeviceId, url: &str) -> Result<(), String> {
         if self.0.open_link(from.to_string(), url.to_owned()) { Ok(()) } else { Err("not shown".into()) }
     }
-    fn watch_offered(&self, from: &DeviceId, player: &str, title: Option<&str>) -> Result<(), String> {
-        if self.0.watch_offered(from.to_string(), player.to_owned(), title.map(str::to_owned)) {
+    fn watch_offered(
+        &self,
+        from: &DeviceId,
+        player: &str,
+        title: Option<&str>,
+        file: Option<&core::WatchFile>,
+    ) -> Result<(), String> {
+        let file =
+            file.map(|f| WatchFileOffer { name: f.name.clone(), size: f.size, position_ms: f.position });
+        if self.0.watch_offered(from.to_string(), player.to_owned(), title.map(str::to_owned), file) {
             Ok(())
         } else {
             Err("not shown".into())
@@ -4160,6 +4193,22 @@ impl NectarlinkNode {
     pub async fn network_changed(&self) {
         let node = self.node.clone();
         self.run(async move { node.network_changed().await }).await;
+    }
+
+    /// Play on phone: reads up to `length` bytes (at most 4 MiB) from
+    /// `offset` of the video file the PC `peer` offered. Blocks; call off the
+    /// main thread (a player's data source does).
+    pub fn watch_file_read(
+        &self,
+        peer: String,
+        offset: u64,
+        length: u64,
+    ) -> Result<WatchFileChunk, NectarlinkError> {
+        let peer_id = parse_id(&peer)?;
+        let node = self.node.clone();
+        let (size, data) =
+            self.block_on_rt(async move { node.watch_file_read(peer_id, offset, length).await })?;
+        Ok(WatchFileChunk { size, data })
     }
 
     /// Lists entries in a directory on a connected paired device (`storage.list`).

@@ -57,6 +57,7 @@ import app.nectarlink.android.ui.remote.PcMirrorView
 import app.nectarlink.android.ui.theme.LocalReducedMotion
 import app.nectarlink.android.ui.theme.NectarlinkTheme
 import app.nectarlink.core.MediaAction
+import app.nectarlink.core.WatchFileOffer
 import kotlinx.coroutines.delay
 
 /**
@@ -76,13 +77,20 @@ class WatchActivity : ComponentActivity() {
         }
         val pcName = intent.getStringExtra(EXTRA_PC_NAME).orEmpty()
         val title = intent.getStringExtra(EXTRA_TITLE)
+        val file = intent.getStringExtra(EXTRA_FILE_NAME)?.let { name ->
+            WatchFileOffer(
+                name = name,
+                size = intent.getLongExtra(EXTRA_FILE_SIZE, 0).toULong(),
+                positionMs = intent.getLongExtra(EXTRA_FILE_POSITION, 0).toULong(),
+            )
+        }
         WatchOffers.dismiss(this, pcId)
         val core = (application as NectarlinkApplication).core
         val preferences = Preferences(this)
         setContent {
             val appearance by preferences.appearance.collectAsStateWithLifecycle()
             NectarlinkTheme(appearance) {
-                WatchScreen(core, pcId, pcName, player, title, onClose = ::finish)
+                WatchScreen(core, pcId, pcName, player, title, file, onClose = ::finish)
             }
         }
     }
@@ -92,13 +100,30 @@ class WatchActivity : ComponentActivity() {
         private const val EXTRA_PC_NAME = "watch_pc_name"
         private const val EXTRA_PLAYER = "watch_player"
         private const val EXTRA_TITLE = "watch_title"
+        private const val EXTRA_FILE_NAME = "watch_file_name"
+        private const val EXTRA_FILE_SIZE = "watch_file_size"
+        private const val EXTRA_FILE_POSITION = "watch_file_position"
 
-        fun intent(context: Context, pcId: String, pcName: String, player: String, title: String?): Intent =
+        fun intent(
+            context: Context,
+            pcId: String,
+            pcName: String,
+            player: String,
+            title: String?,
+            file: WatchFileOffer? = null,
+        ): Intent =
             Intent(context, WatchActivity::class.java)
                 .putExtra(EXTRA_PC, pcId)
                 .putExtra(EXTRA_PC_NAME, pcName)
                 .putExtra(EXTRA_PLAYER, player)
                 .putExtra(EXTRA_TITLE, title)
+                .apply {
+                    if (file != null) {
+                        putExtra(EXTRA_FILE_NAME, file.name)
+                        putExtra(EXTRA_FILE_SIZE, file.size.toLong())
+                        putExtra(EXTRA_FILE_POSITION, file.positionMs.toLong())
+                    }
+                }
     }
 }
 
@@ -109,11 +134,14 @@ private fun WatchScreen(
     pcName: String,
     player: String,
     title: String?,
+    file: WatchFileOffer?,
     onClose: () -> Unit,
 ) {
     val reducedMotion = LocalReducedMotion.current
     val playing by core.pcMedia.playing.collectAsStateWithLifecycle()
-    val isPlaying = playing["$pcId/$player"] ?: true
+    // A file plays here; a stream plays on the PC.
+    val local = remember(file) { file?.let { LocalPlayback() } }
+    val isPlaying = if (local != null) local.playing else playing["$pcId/$player"] ?: true
     var controls by remember { mutableStateOf(true) }
     var shownAt by remember { mutableIntStateOf(0) }
 
@@ -126,19 +154,32 @@ private fun WatchScreen(
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        PcMirrorView(
-            pcId = pcId,
-            pcName = pcName,
-            core = core,
-            modifier = Modifier.fillMaxSize(),
-            isFullScreen = true,
-            onFullScreenChange = { full -> if (!full) onClose() },
-            watch = player,
-            onTap = {
-                controls = !controls
-                shownAt++
-            },
-        )
+        val onTap: () -> Unit = {
+            controls = !controls
+            shownAt++
+        }
+        if (file != null && local != null) {
+            FileWatchView(
+                file = file,
+                read = { offset, length -> core.readWatchFile(pcId, offset, length) },
+                playback = local,
+                // The phone took over: the PC stops, as when a service opens in its app.
+                onStarted = { core.pcMedia.command(pcId, player, MediaAction.PAUSE) },
+                onTap = onTap,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            PcMirrorView(
+                pcId = pcId,
+                pcName = pcName,
+                core = core,
+                modifier = Modifier.fillMaxSize(),
+                isFullScreen = true,
+                onFullScreenChange = { full -> if (!full) onClose() },
+                watch = player,
+                onTap = onTap,
+            )
+        }
         AnimatedVisibility(
             visible = controls,
             enter = if (reducedMotion) EnterTransition.None else fadeIn(tween(180)),
@@ -157,7 +198,8 @@ private fun WatchScreen(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            text = title?.takeIf { it.isNotBlank() } ?: stringResource(R.string.watch_offer_untitled),
+                            text = title?.takeIf { it.isNotBlank() } ?: file?.name
+                                ?: stringResource(R.string.watch_offer_untitled),
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White,
                             maxLines = 1,
@@ -186,7 +228,11 @@ private fun WatchScreen(
                     val label = stringResource(if (isPlaying) R.string.media_pause else R.string.media_play)
                     IconButton(
                         onClick = {
-                            core.pcMedia.command(pcId, player, if (isPlaying) MediaAction.PAUSE else MediaAction.PLAY)
+                            if (local != null) {
+                                local.toggle()
+                            } else {
+                                core.pcMedia.command(pcId, player, if (isPlaying) MediaAction.PAUSE else MediaAction.PLAY)
+                            }
                             shownAt++
                         },
                         colors = IconButtonDefaults.iconButtonColors(

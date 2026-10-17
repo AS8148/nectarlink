@@ -271,6 +271,7 @@
     <string name="channel_links">来自电脑的链接</string>
     <string name="watch_offer_title">观看 %1$s 上的播放</string>
     <string name="watch_offer_untitled">电脑上正在播放的内容</string>
+    <string name="watch_file_failed">无法播放此视频。</string>
     <string name="watch_offer_action">观看</string>
     <string name="watch_from">来自 %1$s</string>
     <string name="watch_close">关闭</string>

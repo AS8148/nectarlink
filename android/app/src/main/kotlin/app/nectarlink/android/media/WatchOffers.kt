@@ -12,9 +12,11 @@ import androidx.core.content.ContextCompat
 import app.nectarlink.android.R
 import app.nectarlink.android.links.LinkNotifications
 import app.nectarlink.android.ui.watch.WatchActivity
+import app.nectarlink.core.WatchFileOffer
 
 /**
- * Play on phone: a PC offers to stream what one of its players plays. Android doesn't let an
+ * Play on phone: a PC offers to stream what one of its players plays, or a video file for the
+ * phone to play itself. Android doesn't let an
  * app in the background open a screen, so the offer waits in a notification (on the links
  * channel, as links from the PC do); with NectarLink in front, the Watch screen opens at once.
  */
@@ -22,9 +24,16 @@ object WatchOffers {
     private const val TAG = "watch"
 
     /** Shows the offer; false if notifications are off and it couldn't open either. */
-    fun show(context: Context, pcId: String, pcName: String, player: String, title: String?): Boolean {
+    fun show(
+        context: Context,
+        pcId: String,
+        pcName: String,
+        player: String,
+        title: String?,
+        file: WatchFileOffer? = null,
+    ): Boolean {
         val from = pcName.ifEmpty { context.getString(R.string.your_pc) }
-        val watch = WatchActivity.intent(context, pcId, from, player, title)
+        val watch = WatchActivity.intent(context, pcId, from, player, title, file)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         // Allowed only while NectarLink is in front; otherwise Android ignores it.
         val opened = runCatching { context.startActivity(watch) }.isSuccess
@@ -39,7 +48,7 @@ object WatchOffers {
             watch,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val text = title?.takeIf { it.isNotBlank() } ?: context.getString(R.string.watch_offer_untitled)
+        val text = title?.takeIf { it.isNotBlank() } ?: file?.name ?: context.getString(R.string.watch_offer_untitled)
         val notification = NotificationCompat.Builder(context, LinkNotifications.CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.watch_offer_title, from))

@@ -1463,6 +1463,13 @@ pub(crate) async fn accept_stream(
             crate::mirror::receive_audio(shared, session.peer, send, recv).await;
         }
         Some(h)
+            if h.svc == nectarlink_protocol::messages::media_watch::SERVICE
+                && h.op == nectarlink_protocol::messages::media_watch::OP_FILE
+                && h.v == nectarlink_protocol::messages::media_watch::VERSION =>
+        {
+            crate::media::serve_file(shared, session.peer, send, recv).await;
+        }
+        Some(h)
             if h.svc == nectarlink_protocol::messages::mic::SERVICE
                 && h.op == nectarlink_protocol::messages::mic::OP_PCM
                 && h.v == nectarlink_protocol::messages::mic::VERSION =>

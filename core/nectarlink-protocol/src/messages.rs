@@ -39,6 +39,8 @@ pub mod types {
     pub const MEDIA_SYNC: &str = "media.sync";
     pub const MEDIA_COMMAND: &str = "media.command";
     pub const MEDIA_WATCH: &str = "media.watch";
+    pub const MEDIA_FILE: &str = "media.file";
+    pub const MEDIA_FILE_META: &str = "media.file.meta";
     pub const PC_POWER: &str = "pc.power";
     pub const PC_WAKE_INFO: &str = "pc.wake_info";
     pub const LINK_OPEN: &str = "link.open";
@@ -1013,6 +1015,48 @@ pub mod media_watch {
     pub const WATCH: &str = "media.watch";
     /// Offered by PCs that stream a player's picture and sound on request.
     pub const STREAM: &str = "media.stream";
+    /// Stream service and operation for reading an offered file.
+    pub const SERVICE: &str = "media";
+    pub const OP_FILE: &str = "file";
+    pub const VERSION: u32 = 1;
+    /// The most one `media.file` read returns.
+    pub const MAX_READ: u64 = 4 * 1024 * 1024;
+}
+
+/// A video file a PC player plays, offered with `media.watch` for the phone
+/// to play itself (`docs/protocol/media.md` §4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchFile {
+    /// Its file name, for the phone's player to tell the format by.
+    pub name: String,
+    /// Its size in bytes.
+    pub size: u64,
+    /// Where the PC had got to, milliseconds.
+    #[serde(default)]
+    pub position: u64,
+}
+
+impl WatchFile {
+    pub fn is_valid(&self) -> bool {
+        (1..=media_limits::TEXT_CHARS).contains(&self.name.chars().count())
+            && !self.name.contains(['/', '\\'])
+            && self.size > 0
+    }
+}
+
+/// Body of `media.file` on a `media/file` stream: read `length` bytes of
+/// the offered file from `offset`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaFileRead {
+    pub offset: u64,
+    pub length: u64,
+}
+
+/// Body of `media.file.meta`: the file's size and how many bytes follow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaFileMeta {
+    pub size: u64,
+    pub length: u64,
 }
 
 /// Body of `media.watch`: a PC offers to stream what a player of its own
@@ -1024,12 +1068,17 @@ pub struct MediaWatch {
     /// What it plays, to show with the offer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// A video file the phone plays itself, read from the PC, instead of
+    /// watching the PC's stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<WatchFile>,
 }
 
 impl MediaWatch {
     pub fn is_valid(&self) -> bool {
         (1..=media_limits::ID_BYTES).contains(&self.player.len())
             && self.title.as_ref().is_none_or(|t| t.chars().count() <= media_limits::TEXT_CHARS)
+            && self.file.as_ref().is_none_or(WatchFile::is_valid)
     }
 }
 
@@ -5069,11 +5118,26 @@ mod tests {
 
     #[test]
     fn play_on_phone_messages_validate() {
-        let offer = MediaWatch { player: "Chrome".into(), title: Some("A video".into()) };
+        let offer = MediaWatch { player: "Chrome".into(), title: Some("A video".into()), file: None };
         assert!(offer.is_valid());
-        assert!(!MediaWatch { player: String::new(), title: None }.is_valid());
-        assert!(!MediaWatch { player: "p".repeat(257), title: None }.is_valid());
-        assert!(!MediaWatch { player: "Chrome".into(), title: Some("t".repeat(257)) }.is_valid());
+        assert!(!MediaWatch { player: String::new(), title: None, file: None }.is_valid());
+        assert!(!MediaWatch { player: "p".repeat(257), title: None, file: None }.is_valid());
+        assert!(!MediaWatch { player: "Chrome".into(), title: Some("t".repeat(257)), file: None }.is_valid());
+
+        // A file offer: a plain name and a size; it goes over the wire as is.
+        let file = WatchFile { name: "Holiday.mp4".into(), size: 1_000, position: 61_500 };
+        let with_file = MediaWatch { player: "vlc.exe".into(), title: None, file: Some(file.clone()) };
+        assert!(with_file.is_valid());
+        let env = Envelope::new(types::MEDIA_WATCH, &with_file).unwrap();
+        assert_eq!(Envelope::from_cbor(&env.to_cbor()).unwrap().body::<MediaWatch>().unwrap(), with_file);
+        for bad in [
+            WatchFile { name: String::new(), ..file.clone() },
+            WatchFile { name: "a/b.mp4".into(), ..file.clone() },
+            WatchFile { name: "a\\b.mp4".into(), ..file.clone() },
+            WatchFile { size: 0, ..file.clone() },
+        ] {
+            assert!(!MediaWatch { file: Some(bad.clone()), ..with_file.clone() }.is_valid(), "{bad:?}");
+        }
 
         let screen = MirrorStart {
             max_size: 1280,

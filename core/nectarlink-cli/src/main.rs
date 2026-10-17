@@ -984,10 +984,11 @@ fn stream_sound(sound: &nectarlink_core::MirrorStream, rate: u32, channels: u8, 
 static MIC_ASKS: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<DeviceId>> =
     std::sync::OnceLock::new();
 
-/// Play on phone offers from PCs: (PC, player, title).
-static WATCH_OFFERS: std::sync::OnceLock<
-    tokio::sync::mpsc::UnboundedSender<(DeviceId, String, Option<String>)>,
-> = std::sync::OnceLock::new();
+/// A Play on phone offer from a PC: (PC, player, title, a file to play itself).
+type WatchOffer = (DeviceId, String, Option<String>, Option<nectarlink_core::WatchFile>);
+/// Play on phone offers from PCs.
+static WATCH_OFFERS: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<WatchOffer>> =
+    std::sync::OnceLock::new();
 
 static SCREEN_ASKS: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<(DeviceId, bool, u32)>> =
     std::sync::OnceLock::new();
@@ -1790,10 +1791,23 @@ impl Platform for TerminalPlatform {
         from: &DeviceId,
         player: &str,
         title: Option<&str>,
+        file: Option<&nectarlink_core::WatchFile>,
     ) -> std::result::Result<(), String> {
         let offers = WATCH_OFFERS.get().ok_or("not watching (run `watch`)")?;
-        println!("{} offers to stream {player}: {}", from.short(), title.unwrap_or("(untitled)"));
-        offers.send((*from, player.to_owned(), title.map(str::to_owned))).map_err(|e| e.to_string())
+        match file {
+            Some(f) => println!(
+                "{} offers {} ({} bytes, at {} ms) from {player}: {}",
+                from.short(),
+                f.name,
+                f.size,
+                f.position,
+                title.unwrap_or("(untitled)")
+            ),
+            None => println!("{} offers to stream {player}: {}", from.short(), title.unwrap_or("(untitled)")),
+        }
+        offers
+            .send((*from, player.to_owned(), title.map(str::to_owned), file.cloned()))
+            .map_err(|e| e.to_string())
     }
     fn mirror_sink(
         &self,
@@ -3327,10 +3341,10 @@ async fn run(cli: &Cli, node: &Node) -> Result<()> {
             let id = resolve(node, device)?;
             wait_until_online(node, id).await?;
             println!("Waiting for the PC to offer something to watch (Play on phone on its media card).");
-            let player = tokio::time::timeout(std::time::Duration::from_secs(*wait), async {
-                while let Some((from, player, _)) = offers.recv().await {
+            let (player, file) = tokio::time::timeout(std::time::Duration::from_secs(*wait), async {
+                while let Some((from, player, _, file)) = offers.recv().await {
                     if from == id {
-                        return Some(player);
+                        return Some((player, file));
                     }
                 }
                 None
@@ -3339,6 +3353,33 @@ async fn run(cli: &Cli, node: &Node) -> Result<()> {
             .ok()
             .flatten()
             .context("no offer came")?;
+            // A video file: read it all from the PC, as the phone's player would.
+            if let Some(file) = file {
+                use std::io::Write;
+                drop(recording.file.lock().unwrap().take());
+                let mut saved = std::fs::File::create(out).context("can't create the file")?;
+                let started = std::time::Instant::now();
+                let mut offset = 0u64;
+                while offset < file.size {
+                    let (size, bytes) = node
+                        .watch_file_read(id, offset, nectarlink_core::MEDIA_WATCH_MAX_READ)
+                        .await
+                        .context("the PC didn't send the file")?;
+                    if bytes.is_empty() || size != file.size {
+                        bail!("the PC sent {} bytes at {offset} of {size}", bytes.len());
+                    }
+                    saved.write_all(&bytes)?;
+                    offset += bytes.len() as u64;
+                }
+                let secs = started.elapsed().as_secs_f64().max(0.001);
+                println!(
+                    "Read {} ({offset} bytes) in {secs:.1} s, {:.1} MB/s; it plays from {} ms.",
+                    file.name,
+                    offset as f64 / secs / 1e6,
+                    file.position
+                );
+                return Ok(());
+            }
             let mut events = node.events();
             let options = nectarlink_core::MirrorStart {
                 max_size: 1920,

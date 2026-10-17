@@ -143,8 +143,10 @@ impl Platform for RecordingPlatform {
         _from: &nectarlink_core::DeviceId,
         player: &str,
         title: Option<&str>,
+        file: Option<&nectarlink_core::WatchFile>,
     ) -> Result<(), String> {
-        self.watch_offers.lock().unwrap().push(format!("{player}: {}", title.unwrap_or("")));
+        let file = file.map(|f| format!(" [{} {} at {}]", f.name, f.size, f.position)).unwrap_or_default();
+        self.watch_offers.lock().unwrap().push(format!("{player}: {}{file}", title.unwrap_or("")));
         Ok(())
     }
     fn mirror_stop_requested(&self, _peer: &nectarlink_core::DeviceId, session: u32) {
@@ -5676,6 +5678,61 @@ async fn pc_audio_reaches_the_phone_over_both_paths() {
         }
     }
     assert!(heard > 0, "the phone never surfaced the PC's audio");
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+/// Play on phone for a video file: the phone reads only the file the PC
+/// offered, in ranges, while the offer is open.
+#[tokio::test(flavor = "multi_thread")]
+async fn play_on_phone_offers_a_video_file_the_phone_reads_in_ranges() {
+    use nectarlink_core::{MEDIA_STREAM, MEDIA_WATCH, MEDIA_WATCH_MAX_READ};
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[MEDIA_STREAM]).await;
+    let mut phone =
+        device_with("Pixel", DeviceKind::Phone, &[MEDIA_WATCH, nectarlink_core::MIRROR_VIEW]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+
+    // Nothing offered yet: nothing to read.
+    let early = phone.node.watch_file_read(pc_id, 0, 1024).await;
+    assert!(matches!(early, Err(Error::Denied)), "{early:?}");
+
+    let dir = tempfile::tempdir().unwrap();
+    let movie = dir.path().join("Holiday.mp4");
+    let bytes: Vec<u8> = (0..(MEDIA_WATCH_MAX_READ as usize + 300_000)).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&movie, &bytes).unwrap();
+    with_timeout(
+        "offer the file",
+        pc.node.offer_watch_file(phone_id, "vlc.exe".into(), Some("Holiday".into()), movie.clone(), 61_500),
+    )
+    .await
+    .unwrap();
+    let offered = format!("vlc.exe: Holiday [Holiday.mp4 {} at 61500]", bytes.len());
+    assert_eq!(*phone.platform.watch_offers.lock().unwrap(), [offered]);
+
+    // Ranges come back as they are on the PC, capped at one read's worth.
+    let (size, head) =
+        with_timeout("read the start", phone.node.watch_file_read(pc_id, 0, 1000)).await.unwrap();
+    assert_eq!((size, head.as_slice()), (bytes.len() as u64, &bytes[..1000]));
+    let (_, big) = with_timeout("read a lot", phone.node.watch_file_read(pc_id, 10, u64::MAX)).await.unwrap();
+    assert_eq!(big.len() as u64, MEDIA_WATCH_MAX_READ);
+    assert_eq!(big.as_slice(), &bytes[10..10 + MEDIA_WATCH_MAX_READ as usize]);
+    let tail_at = bytes.len() as u64 - 100;
+    let (_, tail) =
+        with_timeout("read the end", phone.node.watch_file_read(pc_id, tail_at, 4096)).await.unwrap();
+    assert_eq!(tail.as_slice(), &bytes[tail_at as usize..]);
+    let (_, past) =
+        with_timeout("read past it", phone.node.watch_file_read(pc_id, bytes.len() as u64 + 5, 10))
+            .await
+            .unwrap();
+    assert!(past.is_empty());
+
+    // A streamed offer replaces it: the file can't be read any more.
+    with_timeout("offer a stream", pc.node.offer_watch(phone_id, "Chrome".into(), None)).await.unwrap();
+    let after = phone.node.watch_file_read(pc_id, 0, 10).await;
+    assert!(matches!(after, Err(Error::Denied)), "{after:?}");
 
     pc.node.shutdown().await;
     phone.node.shutdown().await;

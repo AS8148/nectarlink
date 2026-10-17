@@ -16,7 +16,10 @@ change things that need a step from you, and its notes say so.
   as it plays, picture and sound, so your browser's ad blocker still
   works on YouTube: the phone shows just the video, even with other
   windows over it on the PC, in Chrome, Edge, Firefox, Zen and other
-  browsers. Tap the notification on the phone to watch.
+  browsers. A video file playing in VLC, Media Player or another desktop
+  player plays on the phone itself, read from the PC at its full quality,
+  from where the PC was; the PC pauses. Tap the notification on the phone
+  to watch.
   The PC mutes its speakers while you watch and turns them back on after
   (**Settings › Camera & Audio** to keep them on).
   Scripts can do the same through the local API

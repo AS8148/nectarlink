@@ -146,6 +146,8 @@ pub fn play(player: String) {
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
         let (title, position) = now_playing(&player);
         let window = browser::window_for(&player, &title);
+        // A video file in a desktop player: the phone plays the file itself.
+        let file = crate::media_file::file_for(&player, &title);
         let url = window
             .as_ref()
             .filter(|w| browser::is_browser(&w.program))
@@ -153,6 +155,18 @@ pub fn play(player: String) {
         let plan = nectarlink_core::play_on_phone::plan(url.as_deref(), position);
         let Some(node) = core_host::node() else { return };
         core_host::spawn(async move {
+            if let Some(file) = file {
+                let shown = (!title.is_empty()).then_some(title);
+                let at = u64::from(position.unwrap_or(0)) * 1000;
+                match node.offer_watch_file(phone, player, shown, file, at).await {
+                    Ok(()) => {
+                        asked();
+                        show_message(tr!("PlayOnPhone", "Tap the notification on %1 to watch.", name));
+                    }
+                    Err(e) => show_message(failed(&e, &name)),
+                }
+                return;
+            }
             match plan {
                 PlayOnPhone::Open { url, service } => match node.open_link(phone, url).await {
                     Ok(()) => {

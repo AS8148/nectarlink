@@ -28,6 +28,7 @@ mod local_api;
 mod logging;
 mod mark;
 mod media;
+mod media_file;
 mod messages;
 mod mirror;
 mod notification_store;

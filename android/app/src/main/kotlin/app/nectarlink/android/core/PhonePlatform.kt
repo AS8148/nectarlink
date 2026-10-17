@@ -62,7 +62,7 @@ internal class PhonePlatform(
     /** Shows a link a PC sent: (PC's ID, link) → shown. */
     private val onLink: (String, String) -> Boolean,
     /** Shows a PC's Play on phone offer: (PC's ID, player, title) → shown. */
-    private val onWatch: (String, String, String?) -> Boolean,
+    private val onWatch: (String, String, String?, app.nectarlink.core.WatchFileOffer?) -> Boolean,
     /** Asks the user to start the microphone for a PC: PC's ID → asked. */
     private val onMic: (String) -> Boolean,
     /** Shows or updates a watched task from a PC: (PC's ID, task) → shown. */
@@ -107,8 +107,12 @@ internal class PhonePlatform(
 
     override fun openLink(fromId: String, url: String): Boolean = onLink(fromId, url)
 
-    override fun watchOffered(fromId: String, player: String, title: String?): Boolean =
-        onWatch(fromId, player, title)
+    override fun watchOffered(
+        fromId: String,
+        player: String,
+        title: String?,
+        file: app.nectarlink.core.WatchFileOffer?,
+    ): Boolean = onWatch(fromId, player, title, file)
 
     override fun taskNotify(fromId: String, task: TaskNotify): Boolean = onTask(fromId, task)
 

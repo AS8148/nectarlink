@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use windows::{
     Win32::{
         System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree, IPersistFile},
-        UI::Shell::{FOLDERID_SendTo, IShellLinkW, KF_FLAG_DEFAULT, SHGetKnownFolderPath, ShellLink},
+        UI::Shell::{
+            FOLDERID_Recent, FOLDERID_SendTo, IShellLinkW, KF_FLAG_DEFAULT, SHGetKnownFolderPath, ShellLink,
+        },
     },
     core::{HSTRING, Interface},
 };
@@ -57,11 +59,39 @@ pub fn arguments(path: &Path) -> Option<String> {
     })
 }
 
+/// What a shortcut points at, or `None` if it can't be read (or points at
+/// no file, as a shortcut to a website does).
+pub fn target(path: &Path) -> Option<PathBuf> {
+    with_com(|| {
+        // SAFETY: as in `arguments`; the buffer holds the longest path.
+        unsafe {
+            let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+            link.cast::<IPersistFile>()
+                .ok()?
+                .Load(&HSTRING::from(path.as_os_str()), Default::default())
+                .ok()?;
+            let mut buffer = [0u16; 32768];
+            link.GetPath(&mut buffer, std::ptr::null_mut(), 0).ok()?;
+            let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+            (len > 0).then(|| PathBuf::from(String::from_utf16_lossy(&buffer[..len])))
+        }
+    })
+}
+
 /// The user's "Send to" folder.
 pub fn send_to_dir() -> Option<PathBuf> {
+    known_folder(&FOLDERID_SendTo)
+}
+
+/// The user's Recent folder: a shortcut to each file opened lately.
+pub fn recent_dir() -> Option<PathBuf> {
+    known_folder(&FOLDERID_Recent)
+}
+
+fn known_folder(id: &windows::core::GUID) -> Option<PathBuf> {
     // SAFETY: the returned string is freed with CoTaskMemFree as documented.
     unsafe {
-        let path = SHGetKnownFolderPath(&FOLDERID_SendTo, KF_FLAG_DEFAULT, None).ok()?;
+        let path = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok()?;
         let result = path.to_string().ok().map(PathBuf::from);
         CoTaskMemFree(Some(path.as_ptr().cast()));
         result
@@ -83,6 +113,8 @@ mod tests {
         };
         write(&path, &shortcut).unwrap();
         assert_eq!(arguments(&path).as_deref(), Some(shortcut.arguments.as_str()));
+        assert_eq!(target(&path), Some(shortcut.target.clone()));
+        assert_eq!(target(&dir.path().join("missing.lnk")), None);
         // Replacing works too.
         write(&path, &Shortcut { arguments: "--send-to def".into(), ..shortcut }).unwrap();
         assert_eq!(arguments(&path).as_deref(), Some("--send-to def"));
@@ -93,5 +125,11 @@ mod tests {
     fn finds_the_send_to_folder() {
         let dir = send_to_dir().expect("every user has one");
         assert!(dir.ends_with("SendTo"), "{}", dir.display());
+    }
+
+    #[test]
+    fn finds_the_recent_folder() {
+        let dir = recent_dir().expect("every user has one");
+        assert!(dir.ends_with("Recent"), "{}", dir.display());
     }
 }

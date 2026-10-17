@@ -100,13 +100,14 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         onMic = { pc ->
             app.nectarlink.android.mic.MicRequests.show(this.context, pc, _state.value.nameOf(pc).orEmpty())
         },
-        onWatch = { pc, player, title ->
+        onWatch = { pc, player, title, file ->
             app.nectarlink.android.media.WatchOffers.show(
                 this.context,
                 pc,
                 _state.value.nameOf(pc).orEmpty(),
                 player,
                 title,
+                file,
             )
         },
         onTask = { pc, task ->
@@ -2119,6 +2120,15 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     fun removeSafFolder(name: String) {
         PhoneStorage.removeSafFolder(context, name)
         refreshNotificationAccess()
+    }
+
+    /**
+     * Play on phone: up to [length] bytes from [offset] of the video file a PC offered.
+     * Blocks; call off the main thread.
+     */
+    fun readWatchFile(pcId: String, offset: Long, length: Long): ByteArray {
+        val running = node ?: throw java.io.IOException("NectarLink isn't running")
+        return running.watchFileRead(pcId, offset.toULong(), length.toULong()).data
     }
 
     /** Lists files and folders in `path` on a paired PC (`storage.list`). */

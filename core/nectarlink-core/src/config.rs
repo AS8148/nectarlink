@@ -322,12 +322,14 @@ pub trait Platform: Send + Sync + 'static {
 
     /// Play on phone: a paired PC offers to stream what `player` plays
     /// (`title`). The phone shows the offer; taking it starts mirroring with
-    /// `watch` set to `player`.
+    /// `watch` set to `player`. With `file`, the phone plays that video file
+    /// itself instead, read with [`Node::watch_file_read`](crate::Node::watch_file_read).
     fn watch_offered(
         &self,
         _from: &nectarlink_protocol::DeviceId,
         _player: &str,
         _title: Option<&str>,
+        _file: Option<&nectarlink_protocol::messages::WatchFile>,
     ) -> Result<(), String> {
         Err("this device doesn't show a PC's playback".into())
     }

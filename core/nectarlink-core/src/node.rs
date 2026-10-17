@@ -151,7 +151,7 @@ pub(crate) struct Shared {
     /// Peers granted one-time reverse-mirror consent for the current session.
     pub(crate) pc_mirror_sessions: Mutex<std::collections::HashSet<DeviceId>>,
     /// Play on phone offers this PC made, by phone: the player and when.
-    pub(crate) watch_offers: Mutex<HashMap<DeviceId, (String, std::time::Instant)>>,
+    pub(crate) watch_offers: Mutex<HashMap<DeviceId, crate::media::WatchOffer>>,
     /// Stop signals for phone webcam streams arriving here, by phone.
     pub(crate) webcam_stops: Mutex<HashMap<DeviceId, Arc<tokio::sync::Notify>>>,
     /// Stop signals for phone microphone streams arriving here, by phone.
@@ -2895,7 +2895,30 @@ impl Node {
     /// taking it starts mirroring with `watch`, which this PC then allows
     /// for that phone and player.
     pub async fn offer_watch(&self, peer: DeviceId, player: String, title: Option<String>) -> Result<()> {
-        crate::media::offer_watch(&self.shared, peer, player, title).await
+        crate::media::offer_watch(&self.shared, peer, player, title, None).await
+    }
+
+    /// Play on phone for a video file: offers `peer` the `file` this PC's
+    /// `player` plays, at `position_ms`, for the phone to play itself. The
+    /// phone reads it with [`Node::watch_file_read`] while the offer is open,
+    /// and only that file.
+    pub async fn offer_watch_file(
+        &self,
+        peer: DeviceId,
+        player: String,
+        title: Option<String>,
+        file: std::path::PathBuf,
+        position_ms: u64,
+    ) -> Result<()> {
+        crate::media::offer_watch(&self.shared, peer, player, title, Some((file, position_ms))).await
+    }
+
+    /// On the phone: reads up to `length` bytes (at most 4 MiB) from
+    /// `offset` of the file the PC `peer` offered. Returns the file's size
+    /// and the bytes (fewer at its end).
+    pub async fn watch_file_read(&self, peer: DeviceId, offset: u64, length: u64) -> Result<(u64, Vec<u8>)> {
+        let session = self.connected(&peer)?;
+        crate::media::read_file(&session, offset, length).await
     }
 
     /// Runs a command on a paired device's media player.

@@ -88,6 +88,9 @@ what plays, and the PC decides:
   JioHotstar, Disney+ and the like) come out black when captured. The PC
   sends the page's address with `link.open` ([actions.md](actions.md)),
   which Android hands to the service's app, and pauses its own player.
+- **A video file** a desktop player plays (VLC, Media Player and the like)
+  is offered as a file: the phone reads it from the PC and plays it
+  itself, from where the PC had got to, at its full quality.
 - **Everything else** is streamed from the PC as it plays, picture and
   sound, so whatever the PC does to it carries over (a browser's ad
   blocker on YouTube, for one). The PC keeps playing.
@@ -95,8 +98,10 @@ what plays, and the PC decides:
 Streaming starts with an offer from the PC:
 
 ```
-t = "media.watch"  id = n  b = { player: text, title?: text }   // PC to phone
+t = "media.watch"  id = n  b = { player: text, title?: text, file?: WatchFile }   // PC to phone
 t = "ok"           re = n
+
+WatchFile = { name: text, size: uint, position: uint }
 ```
 
 `player` is the PC's ID for the player, as in `media.state`; `title` is
@@ -118,3 +123,31 @@ stream, and its sound as Phone speaker does. Input from the phone is
 ignored while it watches. Anything else in that `mirror.start` is as for
 the PC's screen; without an offer the answer is `DENIED`, and the PC
 doesn't ask its user to share the screen.
+
+### Playing a file
+
+With `file`, the phone plays the file itself instead of watching a
+stream. `name` is the file's name (1 to 256 characters, no `/` or `\`),
+for the phone's player to tell the format by; `size` its size in bytes
+(more than 0); `position` where the PC had got to, in milliseconds. A
+PC offers a file only in a format phones play (MP4, MKV, WebM, MOV, 3GP,
+MPEG-TS), and streams anything else. Once the phone plays it, it pauses
+the PC's player with `media.command`.
+
+The phone reads the file on bidirectional streams of their own, one read
+each:
+
+```
+stream header  { svc: "media", op: "file", v: 1 }
+t = "media.file"       id = 1  b = { offset: uint, length: uint }   // phone to PC
+t = "media.file.meta"  re = 1  b = { size: uint, length: uint }     // PC to phone
+<length bytes>
+```
+
+The PC answers with at most 4 MiB (`length` is cut to that, and to the
+end of the file; past the end it is 0), then the bytes, and finishes the
+stream. It serves only the file of its open offer to that phone (the
+same 10 minutes as for watching, renewed by every read), so a phone can't
+read anything else on the PC; without one the answer is `DENIED`.
+A newer offer, streamed or not, replaces it.
+

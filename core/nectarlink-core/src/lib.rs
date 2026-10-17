@@ -91,8 +91,8 @@ pub use nectarlink_protocol::{
         PhotoAlbum, PhotoItem, PhotoNew as Photo, PhotoThumb, PowerLevel, ScreenCorners, ScreenRect,
         ScreenShape, SmsAttachment, SmsMessage, SmsPart, SmsThread, StorageChanged, StorageDelete,
         StorageEntries, StorageEntry, StorageList, StorageMkdir, StorageRead, StorageReadMeta, StorageRename,
-        StorageWriteAccept, StorageWriteDone, StorageWriteOffer, TaskNotify, TouchAction, WebcamConfig,
-        WebcamStart,
+        StorageWriteAccept, StorageWriteDone, StorageWriteOffer, TaskNotify, TouchAction, WatchFile,
+        WebcamConfig, WebcamStart,
         calls::{
             CONTROL as CALLS_CONTROL, DIAL as CALLS_DIAL, IN_CALL as CALLS_IN_CALL, LOG as CALLS_LOG,
             SHOW as CALLS_SHOW, STATE as CALLS_STATE,
@@ -104,7 +104,7 @@ pub use nectarlink_protocol::{
         },
         format_mac, ipv4_broadcast, is_package_name, is_valid_storage_dir_path, is_valid_storage_id,
         is_valid_storage_name, is_valid_storage_path, magic_packet,
-        media_watch::{STREAM as MEDIA_STREAM, WATCH as MEDIA_WATCH},
+        media_watch::{MAX_READ as MEDIA_WATCH_MAX_READ, STREAM as MEDIA_STREAM, WATCH as MEDIA_WATCH},
         mic::{LISTEN as MIC_LISTEN, STREAM as MIC_STREAM},
         mirror::{
             AUDIO as MIRROR_AUDIO, AUDIO_PLAYBACK as MIRROR_AUDIO_PLAYBACK, AV1 as MIRROR_AV1,
