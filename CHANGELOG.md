@@ -60,6 +60,11 @@ change things that need a step from you, and its notes say so.
 ### Fixed
 
 - Turning on LocalSend closed the Windows app.
+- Play on phone froze on the phone when the player's window was
+  minimized, and showed the whole screen when it couldn't find the
+  window. A minimized player now goes back behind your other windows and
+  keeps playing on the phone; a window it can't find stops Play on phone
+  instead of showing your screen.
 - Browsing the PC's files from the phone showed nothing. It works with
   **Your PC in your pocket** on, and says what to do when it can't list a
   folder.

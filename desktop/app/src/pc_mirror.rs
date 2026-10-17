@@ -707,7 +707,6 @@ fn run_capture_loop(
     }
     let watched = options.watch.as_deref().map(crate::play_on_phone::Watched::follow);
     let mut window_capture: Option<win::window_capture::WindowCapture> = None;
-    let mut fell_back = false;
     let _sound = watched.is_some().then(|| SoundToPhone::start(peer));
     if watched.is_some() {
         tracing::info!(%peer, fps, bitrate, "streaming a player to the phone");
@@ -724,11 +723,15 @@ fn run_capture_loop(
             std::thread::sleep(frame_interval);
             continue;
         }
-        if watched.is_some() && place.is_none() && !fell_back {
-            // The player's window can't be found: the phone gets the screen
-            // rather than nothing.
-            tracing::info!(%peer, "can't find the player's window; streaming the screen");
-            fell_back = true;
+        if watched.is_some() && place.is_none() {
+            // The player's window can't be found. Not the screen instead:
+            // that would show the phone whatever else is on it.
+            tracing::info!(%peer, "can't find the player's window; stopping");
+            crate::bridge::app::show_message(crate::i18n::tr!(
+                "PcMirror",
+                "Can't find the player's window. Play the video on this PC again, then turn on Play on phone."
+            ));
+            break;
         }
         if let Some(place) = place {
             let r = place.on_screen;

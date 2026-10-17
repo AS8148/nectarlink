@@ -31,8 +31,9 @@ use windows::{
             },
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext},
             WindowsAndMessaging::{
-                EnumWindows, GW_OWNER, GetWindow, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-                IsWindowVisible,
+                EnumWindows, GW_OWNER, GetWindow, GetWindowTextW, GetWindowThreadProcessId, HWND_BOTTOM,
+                IsIconic, IsWindowVisible, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                SetWindowPos, ShowWindow,
             },
         },
     },
@@ -108,6 +109,15 @@ pub struct Window {
 /// The visible, uncloaked top-level windows that aren't minimized, front
 /// to back.
 pub fn windows() -> Vec<Window> {
+    listed(false)
+}
+
+/// As [`windows`], with minimized ones too: a minimized player still plays.
+fn windows_and_minimized() -> Vec<Window> {
+    listed(true)
+}
+
+fn listed(minimized: bool) -> Vec<Window> {
     unsafe extern "system" fn each(hwnd: HWND, found: LPARAM) -> BOOL {
         // SAFETY: `found` is the Vec passed to EnumWindows below, alive for the call.
         let found = unsafe { &mut *(found.0 as *mut Vec<HWND>) };
@@ -119,15 +129,15 @@ pub fn windows() -> Vec<Window> {
     let _ = unsafe { EnumWindows(Some(each), LPARAM(&mut handles as *mut Vec<HWND> as isize)) };
     handles
         .into_iter()
-        .filter(|&hwnd| shown(hwnd))
+        .filter(|&hwnd| shown(hwnd, minimized))
         .filter_map(|hwnd| Some(Window { hwnd, program: program_of(hwnd)?, title: title_of(hwnd) }))
         .collect()
 }
 
-fn shown(hwnd: HWND) -> bool {
+fn shown(hwnd: HWND, minimized: bool) -> bool {
     // SAFETY: plain queries on a window handle (a stale one just fails).
     unsafe {
-        if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+        if !IsWindowVisible(hwnd).as_bool() || (!minimized && IsIconic(hwnd).as_bool()) {
             return false;
         }
         if GetWindow(hwnd, GW_OWNER).is_ok_and(|owner| !owner.is_invalid()) {
@@ -177,7 +187,7 @@ fn program_of(hwnd: HWND) -> Option<String> {
 /// browser's shows its active tab's), or its only window.
 pub fn window_for(player: &str, title: &str) -> Option<Window> {
     let programs = programs_for(player);
-    let all = windows();
+    let all = windows_and_minimized();
     let candidates: Vec<Window> = all.iter().filter(|w| programs.contains(&w.program)).cloned().collect();
     pick(candidates, title).or_else(|| by_title(all, title))
 }
@@ -300,6 +310,23 @@ impl Automation {
 }
 
 /// A window's frame on screen, without its invisible resize borders.
+/// Whether `hwnd` is minimized: Windows draws nothing of it then, so a
+/// capture of it stays on its last picture.
+pub fn is_minimized(hwnd: HWND) -> bool {
+    // SAFETY: a plain query on a window handle.
+    unsafe { IsIconic(hwnd).as_bool() }
+}
+
+/// Restores a minimized window behind every other one, without bringing it
+/// forward or taking the focus: it draws again, out of the way.
+pub fn restore_behind(hwnd: HWND) {
+    // SAFETY: plain window calls on a handle (a stale one just fails).
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        let _ = SetWindowPos(hwnd, Some(HWND_BOTTOM), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+}
+
 pub fn frame_of(hwnd: HWND) -> Option<RECT> {
     let mut rect = RECT::default();
     // SAFETY: writes one RECT.

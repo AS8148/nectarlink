@@ -278,6 +278,16 @@ impl Watched {
                     let (title, _) = now_playing(&player);
                     window = browser::window_for(&player, &title);
                 }
+                // Minimized, it draws nothing and the phone's picture stops:
+                // back behind the other windows, it plays on out of the way.
+                if let Some(w) = window.as_ref().filter(|w| browser::is_minimized(w.hwnd)) {
+                    tracing::info!(
+                        "the watched player's window was minimized; restoring it behind the others"
+                    );
+                    browser::restore_behind(w.hwnd);
+                    std::thread::sleep(FOLLOW_EVERY);
+                    continue;
+                }
                 let place = window.as_ref().and_then(|w| {
                     let frame = browser::frame_of(w.hwnd)?;
                     let on_screen = match &automation {
