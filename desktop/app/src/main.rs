@@ -38,6 +38,7 @@ mod pc_mirror;
 mod pc_notifications;
 mod pc_storage;
 mod photos;
+mod play_on_phone;
 mod qr;
 mod recordings;
 mod remote;

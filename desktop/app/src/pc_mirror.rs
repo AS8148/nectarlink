@@ -19,7 +19,7 @@ use nectarlink_core::{
     DeviceId, KeyMod, MirrorConfig, MirrorInput, MirrorSend, MirrorStart, PacketKind, mirror_keys,
 };
 use windows::Win32::{
-    Foundation::POINT,
+    Foundation::{POINT, RECT},
     Graphics::Gdi::{
         BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC, DESKTOPHORZRES,
         DESKTOPVERTRES, DeleteDC, DeleteObject, GetDC, GetDIBits, GetDeviceCaps, HALFTONE, ReleaseDC,
@@ -56,6 +56,8 @@ struct ActiveSession {
     peer: DeviceId,
     stop: Arc<AtomicBool>,
     force_keyframe: Arc<AtomicBool>,
+    /// Play on phone: the phone watches a player, and its input is ignored.
+    watching: bool,
 }
 
 static ACTIVE: Mutex<Option<ActiveSession>> = Mutex::new(None);
@@ -94,6 +96,7 @@ pub fn start(peer: DeviceId, options: MirrorStart) {
             peer,
             stop: Arc::clone(&stop),
             force_keyframe: Arc::clone(&force_keyframe),
+            watching: options.watch.is_some(),
         });
     }
     core_host::host().hub.changed(crate::state::Changes::REMOTE);
@@ -166,7 +169,8 @@ pub fn handle_input(peer: &DeviceId, session: u32, input: MirrorInput) {
     if session != nectarlink_core::MIRROR_SCREEN {
         return;
     }
-    if active_peer() != Some(*peer) {
+    let watching = ACTIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|s| s.watching);
+    if active_peer() != Some(*peer) || watching {
         return;
     }
     let remote_input_on = core_host::node()
@@ -540,19 +544,27 @@ fn has_h264_sps(data: &[u8]) -> bool {
     data.windows(4).any(|w| w[..3] == [0, 0, 1] && (w[3] & 0x1f) == 7)
 }
 
-/// Captures the primary desktop monitor into `bgra` scaled to `(dst_w, dst_h)`
-/// and returns the current physical screen dimensions `(src_w, src_h)`.
-fn capture_primary_screen(dst_w: u32, dst_h: u32, bgra: &mut Vec<u8>) -> Option<(u32, u32)> {
+/// Captures the primary desktop monitor into `bgra` scaled to `(dst_w, dst_h)`,
+/// with the pointer, and returns the current physical screen dimensions
+/// `(src_w, src_h)`. With `region` (physical screen pixels), captures only
+/// that, without the pointer (Play on phone), and returns its size.
+fn capture_screen(region: Option<RECT>, dst_w: u32, dst_h: u32, bgra: &mut Vec<u8>) -> Option<(u32, u32)> {
     // SAFETY: Win32 GDI device context and bitmap calls with balanced cleanup.
     unsafe {
         let hdc_screen = GetDC(None);
         if hdc_screen.is_invalid() {
             return None;
         }
-        let phys_w = GetDeviceCaps(Some(hdc_screen), DESKTOPHORZRES);
-        let phys_h = GetDeviceCaps(Some(hdc_screen), DESKTOPVERTRES);
-        let src_w = if phys_w > 0 { phys_w } else { GetSystemMetrics(SM_CXSCREEN) }.max(1) as u32;
-        let src_h = if phys_h > 0 { phys_h } else { GetSystemMetrics(SM_CYSCREEN) }.max(1) as u32;
+        let (src_x, src_y, src_w, src_h) = match region {
+            Some(r) => (r.left, r.top, (r.right - r.left).max(1) as u32, (r.bottom - r.top).max(1) as u32),
+            None => {
+                let phys_w = GetDeviceCaps(Some(hdc_screen), DESKTOPHORZRES);
+                let phys_h = GetDeviceCaps(Some(hdc_screen), DESKTOPVERTRES);
+                let w = if phys_w > 0 { phys_w } else { GetSystemMetrics(SM_CXSCREEN) }.max(1) as u32;
+                let h = if phys_h > 0 { phys_h } else { GetSystemMetrics(SM_CYSCREEN) }.max(1) as u32;
+                (0, 0, w, h)
+            }
+        };
 
         let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
         if hdc_mem.is_invalid() {
@@ -574,8 +586,8 @@ fn capture_primary_screen(dst_w: u32, dst_h: u32, bgra: &mut Vec<u8>) -> Option<
             dst_w as i32,
             dst_h as i32,
             Some(hdc_screen),
-            0,
-            0,
+            src_x,
+            src_y,
             src_w as i32,
             src_h as i32,
             SRCCOPY,
@@ -589,7 +601,7 @@ fn capture_primary_screen(dst_w: u32, dst_h: u32, bgra: &mut Vec<u8>) -> Option<
             hCursor: Default::default(),
             ptScreenPos: POINT::default(),
         };
-        if GetCursorInfo(&mut ci).is_ok() && (ci.flags.0 & CURSOR_SHOWING.0) != 0 {
+        if region.is_none() && GetCursorInfo(&mut ci).is_ok() && (ci.flags.0 & CURSOR_SHOWING.0) != 0 {
             let cx = ((ci.ptScreenPos.x as i64) * (dst_w as i64) / (src_w as i64)) as i32;
             let cy = ((ci.ptScreenPos.y as i64) * (dst_h as i64) / (src_h as i64)) as i32;
             let _ = DrawIconEx(hdc_mem, cx, cy, ci.hCursor.into(), 0, 0, 0, None, DI_NORMAL);
@@ -670,10 +682,49 @@ fn run_capture_loop(
     let mut last_rate_change = Instant::now();
     let mut stats = Stats::default();
     let mut stats_since = Instant::now();
-    tracing::info!(%peer, fps, bitrate, "sharing this PC's screen");
+    // Play on phone: the player's picture instead of the screen, and the
+    // PC's sound to that phone while it watches. The picture's place comes
+    // in physical pixels; so does this thread's capture.
+    if options.watch.is_some() {
+        win::browser::use_physical_pixels();
+    }
+    let watched = options.watch.as_deref().map(crate::play_on_phone::Watched::follow);
+    let mut window_capture: Option<win::window_capture::WindowCapture> = None;
+    let _sound = watched.is_some().then(|| SoundToPhone::start(peer));
+    if watched.is_some() {
+        tracing::info!(%peer, fps, bitrate, "streaming a player to the phone");
+    } else {
+        tracing::info!(%peer, fps, bitrate, "sharing this PC's screen");
+    }
 
     while !stop.load(Ordering::Relaxed) {
         let tick_start = Instant::now();
+
+        let place = watched.as_ref().and_then(crate::play_on_phone::Watched::place);
+        if watched.is_some() {
+            let Some(place) = place else {
+                // Not found yet: nothing to show.
+                std::thread::sleep(frame_interval);
+                continue;
+            };
+            let r = place.on_screen;
+            let dims =
+                target_dimensions((r.right - r.left) as u32, (r.bottom - r.top) as u32, options.max_size);
+            if stream_dims != Some(dims) {
+                // A new size (the window moved to full screen, say): a new stream config.
+                stream_dims = Some(dims);
+                encoder = None;
+            }
+            // The window's own pixels, whatever is in front of it; the
+            // screen there when Windows can't capture the window.
+            if window_capture.as_ref().is_none_or(|c| c.window() != place.window()) {
+                window_capture = win::window_capture::WindowCapture::new(place.window())
+                    .inspect_err(
+                        |e| tracing::info!(error = %e, "can't capture the window; capturing the screen"),
+                    )
+                    .ok();
+            }
+        }
 
         let (dst_w, dst_h) = match stream_dims {
             Some(dims) => dims,
@@ -726,9 +777,12 @@ fn run_capture_loop(
             }
         }
 
-        if capture_primary_screen(dst_w, dst_h, &mut bgra).is_some()
-            && let Some(enc) = encoder.as_mut()
-        {
+        let captured = match (place, window_capture.as_mut()) {
+            (Some(place), Some(capture)) => capture.capture(place.in_window, dst_w, dst_h, &mut bgra),
+            (Some(place), None) => capture_screen(Some(place.on_screen), dst_w, dst_h, &mut bgra).is_some(),
+            (None, _) => capture_screen(None, dst_w, dst_h, &mut bgra).is_some(),
+        };
+        if captured && let Some(enc) = encoder.as_mut() {
             bgra_to_nv12(&bgra, dst_w as usize, dst_h as usize, &mut nv12);
             let time_us = started.elapsed().as_micros() as u64;
             let hns = (time_us * 10) as i64;
@@ -815,6 +869,32 @@ fn run_capture_loop(
     cleanup_session(&stop);
 }
 
+/// The PC's sound going to a phone that watches one of its players (as
+/// Phone speaker sends it), for as long as this lives; then as before.
+struct SoundToPhone {
+    was_on: bool,
+    was_target: Option<DeviceId>,
+}
+
+impl SoundToPhone {
+    fn start(peer: DeviceId) -> SoundToPhone {
+        let sound = SoundToPhone {
+            was_on: crate::pc_audio_stream::is_enabled(),
+            was_target: crate::pc_audio_stream::target(),
+        };
+        crate::pc_audio_stream::set_target(Some(peer));
+        crate::pc_audio_stream::set_enabled(true);
+        sound
+    }
+}
+
+impl Drop for SoundToPhone {
+    fn drop(&mut self) {
+        crate::pc_audio_stream::set_target(self.was_target);
+        crate::pc_audio_stream::set_enabled(self.was_on);
+    }
+}
+
 fn cleanup_session(stop: &Arc<AtomicBool>) {
     let removed = {
         let mut guard = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
@@ -869,6 +949,33 @@ mod tests {
         }
         assert!(produced_packets > 0, "encoder must emit H.264 access units");
         assert!(decoded_any, "decoder must reconstruct at least one frame from H264Encoder");
+    }
+
+    /// With a Chromium browser showing a video on a page whose title has
+    /// `NECTARLINK_TEST_TAB` in it, in view: captures just the video, as
+    /// Play on phone does.
+    #[test]
+    #[ignore]
+    fn captures_a_browsers_video() {
+        use crate::win::browser::{Automation, window_for};
+        let wanted = std::env::var("NECTARLINK_TEST_TAB").expect("NECTARLINK_TEST_TAB");
+        // SAFETY: COM for this test's thread.
+        let _ = unsafe {
+            windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_MULTITHREADED,
+            )
+        };
+        crate::win::browser::use_physical_pixels();
+        let window = window_for("Chrome", &wanted).expect("the test tab's window");
+        let rect = Automation::new().unwrap().video_rect(&window).expect("the video");
+        let (sw, sh) = ((rect.right - rect.left) as u32, (rect.bottom - rect.top) as u32);
+        let (w, h) = target_dimensions(sw, sh, 1280);
+        let mut bgra = Vec::new();
+        assert_eq!(capture_screen(Some(rect), w, h, &mut bgra), Some((sw, sh)));
+        let distinct: std::collections::HashSet<&[u8; 4]> = bgra.as_chunks::<4>().0.iter().collect();
+        eprintln!("{rect:?} as {w}x{h}: {} colors", distinct.len());
+        assert!(distinct.len() > 50, "a moving test pattern, not a blank");
     }
 
     #[test]

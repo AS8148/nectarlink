@@ -848,6 +848,12 @@ pub const FEATURES: &[FeatureDef] = &[
         partial: None,
     },
     FeatureDef {
+        id: "media.play_on_phone",
+        group: FeatureGroup::Media,
+        requires: &[desktop("media.stream", UPDATE), phone("media.watch", UPDATE), DeviceToggle("media")],
+        partial: None,
+    },
+    FeatureDef {
         id: "media.pc_audio",
         group: FeatureGroup::Media,
         requires: &[desktop("pc.audio", UPDATE), DeviceToggle("pc_actions")],

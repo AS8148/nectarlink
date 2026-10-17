@@ -382,6 +382,17 @@ Card {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 2
 
+                // Play on phone: this PC's player, on the phone (streamed, or in the service's app).
+                IconButton {
+                    visible: card.isLocalPc && MediaList.playOnPhoneName !== ""
+                    width: 24; height: 24
+                    iconSize: 13
+                    iconPath: Icons.phone
+                    iconColor: Theme.surfaceContentVariant
+                    label: qsTr("Play on %1").arg(MediaList.playOnPhoneName)
+                    onClicked: card.send("play_on_phone")
+                }
+
                 IconButton {
                     visible: !Theme.graphite
                     width: 24; height: 24

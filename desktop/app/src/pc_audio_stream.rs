@@ -31,6 +31,11 @@ static WORKER_RUNNING: AtomicBool = AtomicBool::new(false);
 /// when the PC turned it on (or that phone is away), to the first phone that is.
 static TARGET: std::sync::Mutex<Option<nectarlink_core::DeviceId>> = std::sync::Mutex::new(None);
 
+/// The phone the sound goes to first, if one asked.
+pub fn target() -> Option<nectarlink_core::DeviceId> {
+    *TARGET.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Records which phone asked to be the speaker.
 pub fn set_target(phone: Option<nectarlink_core::DeviceId>) {
     *TARGET.lock().unwrap_or_else(|e| e.into_inner()) = phone;

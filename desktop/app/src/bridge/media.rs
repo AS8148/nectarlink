@@ -42,6 +42,8 @@ pub mod qobject {
         #[qproperty(i32, revision)]
         #[qproperty(QString, active_art, cxx_name = "activeArt")]
         #[qproperty(QString, active_colors, cxx_name = "activeColors")]
+        /// The phone Play on phone plays on (its name), or "" when none is online.
+        #[qproperty(QString, play_on_phone_name, cxx_name = "playOnPhoneName")]
         type MediaList = super::MediaListRust;
     }
 
@@ -87,7 +89,8 @@ pub mod qobject {
         fn row_count(self: &MediaList, parent: &QModelIndex) -> i32;
 
         /// Runs "play", "pause", "next", "previous" or "seek" (to
-        /// `position_ms`) on a device's player.
+        /// `position_ms`) on a device's player, or for this PC's,
+        /// "play_on_phone".
         #[qinvokable]
         fn command(self: &MediaList, device: &QString, player: &QString, action: &QString, position_ms: f64);
         /// The row of a device's first player (the one to show), or -1.
@@ -110,6 +113,7 @@ pub struct MediaListRust {
     revision: i32,
     active_art: QString,
     active_colors: QString,
+    play_on_phone_name: QString,
     rows: Vec<PlayerView>,
 }
 
@@ -180,7 +184,11 @@ fn role_value(row: &PlayerView, role: &str) -> QVariant {
 
 impl cxx_qt::Initialize for qobject::MediaList {
     fn initialize(self: Pin<&mut Self>) {
-        super::subscribe(self.qt_thread(), Changes::MEDIA, Self::refresh);
+        super::subscribe(
+            self.qt_thread(),
+            Changes::MEDIA | Changes::DEVICES | Changes::CAPABILITIES,
+            Self::refresh,
+        );
     }
 }
 
@@ -230,6 +238,10 @@ impl qobject::MediaList {
         }
         if *self.active_colors() != colors_json {
             self.as_mut().set_active_colors(colors_json);
+        }
+        let phone = QString::from(crate::play_on_phone::phone().map(|(_, name)| name).unwrap_or_default());
+        if *self.play_on_phone_name() != phone {
+            self.as_mut().set_play_on_phone_name(phone);
         }
         let revision = self.revision.wrapping_add(1);
         self.set_revision(revision);
@@ -282,6 +294,12 @@ impl qobject::MediaList {
         let resolved_device =
             if device_str == "local" { Some(media::LOCAL_DEVICE) } else { super::parse_device(device) };
         let Some(device) = resolved_device else { return };
+        if action_str == "play_on_phone" {
+            if device == media::LOCAL_DEVICE {
+                crate::play_on_phone::play(String::from(player));
+            }
+            return;
+        }
         if action_str == "volume" {
             let level = (position_ms.round() as i32).clamp(0, 100) as u8;
             if device == media::LOCAL_DEVICE {

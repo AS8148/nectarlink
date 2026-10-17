@@ -9,6 +9,7 @@ pub mod audio;
 pub mod audio_out;
 pub mod autostart;
 pub mod ble_beacon;
+pub mod browser;
 pub mod bt_hfp;
 pub mod clipboard;
 pub mod doctor;
@@ -33,6 +34,7 @@ pub mod tray;
 pub mod vcam;
 pub mod wallpaper;
 pub mod widget;
+pub mod window_capture;
 pub mod wol;
 
 use windows::{
