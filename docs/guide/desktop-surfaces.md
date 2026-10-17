@@ -134,6 +134,7 @@ For power users who use **PowerToys Command Palette**, **AutoHotkey**, **Raycast
    - `GET /v1/clipboard` and `POST /v1/clipboard`: Read or push clipboard text and history.
    - `POST /v1/notify`: Send a custom notification to a phone.
    - `POST /v1/ring`: Trigger Find my phone.
+   - `POST /v1/play-on-phone`: Play what this PC plays on the phone.
    - `POST /v1/camera`: Trigger Continuity Camera (`"photo"` or `"scan"`).
    - `GET /v1/timeline`: Query recent cross-device `Timeline` entries.
 5. A companion **PowerToys Command Palette** extension in `tools/powertoys-cmdpal/` connects to this API so you can invoke NectarLink actions directly from PowerToys.

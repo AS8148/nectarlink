@@ -525,6 +525,7 @@ async fn route_request(req: HttpRequest) -> (u16, &'static str, Value) {
         ("POST", "/v1/clipboard") => handle_post_clipboard(&req.body).await,
         ("POST", "/v1/notify") => handle_post_notify(&req.body).await,
         ("POST", "/v1/ring") => handle_post_ring(&req.body).await,
+        ("POST", "/v1/play-on-phone") => handle_post_play_on_phone(&req.body),
         ("POST", "/v1/camera") => handle_post_camera(&req.body),
         ("GET", "/v1/timeline") => handle_get_timeline(&req.query),
         _ => (404, "Not Found", json!({ "ok": false, "error": "not_found" })),
@@ -720,6 +721,38 @@ async fn handle_post_ring(body: &[u8]) -> (u16, &'static str, Value) {
         let _ = node.ring(device, true).await;
     }
     (200, "OK", json!({ "ok": true }))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PlayOnPhonePayload {
+    /// The PC player's ID; by default the one playing (else the first).
+    #[serde(default)]
+    player: Option<String>,
+}
+
+/// Play on phone: what a player of this PC plays, on the phone.
+fn handle_post_play_on_phone(body: &[u8]) -> (u16, &'static str, Value) {
+    let payload: PlayOnPhonePayload = if body.is_empty() {
+        PlayOnPhonePayload::default()
+    } else {
+        match serde_json::from_slice(body) {
+            Ok(p) => p,
+            Err(_) => return (400, "Bad Request", json!({ "ok": false, "error": "invalid_json" })),
+        }
+    };
+    let players = crate::media::local_views();
+    let player = match payload.player {
+        Some(id) => players.iter().find(|v| v.player.id == id),
+        None => players.iter().find(|v| v.player.playing).or_else(|| players.first()),
+    };
+    let Some(player) = player.map(|v| v.player.id.clone()) else {
+        return (404, "Not Found", json!({ "ok": false, "error": "nothing_playing" }));
+    };
+    if crate::play_on_phone::phone().is_none() {
+        return (409, "Conflict", json!({ "ok": false, "error": "no_phone" }));
+    }
+    crate::play_on_phone::play(player.clone());
+    (200, "OK", json!({ "ok": true, "player": player }))
 }
 
 #[derive(Debug, Default, Deserialize)]

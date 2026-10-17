@@ -256,6 +256,20 @@ enum Command {
         #[arg(long)]
         resize: Option<String>,
     },
+    /// Play on phone, as a phone (add --as-phone): wait for the PC's offer
+    /// (its media card's Play on phone), take it, and record the stream
+    /// (Annex B) to OUT for SECONDS, with its sound to --sound (WAV).
+    Watch {
+        device: String,
+        out: PathBuf,
+        #[arg(long, default_value_t = 10)]
+        seconds: u64,
+        #[arg(long)]
+        sound: Option<PathBuf>,
+        /// How long to wait for the offer, in seconds.
+        #[arg(long, default_value_t = 120)]
+        wait: u64,
+    },
     /// List the apps a paired phone can open in windows of their own.
     Apps {
         device: String,
@@ -953,6 +967,11 @@ fn stream_sound(sound: &nectarlink_core::MirrorStream, rate: u32, channels: u8, 
 
 /// PCs that asked for the screen or an app (whether they want the sound,
 /// and the session), for `screen`.
+/// Play on phone offers from PCs: (PC, player, title).
+static WATCH_OFFERS: std::sync::OnceLock<
+    tokio::sync::mpsc::UnboundedSender<(DeviceId, String, Option<String>)>,
+> = std::sync::OnceLock::new();
+
 static SCREEN_ASKS: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<(DeviceId, bool, u32)>> =
     std::sync::OnceLock::new();
 /// Whether `screen` offers apps in windows.
@@ -1741,6 +1760,16 @@ fn sample_storage_tree(root: &std::path::Path) {
 struct TerminalPlatform;
 
 impl Platform for TerminalPlatform {
+    fn watch_offered(
+        &self,
+        from: &DeviceId,
+        player: &str,
+        title: Option<&str>,
+    ) -> std::result::Result<(), String> {
+        let offers = WATCH_OFFERS.get().ok_or("not watching (run `watch`)")?;
+        println!("{} offers to stream {player}: {}", from.short(), title.unwrap_or("(untitled)"));
+        offers.send((*from, player.to_owned(), title.map(str::to_owned))).map_err(|e| e.to_string())
+    }
     fn mirror_sink(
         &self,
         _peer: &DeviceId,
@@ -3193,6 +3222,93 @@ async fn run(cli: &Cli, node: &Node) -> Result<()> {
                     }
                     None => println!("No sound came."),
                 }
+            }
+        }
+        Command::Watch { device, out, seconds, sound, wait } => {
+            if !cli.as_phone {
+                bail!("phones watch what a PC plays: add --as-phone");
+            }
+            let recording = std::sync::Arc::new(Recording::default());
+            *recording.file.lock().unwrap() =
+                Some(std::fs::File::create(out).context("can't create the file")?);
+            let _ = RECORDING.set(recording.clone());
+            let (offered, mut offers) = tokio::sync::mpsc::unbounded_channel();
+            let _ = WATCH_OFFERS.set(offered);
+            let mut caps = cli.offers.clone();
+            caps.push(nectarlink_core::MEDIA_WATCH.into());
+            caps.push(nectarlink_core::MIRROR_VIEW.into());
+            node.update_power(node_power(cli), caps).await;
+            let id = resolve(node, device)?;
+            wait_until_online(node, id).await?;
+            println!("Waiting for the PC to offer something to watch (Play on phone on its media card).");
+            let player = tokio::time::timeout(std::time::Duration::from_secs(*wait), async {
+                while let Some((from, player, _)) = offers.recv().await {
+                    if from == id {
+                        return Some(player);
+                    }
+                }
+                None
+            })
+            .await
+            .ok()
+            .flatten()
+            .context("no offer came")?;
+            let mut events = node.events();
+            let options = nectarlink_core::MirrorStart {
+                max_size: 1920,
+                fps: 30,
+                bitrate: 8_000_000,
+                audio: true,
+                session: nectarlink_core::MIRROR_SCREEN,
+                app: None,
+                stay_awake: false,
+                screen_off: false,
+                watch: Some(player.clone()),
+            };
+            node.mirror_start(id, options).await.context("the PC didn't stream it")?;
+            println!("Watching {player}; recording for {seconds} s after the first frame.");
+            loop {
+                if let Ok(NodeEvent::Mirroring { on: true, .. }) = events.recv().await {
+                    break;
+                }
+            }
+            let started = std::time::Instant::now();
+            let mut sound_bytes: Vec<u8> = Vec::new();
+            let mut sound_format = None;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(*seconds), async {
+                loop {
+                    match events.recv().await {
+                        Ok(NodeEvent::PcAudioFrame { device, sample_rate, channels, pcm })
+                            if device == id =>
+                        {
+                            sound_format = Some((sample_rate, channels));
+                            sound_bytes.extend_from_slice(&pcm);
+                        }
+                        Ok(NodeEvent::Mirroring { on: false, .. }) => break,
+                        Err(RecvError::Closed) => break,
+                        _ => {}
+                    }
+                }
+            })
+            .await;
+            node.mirror_stop(id, nectarlink_core::MIRROR_SCREEN).await;
+            let RecordingStats { frames, keyframes, bytes, size } = *recording.stats.lock().unwrap();
+            let secs = started.elapsed().as_secs_f64();
+            println!(
+                "{frames} frames ({keyframes} keyframes) in {secs:.1} s: {:.1} fps, {:.1} Mbit/s{}",
+                f64::from(frames) / secs,
+                bytes as f64 * 8.0 / secs / 1e6,
+                size.map(|(w, h)| format!(", {w}x{h}")).unwrap_or_default()
+            );
+            match sound_format {
+                Some((rate, channels)) => {
+                    let ms = sound_bytes.len() as u64 * 1000 / (u64::from(rate) * u64::from(channels) * 2);
+                    println!("Sound: {ms} ms at {rate} Hz, {channels} channels.");
+                    if let Some(path) = sound {
+                        write_wav(path, rate, channels, &sound_bytes).context("can't save the sound")?;
+                    }
+                }
+                None => println!("No sound came."),
             }
         }
         Command::Screen { video, width, height, fps, sound, apps } => {

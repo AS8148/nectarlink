@@ -168,6 +168,31 @@ Rings the paired phone ("Find my phone").
 
 ---
 
+### `POST /v1/play-on-phone`
+
+Play on phone: what one of this PC's players plays moves to the phone,
+streamed from the PC, or for protected streaming services, opened in the
+service's app while the PC pauses. The phone shows a notification to tap.
+
+**Request Body** (optional):
+```json
+{
+  "player": "Chrome"
+}
+```
+
+Without `player`, the player that's playing (else the first one).
+
+**Response (`200 OK`)**:
+```json
+{ "ok": true, "player": "Chrome" }
+```
+
+`404` with `"nothing_playing"` when no player is there, `409` with
+`"no_phone"` when no phone is online.
+
+---
+
 ### `POST /v1/camera`
 
 Triggers Continuity Camera on the paired phone (`"photo"` or `"scan"`).
