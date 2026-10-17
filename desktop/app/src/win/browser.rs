@@ -7,7 +7,8 @@
 //! address bar as an edit field of class `OmniboxViewViews` and a page's
 //! elements with their HTML classes, so YouTube's player
 //! (`video-stream html5-main-video`) can be found exactly; Firefox's
-//! address bar has the automation ID `urlbar-input`. Nothing here reads a
+//! address bar has the automation ID `urlbar-input`, and Firefox-based
+//! browsers (Zen, Floorp...) show only their tab's area, not the page. Nothing here reads a
 //! page's text: only the address of the tab that plays.
 
 use windows::{
@@ -51,8 +52,14 @@ pub fn programs_for(player: &str) -> Vec<String> {
         ("opera", "opera.exe"),
         ("vivaldi", "vivaldi.exe"),
         ("firefox", "firefox.exe"),
+        ("zen", "zen.exe"),
+        ("floorp", "floorp.exe"),
+        ("librewolf", "librewolf.exe"),
+        ("waterfox", "waterfox.exe"),
         // Firefox's app ID is a hash of where it's installed; this is the
-        // one for its default location.
+        // one for its default location. Other installs (and Firefox-based
+        // browsers) have hashes of their own: their window is found by its
+        // title (see `window_for`).
         ("308046b0af4a39cb", "firefox.exe"),
     ];
     let mut programs: Vec<String> =
@@ -74,7 +81,19 @@ pub fn programs_for(player: &str) -> Vec<String> {
 /// Whether `program` (an executable's file name) is a browser whose
 /// address bar and page this module can read.
 pub fn is_browser(program: &str) -> bool {
-    matches!(program, "chrome.exe" | "msedge.exe" | "brave.exe" | "opera.exe" | "vivaldi.exe" | "firefox.exe")
+    matches!(
+        program,
+        "chrome.exe"
+            | "msedge.exe"
+            | "brave.exe"
+            | "opera.exe"
+            | "vivaldi.exe"
+            | "firefox.exe"
+            | "zen.exe"
+            | "floorp.exe"
+            | "librewolf.exe"
+            | "waterfox.exe"
+    )
 }
 
 /// A visible top-level window.
@@ -158,8 +177,25 @@ fn program_of(hwnd: HWND) -> Option<String> {
 /// browser's shows its active tab's), or its only window.
 pub fn window_for(player: &str, title: &str) -> Option<Window> {
     let programs = programs_for(player);
-    let candidates: Vec<Window> = windows().into_iter().filter(|w| programs.contains(&w.program)).collect();
-    pick(candidates, title)
+    let all = windows();
+    let candidates: Vec<Window> = all.iter().filter(|w| programs.contains(&w.program)).cloned().collect();
+    pick(candidates, title).or_else(|| by_title(all, title))
+}
+
+/// The one window (of any program but this app) whose title has the
+/// media's title in it, for players whose app ID names no program (a hash,
+/// as Firefox-based browsers report).
+fn by_title(windows: Vec<Window>, title: &str) -> Option<Window> {
+    let wanted = title.trim().to_lowercase();
+    if wanted.chars().count() < 3 {
+        return None;
+    }
+    let mut matching = windows
+        .into_iter()
+        .filter(|w| w.program != "nectarlink-desktop.exe" && w.title.to_lowercase().contains(&wanted));
+    let found = matching.next()?;
+    // Two windows with that title: can't tell which one plays.
+    matching.next().is_none().then_some(found)
 }
 
 fn pick(candidates: Vec<Window>, title: &str) -> Option<Window> {
@@ -241,10 +277,19 @@ impl Automation {
         ))
     }
 
-    /// Where the page is in `window`.
+    /// Where the page is in `window`: Chromium's page, or the selected
+    /// tab's area in Firefox-based browsers (whose pages UI Automation
+    /// doesn't show, so their video can't be found).
     pub fn page_rect(&self, window: &Window) -> Option<RECT> {
         let root = self.root(window)?;
         self.rect_of(self.find(&root, UIA_ControlTypePropertyId, VARIANT::from(UIA_DocumentControlTypeId.0)))
+            .or_else(|| {
+                self.rect_of(self.find(
+                    &root,
+                    UIA_ClassNamePropertyId,
+                    VARIANT::from("browserSidebarContainer deck-selected"),
+                ))
+            })
     }
 
     fn rect_of(&self, element: Option<IUIAutomationElement>) -> Option<RECT> {
@@ -326,6 +371,22 @@ mod tests {
 
     fn window(title: &str) -> Window {
         Window { hwnd: HWND::default(), program: "chrome.exe".into(), title: title.into() }
+    }
+
+    #[test]
+    fn a_hashed_app_id_finds_its_window_by_title() {
+        let zen = Window {
+            hwnd: HWND::default(),
+            program: "zen.exe".into(),
+            title: "A Trailer - YouTube - Zen Browser".into(),
+        };
+        let mail = window("Mail - Google Chrome");
+        assert_eq!(by_title(vec![mail.clone(), zen.clone()], "A Trailer").unwrap().program, "zen.exe");
+        // Ambiguous or too short: none.
+        assert!(by_title(vec![zen.clone(), zen.clone()], "A Trailer").is_none());
+        assert!(by_title(vec![zen], "A").is_none());
+        assert!(programs_for("F0DC299D809B9700").is_empty());
+        assert!(is_browser("zen.exe"));
     }
 
     #[test]

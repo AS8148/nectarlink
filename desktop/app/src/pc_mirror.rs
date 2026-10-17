@@ -62,6 +62,10 @@ struct ActiveSession {
 
 static ACTIVE: Mutex<Option<ActiveSession>> = Mutex::new(None);
 
+/// How long Play on phone looks for the player's window before streaming
+/// the screen instead.
+const FIND_WINDOW: Duration = Duration::from_secs(5);
+
 /// The lowest bitrate the stream backs off to on a slow link.
 const MIN_BITRATE: u32 = 600_000;
 
@@ -690,6 +694,7 @@ fn run_capture_loop(
     }
     let watched = options.watch.as_deref().map(crate::play_on_phone::Watched::follow);
     let mut window_capture: Option<win::window_capture::WindowCapture> = None;
+    let mut fell_back = false;
     let _sound = watched.is_some().then(|| SoundToPhone::start(peer));
     if watched.is_some() {
         tracing::info!(%peer, fps, bitrate, "streaming a player to the phone");
@@ -701,12 +706,18 @@ fn run_capture_loop(
         let tick_start = Instant::now();
 
         let place = watched.as_ref().and_then(crate::play_on_phone::Watched::place);
-        if watched.is_some() {
-            let Some(place) = place else {
-                // Not found yet: nothing to show.
-                std::thread::sleep(frame_interval);
-                continue;
-            };
+        if watched.is_some() && place.is_none() && started.elapsed() < FIND_WINDOW {
+            // Not found yet: nothing to show.
+            std::thread::sleep(frame_interval);
+            continue;
+        }
+        if watched.is_some() && place.is_none() && !fell_back {
+            // The player's window can't be found: the phone gets the screen
+            // rather than nothing.
+            tracing::info!(%peer, "can't find the player's window; streaming the screen");
+            fell_back = true;
+        }
+        if let Some(place) = place {
             let r = place.on_screen;
             let dims =
                 target_dimensions((r.right - r.left) as u32, (r.bottom - r.top) as u32, options.max_size);
