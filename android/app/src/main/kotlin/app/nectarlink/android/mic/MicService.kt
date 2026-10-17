@@ -15,6 +15,7 @@ import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AutomaticGainControl
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -106,6 +107,14 @@ class MicService : Service() {
                     core.micStop(pcId)
                     return@launch
                 }
+                // Voice calls level the voice on most phones already; ask for it
+                // where the phone offers it, so a quiet voice still comes through.
+                val gain = if (AutomaticGainControl.isAvailable()) {
+                    runCatching { AutomaticGainControl.create(recorder.audioSessionId)?.apply { enabled = true } }
+                        .getOrNull()
+                } else {
+                    null
+                }
                 try {
                     if (stream.send(VideoPacketKind.CONFIG, 0u, mirrorAudioConfig(RATE.toUInt(), 1u)) ==
                         MirrorSendResult.CLOSED
@@ -128,6 +137,7 @@ class MicService : Service() {
                         }
                     }
                 } finally {
+                    runCatching { gain?.release() }
                     runCatching { recorder.stop() }
                     recorder.release()
                     stream.end()
