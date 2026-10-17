@@ -8,6 +8,15 @@ change things that need a step from you, and its notes say so.
 
 ### New
 
+- **Play on phone.** The PC's media card has a button that moves what
+  plays there to your phone. Streaming services that protect their video
+  (Netflix, Prime Video, JioHotstar, Disney+ and others) open in their
+  app on the phone and the PC pauses. Anything else streams from the PC
+  as it plays, picture and sound, so your browser's ad blocker still
+  works on YouTube: the phone shows just the video, even with other
+  windows over it on the PC. Tap the notification on the phone to watch.
+  Scripts can do the same through the local API
+  (`POST /v1/play-on-phone`).
 - **The Windows app follows the system language**, and speaks Simplified
   Chinese, by [@zzz1465720680](https://github.com/zzz1465720680)
   ([#16](https://github.com/thtbee/nectarlink/pull/16),
