@@ -36,6 +36,10 @@ pub mod qobject {
         #[qproperty(QString, output_name, cxx_name = "outputName")]
         /// Whether `output` is a virtual audio cable (apps see it as a microphone).
         #[qproperty(bool, cable)]
+        /// How loud it plays, in percent (`minGain` to `maxGain`).
+        #[qproperty(i32, gain)]
+        #[qproperty(i32, min_gain, cxx_name = "minGain")]
+        #[qproperty(i32, max_gain, cxx_name = "maxGain")]
         type PhoneMic = super::PhoneMicRust;
     }
 
@@ -50,6 +54,9 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "chooseOutput"]
         fn choose_output(self: &PhoneMic, id: &QString);
+        #[qinvokable]
+        #[cxx_name = "setLoudness"]
+        fn set_loudness(self: &PhoneMic, percent: i32);
         /// Lists the outputs again (one may have been plugged in).
         #[qinvokable]
         fn refresh(self: Pin<&mut PhoneMic>);
@@ -65,6 +72,9 @@ pub struct PhoneMicRust {
     output: QString,
     output_name: QString,
     cable: bool,
+    gain: i32,
+    min_gain: i32,
+    max_gain: i32,
 }
 
 impl cxx_qt::Initialize for qobject::PhoneMic {
@@ -99,6 +109,9 @@ impl qobject::PhoneMic {
         self.as_mut().set_output(QString::from(output.unwrap_or_default().as_str()));
         self.as_mut().set_output_name(QString::from(&name));
         self.as_mut().set_cable(cable);
+        self.as_mut().set_gain(phone_mic::gain() as i32);
+        self.as_mut().set_min_gain(phone_mic::MIN_GAIN as i32);
+        self.as_mut().set_max_gain(phone_mic::MAX_GAIN as i32);
     }
 
     pub fn start(&self, device: &QString) {
@@ -113,5 +126,9 @@ impl qobject::PhoneMic {
 
     pub fn choose_output(&self, id: &QString) {
         phone_mic::set_output(String::from(id));
+    }
+
+    pub fn set_loudness(&self, percent: i32) {
+        phone_mic::set_gain(percent.max(0) as u32);
     }
 }

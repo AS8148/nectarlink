@@ -1625,6 +1625,23 @@ Item {
                             }
                         }
 
+                        ListRow {
+                            width: parent.width
+                            iconPath: Icons.speaker
+                            title: qsTr("Microphone volume")
+                            description: qsTr("%1%").arg(PhoneMic.gain)
+                            ValueSlider {
+                                width: 200
+                                from: PhoneMic.minGain
+                                to: PhoneMic.maxGain
+                                step: 10
+                                value: PhoneMic.gain
+                                label: qsTr("Microphone volume")
+                                valueText: qsTr("%1%").arg(PhoneMic.gain)
+                                onMoved: (v) => PhoneMic.setLoudness(v)
+                            }
+                        }
+
                         Divider { width: parent.width }
 
                         // Row 2: Virtual camera add-on

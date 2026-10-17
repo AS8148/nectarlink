@@ -6,7 +6,10 @@
 //! listening in. A virtual microphone of NectarLink's own needs an audio
 //! driver and is a later, separate step (GitHub #7).
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU32, Ordering},
+};
 
 use nectarlink_core::{AudioOutputDevice, DeviceId, Error, LinkState, MicSink, MirrorAudioConfig, NodeEvent};
 
@@ -29,6 +32,13 @@ pub enum Phase {
 }
 
 static PHASE: Mutex<Phase> = Mutex::new(Phase::Off);
+/// How loud the microphone plays, in percent.
+static GAIN: AtomicU32 = AtomicU32::new(DEFAULT_GAIN);
+/// Phones' microphones come in quieter than a headset's: a little louder
+/// by default.
+pub const DEFAULT_GAIN: u32 = 150;
+pub const MIN_GAIN: u32 = 50;
+pub const MAX_GAIN: u32 = 400;
 /// The output device chosen in Settings (an endpoint ID), if any.
 static OUTPUT: Mutex<Option<String>> = Mutex::new(None);
 
@@ -49,6 +59,53 @@ pub fn phase() -> Phase {
 /// Reads the chosen output from the settings.
 pub fn init(settings: &crate::settings::Settings) {
     *OUTPUT.lock().unwrap_or_else(|e| e.into_inner()) = settings.phone_mic_output.clone();
+    GAIN.store(settings.phone_mic_gain.clamp(MIN_GAIN, MAX_GAIN), Ordering::Relaxed);
+}
+
+/// How loud the microphone plays, in percent.
+pub fn gain() -> u32 {
+    GAIN.load(Ordering::Relaxed)
+}
+
+/// Plays the microphone this loud from now on (and the next time).
+pub fn set_gain(percent: u32) {
+    let percent = percent.clamp(MIN_GAIN, MAX_GAIN);
+    if GAIN.swap(percent, Ordering::Relaxed) == percent {
+        return;
+    }
+    save(|s| s.phone_mic_gain = percent);
+    core_host::host().hub.changed(Changes::MIC);
+}
+
+fn save(update: impl FnOnce(&mut crate::settings::Settings)) {
+    let dir = &core_host::host().data_dir;
+    let mut settings = crate::settings::Settings::load(dir);
+    update(&mut settings);
+    if let Err(e) = settings.save(dir) {
+        tracing::warn!(error = %e, "can't save the microphone's settings");
+    }
+}
+
+/// 16-bit samples made `percent` louder, leveled off softly near full scale
+/// so loud speech doesn't crackle.
+pub(crate) fn amplify(pcm: &mut [u8], percent: u32) {
+    if percent == 100 {
+        return;
+    }
+    let gain = percent as f32 / 100.0;
+    // Below this (a fraction of full scale) samples scale as they are.
+    const KNEE: f32 = 0.7;
+    for sample in pcm.as_chunks_mut::<2>().0 {
+        let x = f32::from(i16::from_le_bytes(*sample)) / 32768.0 * gain;
+        let magnitude = x.abs();
+        let y = if magnitude <= KNEE {
+            magnitude
+        } else {
+            KNEE + (1.0 - KNEE) * ((magnitude - KNEE) / (1.0 - KNEE)).tanh()
+        };
+        let out = (y.copysign(x) * 32767.0).round().clamp(-32768.0, 32767.0) as i16;
+        *sample = out.to_le_bytes();
+    }
 }
 
 /// The output chosen in Settings, if any (kept when other settings save).
@@ -88,12 +145,7 @@ pub fn outputs() -> (Vec<AudioOutputDevice>, Option<String>) {
 /// Plays the microphone into this output from now on (and the next time).
 pub fn set_output(id: String) {
     *OUTPUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
-    let dir = &core_host::host().data_dir;
-    let mut settings = crate::settings::Settings::load(dir);
-    settings.phone_mic_output = Some(id);
-    if let Err(e) = settings.save(dir) {
-        tracing::warn!(error = %e, "can't save the microphone's output");
-    }
+    save(|s| s.phone_mic_output = Some(id));
     core_host::host().hub.changed(Changes::MIC);
 }
 
@@ -180,8 +232,9 @@ impl MicSink for Sink {
         }
     }
 
-    fn audio(&self, _time_us: u64, data: Vec<u8>) {
+    fn audio(&self, _time_us: u64, mut data: Vec<u8>) {
         if let Some(player) = self.player.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            amplify(&mut data, gain());
             player.push(data);
         }
     }
@@ -214,6 +267,29 @@ mod tests {
                 .as_deref(),
             Some("vm")
         );
+    }
+
+    fn samples(values: &[i16]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    fn read(pcm: &[u8]) -> Vec<i16> {
+        pcm.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b)).collect()
+    }
+
+    #[test]
+    fn louder_doubles_quiet_sound_and_levels_off_loud_sound() {
+        let mut pcm = samples(&[1000, -1000, 0, 30000, -32768]);
+        amplify(&mut pcm, 200);
+        let out = read(&pcm);
+        assert_eq!(&out[..3], &[2000, -2000, 0], "quiet sound doubles exactly");
+        // Loud sound stays inside full scale, still loud, sign kept.
+        assert!(out[3] > 28000 && out[3] < 32767, "{}", out[3]);
+        assert!(out[4] < -28000 && out[4] > -32768, "{}", out[4]);
+        // 100% leaves it as it is.
+        let mut same = samples(&[123, -4567]);
+        amplify(&mut same, 100);
+        assert_eq!(read(&same), [123, -4567]);
     }
 
     #[test]

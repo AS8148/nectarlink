@@ -335,6 +335,8 @@ pub struct Settings {
     /// virtual audio cable if there is one, else the default output).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phone_mic_output: Option<String>,
+    /// How loud a phone's microphone plays, in percent (50 to 400).
+    pub phone_mic_gain: u32,
     /// Which phone camera lens to stream (`"back"` or `"front"`).
     #[serde(default = "default_webcam_camera", alias = "webcam_camera")]
     pub webcam_camera: String,
@@ -451,6 +453,7 @@ impl Default for Settings {
             webcam_mirror: false,
             webcam_camera: default_webcam_camera(),
             phone_mic_output: None,
+            phone_mic_gain: crate::phone_mic::DEFAULT_GAIN,
             timeline_retention_days: 90,
             continuity_photo_hotkey: "Ctrl+Alt+C".into(),
             continuity_scan_hotkey: "Ctrl+Alt+D".into(),
@@ -603,6 +606,7 @@ mod tests {
             webcam_mirror: true,
             webcam_camera: "front".into(),
             phone_mic_output: Some("{0.0.0.00000000}.{cable}".into()),
+            phone_mic_gain: 250,
             timeline_retention_days: 30,
             continuity_photo_hotkey: "Ctrl+Alt+P".into(),
             continuity_scan_hotkey: "Ctrl+Alt+S".into(),
