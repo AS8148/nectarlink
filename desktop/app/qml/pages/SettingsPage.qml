@@ -1557,6 +1557,20 @@ Item {
 
                         Divider { width: parent.width }
 
+                        ListRow {
+                            width: parent.width
+                            iconPath: Icons.soundOff
+                            title: qsTr("Mute this PC while a phone watches")
+                            description: qsTr("With Play on phone, the phone still gets the sound.")
+                            Toggle {
+                                label: qsTr("Mute this PC while a phone watches")
+                                checked: Preferences.muteWhileWatched
+                                onToggled: (on) => Preferences.muteWhileWatched = on
+                            }
+                        }
+
+                        Divider { width: parent.width }
+
                         // Phone as microphone: its sound plays into an output; a
                         // virtual audio cable's other end is a microphone apps can pick.
                         ListRow {

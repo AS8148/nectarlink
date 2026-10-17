@@ -15,6 +15,8 @@ change things that need a step from you, and its notes say so.
   as it plays, picture and sound, so your browser's ad blocker still
   works on YouTube: the phone shows just the video, even with other
   windows over it on the PC. Tap the notification on the phone to watch.
+  The PC mutes its speakers while you watch and turns them back on after
+  (**Settings › Camera & Audio** to keep them on).
   Scripts can do the same through the local API
   (`POST /v1/play-on-phone`).
 - **Phone as microphone.** In **Settings › Camera & Audio**, Start asks

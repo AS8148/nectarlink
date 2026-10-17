@@ -869,18 +869,33 @@ fn run_capture_loop(
     cleanup_session(&stop);
 }
 
+/// Mute this PC's speakers while a phone watches (the setting).
+static MUTE_WHILE_WATCHED: AtomicBool = AtomicBool::new(true);
+
+pub fn set_mute_while_watched(on: bool) {
+    MUTE_WHILE_WATCHED.store(on, Ordering::Relaxed);
+}
+
 /// The PC's sound going to a phone that watches one of its players (as
-/// Phone speaker sends it), for as long as this lives; then as before.
+/// Phone speaker sends it), with the PC's speakers muted if the user wants
+/// (capturing the sound doesn't depend on them), for as long as this lives;
+/// then as before.
 struct SoundToPhone {
     was_on: bool,
     was_target: Option<DeviceId>,
+    /// This muted the speakers (they weren't already).
+    muted: bool,
 }
 
 impl SoundToPhone {
     fn start(peer: DeviceId) -> SoundToPhone {
+        let muted = MUTE_WHILE_WATCHED.load(Ordering::Relaxed)
+            && win::audio::speaker_state().is_some_and(|(_, muted)| !muted)
+            && win::audio::set_speaker_mute(true).is_ok();
         let sound = SoundToPhone {
             was_on: crate::pc_audio_stream::is_enabled(),
             was_target: crate::pc_audio_stream::target(),
+            muted,
         };
         crate::pc_audio_stream::set_target(Some(peer));
         crate::pc_audio_stream::set_enabled(true);
@@ -892,6 +907,10 @@ impl Drop for SoundToPhone {
     fn drop(&mut self) {
         crate::pc_audio_stream::set_target(self.was_target);
         crate::pc_audio_stream::set_enabled(self.was_on);
+        // Unmuted only if this muted it.
+        if self.muted {
+            let _ = win::audio::set_speaker_mute(false);
+        }
     }
 }
 

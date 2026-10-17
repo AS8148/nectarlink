@@ -551,6 +551,7 @@ fn main() -> ExitCode {
     notifications::set_auto_copy_otp(settings.auto_copy_otp);
     notifications::set_sync_dnd(settings.sync_dnd);
     calls::set_pause_media_on_call(settings.pause_media_on_call);
+    pc_mirror::set_mute_while_watched(settings.mute_while_watched);
     recordings::init(&settings);
     send_to::set_enabled(settings.send_to_menu);
     battery::set_enabled(settings.battery_alerts);

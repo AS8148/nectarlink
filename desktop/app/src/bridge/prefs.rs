@@ -58,6 +58,8 @@ pub mod qobject {
         #[qproperty(bool, auto_copy_otp)]
         /// Pause PC media playback while a phone call is ringing or active.
         #[qproperty(bool, pause_media_on_call)]
+        /// Mute this PC while a phone watches its playback (Play on phone).
+        #[qproperty(bool, mute_while_watched, cxx_name = "muteWhileWatched")]
         /// Quiet phone notification pop-ups on the PC while the phone is in Do Not Disturb.
         #[qproperty(bool, sync_dnd)]
         /// Paired phones in Explorer's "Send to" menu.
@@ -259,6 +261,7 @@ pub struct PreferencesRust {
     suggest_clipboard_actions: bool,
     auto_copy_otp: bool,
     pause_media_on_call: bool,
+    mute_while_watched: bool,
     sync_dnd: bool,
     send_to_menu: bool,
     start_with_windows: bool,
@@ -330,6 +333,8 @@ impl cxx_qt::Initialize for qobject::Preferences {
         self.as_mut().set_auto_copy_otp(settings.auto_copy_otp);
         crate::notifications::set_auto_copy_otp(settings.auto_copy_otp);
         self.as_mut().set_pause_media_on_call(settings.pause_media_on_call);
+        self.as_mut().set_mute_while_watched(settings.mute_while_watched);
+        crate::pc_mirror::set_mute_while_watched(settings.mute_while_watched);
         crate::calls::set_pause_media_on_call(settings.pause_media_on_call);
         self.as_mut().set_sync_dnd(settings.sync_dnd);
         crate::notifications::set_sync_dnd(settings.sync_dnd);
@@ -415,6 +420,12 @@ impl cxx_qt::Initialize for qobject::Preferences {
         self.as_mut()
             .on_auto_copy_otp_changed(|p| {
                 crate::notifications::set_auto_copy_otp(p.auto_copy_otp);
+                p.save();
+            })
+            .release();
+        self.as_mut()
+            .on_mute_while_watched_changed(|p| {
+                crate::pc_mirror::set_mute_while_watched(p.mute_while_watched);
                 p.save();
             })
             .release();
@@ -865,6 +876,7 @@ impl qobject::Preferences {
             suggest_clipboard_actions: p.suggest_clipboard_actions,
             auto_copy_otp: p.auto_copy_otp,
             pause_media_on_call: p.pause_media_on_call,
+            mute_while_watched: p.mute_while_watched,
             sync_dnd: p.sync_dnd,
             send_to_menu: p.send_to_menu,
             auto_update: p.auto_update,
