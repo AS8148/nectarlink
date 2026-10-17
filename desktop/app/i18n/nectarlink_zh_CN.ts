@@ -2737,127 +2737,127 @@
         <translation>手机屏幕 · NectarLink</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="321"/>
+        <location filename="../qml/MirrorWindow.qml" line="325"/>
         <source>Copy screenshot (Ctrl+Shift+C)</source>
         <translation>复制截图 (Ctrl+Shift+C)</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="328"/>
+        <location filename="../qml/MirrorWindow.qml" line="332"/>
         <source>Save screenshot (Ctrl+S)</source>
         <translation>保存截图 (Ctrl+S)</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="335"/>
+        <location filename="../qml/MirrorWindow.qml" line="339"/>
         <source>Stop recording (Ctrl+R)</source>
         <translation>停止录制 (Ctrl+R)</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="335"/>
+        <location filename="../qml/MirrorWindow.qml" line="339"/>
         <source>Record video (Ctrl+R)</source>
         <translation>录制视频 (Ctrl+R)</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="354"/>
+        <location filename="../qml/MirrorWindow.qml" line="357"/>
         <source>Phone stays awake while mirroring (turn off)</source>
         <translation>投屏时手机保持唤醒（点击关闭）</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="355"/>
+        <location filename="../qml/MirrorWindow.qml" line="358"/>
         <source>Keep phone awake while mirroring</source>
         <translation>投屏时保持手机唤醒</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="364"/>
+        <location filename="../qml/MirrorWindow.qml" line="367"/>
         <source>Turn phone screen back on</source>
         <translation>重新点亮手机屏幕</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="365"/>
+        <location filename="../qml/MirrorWindow.qml" line="368"/>
         <source>Turn phone screen off while mirroring</source>
         <translation>投屏时关闭手机屏幕</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="373"/>
+        <location filename="../qml/MirrorWindow.qml" line="376"/>
         <source>Play the phone&apos;s sound here</source>
         <translation>在本机播放手机声音</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="373"/>
+        <location filename="../qml/MirrorWindow.qml" line="376"/>
         <source>Mute the phone&apos;s sound here</source>
         <translation>在本机静音手机声音</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="383"/>
+        <location filename="../qml/MirrorWindow.qml" line="386"/>
         <source>Release to send files to %1</source>
         <translation>松开即可发送文件到 %1</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="383"/>
+        <location filename="../qml/MirrorWindow.qml" line="386"/>
         <source>phone</source>
         <translation>手机</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="451"/>
+        <location filename="../qml/MirrorWindow.qml" line="454"/>
         <source>To control the phone, turn on Control from your PC in NectarLink&apos;s settings on the phone.</source>
         <translation>要控制手机，请在手机上的 NectarLink 设置中开启“从电脑控制”。</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="460"/>
+        <location filename="../qml/MirrorWindow.qml" line="463"/>
         <source>Notify phone</source>
         <translation>通知手机</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="471"/>
+        <location filename="../qml/MirrorWindow.qml" line="474"/>
         <source>Hide</source>
         <translation>隐藏</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="509"/>
+        <location filename="../qml/MirrorWindow.qml" line="512"/>
         <source>Opening %1</source>
         <translation>正在打开 %1</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="509"/>
+        <location filename="../qml/MirrorWindow.qml" line="512"/>
         <source>Allow it on your phone</source>
         <translation>请在手机上允许</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="510"/>
+        <location filename="../qml/MirrorWindow.qml" line="513"/>
         <source>%1 closed</source>
         <translation>%1 已关闭</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="510"/>
+        <location filename="../qml/MirrorWindow.qml" line="513"/>
         <source>Mirroring stopped</source>
         <translation>投屏已停止</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="511"/>
+        <location filename="../qml/MirrorWindow.qml" line="514"/>
         <source>Starting…</source>
         <translation>正在启动…</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="520"/>
+        <location filename="../qml/MirrorWindow.qml" line="523"/>
         <source>Tap the notification on %1, then choose to share the entire screen.</source>
         <translation>点击 %1 上的通知，然后选择共享整个屏幕。</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="522"/>
+        <location filename="../qml/MirrorWindow.qml" line="525"/>
         <source>The app closed on %1.</source>
         <translation>%1 上的应用已关闭。</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="523"/>
+        <location filename="../qml/MirrorWindow.qml" line="526"/>
         <source>The phone stopped sharing its screen.</source>
         <translation>手机已停止共享屏幕。</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="530"/>
+        <location filename="../qml/MirrorWindow.qml" line="533"/>
         <source>Open again</source>
         <translation>重新打开</translation>
     </message>
     <message>
-        <location filename="../qml/MirrorWindow.qml" line="530"/>
+        <location filename="../qml/MirrorWindow.qml" line="533"/>
         <source>Try again</source>
         <translation>重试</translation>
     </message>
@@ -2972,81 +2972,86 @@
         <translation>正在播放</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="393"/>
+        <location filename="../qml/components/NowPlaying.qml" line="392"/>
+        <source>Play on %1</source>
+        <translation>在 %1 上播放</translation>
+    </message>
+    <message>
+        <location filename="../qml/components/NowPlaying.qml" line="404"/>
         <source>Artwork color sync is on (click to turn off)</source>
         <translation>封面配色同步已开启（点击关闭）</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="394"/>
+        <location filename="../qml/components/NowPlaying.qml" line="405"/>
         <source>Sync app colors &amp; blur to playing artwork</source>
         <translation>让应用配色与模糊效果跟随播放封面</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="405"/>
+        <location filename="../qml/components/NowPlaying.qml" line="416"/>
         <source>Compact player</source>
         <translation>紧凑播放器</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="405"/>
+        <location filename="../qml/components/NowPlaying.qml" line="416"/>
         <source>More controls</source>
         <translation>更多控制</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="518"/>
-        <location filename="../qml/components/NowPlaying.qml" line="683"/>
+        <location filename="../qml/components/NowPlaying.qml" line="529"/>
+        <location filename="../qml/components/NowPlaying.qml" line="694"/>
         <source>Previous</source>
         <translation>上一首</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="528"/>
-        <location filename="../qml/components/NowPlaying.qml" line="693"/>
+        <location filename="../qml/components/NowPlaying.qml" line="539"/>
+        <location filename="../qml/components/NowPlaying.qml" line="704"/>
         <source>Pause</source>
         <translation>暂停</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="528"/>
-        <location filename="../qml/components/NowPlaying.qml" line="693"/>
+        <location filename="../qml/components/NowPlaying.qml" line="539"/>
+        <location filename="../qml/components/NowPlaying.qml" line="704"/>
         <source>Play</source>
         <translation>播放</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="537"/>
-        <location filename="../qml/components/NowPlaying.qml" line="701"/>
+        <location filename="../qml/components/NowPlaying.qml" line="548"/>
+        <location filename="../qml/components/NowPlaying.qml" line="712"/>
         <source>Next</source>
         <translation>下一首</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="556"/>
+        <location filename="../qml/components/NowPlaying.qml" line="567"/>
         <source>Playback position</source>
         <translation>播放进度</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="675"/>
+        <location filename="../qml/components/NowPlaying.qml" line="686"/>
         <source>Rewind 10 seconds</source>
         <translation>后退 10 秒</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="710"/>
+        <location filename="../qml/components/NowPlaying.qml" line="721"/>
         <source>Forward 10 seconds</source>
         <translation>前进 10 秒</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="728"/>
+        <location filename="../qml/components/NowPlaying.qml" line="739"/>
         <source>Unmute</source>
         <translation>取消静音</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="728"/>
+        <location filename="../qml/components/NowPlaying.qml" line="739"/>
         <source>Mute</source>
         <translation>静音</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="814"/>
+        <location filename="../qml/components/NowPlaying.qml" line="825"/>
         <source>Phone speaker</source>
         <translation>手机扬声器</translation>
     </message>
     <message>
-        <location filename="../qml/components/NowPlaying.qml" line="814"/>
+        <location filename="../qml/components/NowPlaying.qml" line="825"/>
         <source>PC speaker</source>
         <translation>电脑扬声器</translation>
     </message>
