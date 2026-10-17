@@ -6,8 +6,11 @@
 //!   `docs/design/tokens.json`, the single source of truth.
 //! - `tokens --check`: fails if the generated files are out of date (CI).
 //! - `notices <out>`: the third-party notices shipped with the Windows app.
+//! - `strings [--check]`: the Windows app's Rust-built text for Qt's
+//!   translation tools (`desktop/app/i18n/rust_strings.h`).
 
 mod notices;
+mod strings;
 
 use std::{
     fs,
@@ -28,8 +31,12 @@ fn main() -> ExitCode {
         ["tokens"] => tokens(false),
         ["tokens", "--check"] => tokens(true),
         ["notices", rest @ ..] => notices::run(rest),
+        ["strings"] => strings::run(false),
+        ["strings", "--check"] => strings::run(true),
         _ => {
-            eprintln!("usage: cargo xtask tokens [--check] | notices <out> [--target <triple>]");
+            eprintln!(
+                "usage: cargo xtask tokens [--check] | strings [--check] | notices <out> [--target <triple>]"
+            );
             return ExitCode::from(2);
         }
     };

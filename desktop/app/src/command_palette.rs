@@ -9,6 +9,7 @@
 //! - Closing drops the candidate vector (`shrink_to_fit`) so the palette costs
 //!   zero memory and zero CPU while closed.
 
+use crate::i18n::tr;
 use std::{collections::HashSet, path::PathBuf, sync::Mutex, time::Instant};
 
 use nectarlink_core::{ClipboardItemKind, DeviceId, LinkState, PhoneToggleValue, TimelineKind};
@@ -201,7 +202,7 @@ pub fn execute(id: &str) -> Option<PaletteUiAction> {
     }
     if id == "action:sync_now" {
         if let Some(node) = core_host::node() {
-            show_message("Syncing devices…");
+            show_message(tr!("CommandPalette", "Syncing devices…"));
             core_host::spawn(async move { node.refresh().await });
         }
         return None;
@@ -282,11 +283,11 @@ pub fn execute(id: &str) -> Option<PaletteUiAction> {
         match crate::webcam::phase() {
             crate::webcam::Phase::Asking { .. } | crate::webcam::Phase::Streaming { .. } => {
                 crate::webcam::stop();
-                show_message("Stopped phone webcam.");
+                show_message(tr!("CommandPalette", "Stopped phone webcam."));
             }
             _ => {
                 crate::webcam::start(Some(dev));
-                show_message("Starting phone webcam…");
+                show_message(tr!("CommandPalette", "Starting phone webcam…"));
             }
         }
         return None;
@@ -339,7 +340,7 @@ pub fn execute(id: &str) -> Option<PaletteUiAction> {
         if crate::calls::can_dial(dev) {
             crate::calls::dial_from_palette(dev, number);
             let name = core_host::host().hub.read(|s| s.name_of(&dev)).unwrap_or_else(|| "phone".into());
-            show_message(format!("Calling {number} on {name}…"));
+            show_message(tr!("CommandPalette", "Calling %1 on %2…", number, name));
             return None;
         }
         return Some(PaletteUiAction::OpenDialer { device_id: dev.to_string(), number: number.to_owned() });
@@ -364,7 +365,7 @@ pub fn execute(id: &str) -> Option<PaletteUiAction> {
         if path.exists() {
             crate::transfers::open(&path);
         } else {
-            show_message("That file is no longer in its saved location.");
+            show_message(tr!("CommandPalette", "That file is no longer in its saved location."));
         }
         return None;
     }
@@ -379,7 +380,7 @@ fn device_index_of(device: DeviceId) -> Option<usize> {
 fn ring_device_from_palette(device: DeviceId) {
     let Some(node) = core_host::node() else { return };
     let name = core_host::host().hub.read(|s| s.name_of(&device)).unwrap_or_else(|| "your phone".into());
-    show_message(format!("Ringing {name}…"));
+    show_message(tr!("CommandPalette", "Ringing %1…", name));
     core_host::spawn(async move {
         if let Err(e) = node.ring(device, true).await {
             show_message(describe(&e));
@@ -395,8 +396,10 @@ fn open_voice_recordings(device: DeviceId) {
     crate::transfers::open(&folder);
     let phone_name =
         core_host::host().hub.read(|s| s.name_of(&device)).unwrap_or_else(|| "your phone".into());
-    show_message(format!(
-        "Opened Recordings folder. Start a voice note in NectarLink on {phone_name} to send it here."
+    show_message(tr!(
+        "CommandPalette",
+        "Opened Recordings folder. Start a voice note in NectarLink on %1 to send it here.",
+        phone_name
     ));
 }
 

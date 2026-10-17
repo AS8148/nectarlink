@@ -6,6 +6,7 @@
 
 #![allow(unsafe_code)]
 
+use crate::i18n::tr;
 use std::{
     sync::{
         Arc, Mutex,
@@ -57,7 +58,7 @@ fn now_playing(player: &str) -> (String, Option<u32>) {
 /// button on the PC's media card).
 pub fn play(player: String) {
     let Some((phone, name)) = phone() else {
-        return show_message("Connect your phone to play on it.");
+        return show_message(tr!("PlayOnPhone", "Connect your phone to play on it."));
     };
     let spawned = std::thread::Builder::new().name("play-on-phone".into()).spawn(move || {
         // SAFETY: COM for this short-lived thread (UI Automation).
@@ -75,14 +76,21 @@ pub fn play(player: String) {
                 PlayOnPhone::Open { url, service } => match node.open_link(phone, url).await {
                     Ok(()) => {
                         crate::media::command(crate::media::LOCAL_DEVICE, player, MediaAction::Pause, None);
-                        show_message(format!("Opening in {service} on {name}. Tap the notification there."));
+                        show_message(tr!(
+                            "PlayOnPhone",
+                            "Opening in %1 on %2. Tap the notification there.",
+                            service,
+                            name
+                        ));
                     }
                     Err(e) => show_message(failed(&e, &name)),
                 },
                 PlayOnPhone::Stream { open_instead } => {
                     let shown = (!title.is_empty()).then_some(title);
                     match node.offer_watch(phone, player.clone(), shown).await {
-                        Ok(()) => show_message(format!("Tap the notification on {name} to watch.")),
+                        Ok(()) => {
+                            show_message(tr!("PlayOnPhone", "Tap the notification on %1 to watch.", name))
+                        }
                         // A phone that can't watch yet: the page opens there instead.
                         Err(Error::Unsupported) if let Some(url) = open_instead => {
                             match node.open_link(phone, url).await {
@@ -93,7 +101,11 @@ pub fn play(player: String) {
                                         MediaAction::Pause,
                                         None,
                                     );
-                                    show_message(format!("Sent to {name}. Tap the notification there."));
+                                    show_message(tr!(
+                                        "PlayOnPhone",
+                                        "Sent to %1. Tap the notification there.",
+                                        name
+                                    ));
                                 }
                                 Err(e) => show_message(failed(&e, &name)),
                             }
@@ -111,8 +123,8 @@ pub fn play(player: String) {
 
 fn failed(error: &Error, phone: &str) -> String {
     match error {
-        Error::Unsupported => format!("Update NectarLink on {phone} to play on it."),
-        Error::Denied => format!("Media is turned off for {phone}."),
+        Error::Unsupported => tr!("PlayOnPhone", "Update NectarLink on %1 to play on it.", phone),
+        Error::Denied => tr!("PlayOnPhone", "Media is turned off for %1.", phone),
         other => describe(other),
     }
 }

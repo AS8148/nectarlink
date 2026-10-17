@@ -4,6 +4,7 @@
 //! `storage.read`, `storage.write`), with conflict-safe renaming so neither
 //! side's edits are ever lost.
 
+use crate::i18n::tr;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -569,9 +570,9 @@ pub fn trigger_sync_now() {
         if let Some(node) = core_host::node() {
             let count = sync_now(&node).await;
             if count > 0 {
-                crate::bridge::app::show_message(format!("Synced {count} file(s)."));
+                crate::bridge::app::show_message(tr!("FolderSync", "Synced %1 file(s).", count));
             } else {
-                crate::bridge::app::show_message("Folders are up to date.");
+                crate::bridge::app::show_message(tr!("FolderSync", "Folders are up to date."));
             }
         }
     });

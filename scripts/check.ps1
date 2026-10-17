@@ -63,7 +63,7 @@ try {
         Invoke-Step "QML tests" { & (Join-Path $PSScriptRoot "qml-tests.ps1") }
     }
     Invoke-Step "License headers" { & (Join-Path $PSScriptRoot "check-headers.ps1") }
-    Invoke-Step "Generated files" { cargo xtask tokens --check }
+    Invoke-Step "Generated files" { cargo xtask tokens --check; if ($LASTEXITCODE -eq 0) { cargo xtask strings --check } }
     if (-not $Fast) {
         Invoke-Step "Dependency policy" {
             if (-not (Get-Command cargo-deny -ErrorAction SilentlyContinue)) {

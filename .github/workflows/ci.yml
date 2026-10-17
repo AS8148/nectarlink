@@ -44,7 +44,9 @@ jobs:
         run: cargo test --locked $CORE_CRATES
       - name: Generated files are up to date
         if: runner.os == 'Linux'
-        run: cargo xtask tokens --check
+        run: |
+          cargo xtask tokens --check
+          cargo xtask strings --check
 
   desktop:
     name: Windows app (x64)

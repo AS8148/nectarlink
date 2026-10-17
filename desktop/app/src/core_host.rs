@@ -4,6 +4,7 @@
 //! through [`spawn`]. The UI starts before the node, which comes up in the
 //! background (startup is never blocked on the network).
 
+use crate::i18n::tr;
 use std::{
     future::Future,
     path::PathBuf,
@@ -293,8 +294,11 @@ async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
                     &event
                     && *dropped_count > 0
                 {
-                    crate::bridge::app::show_message(format!(
-                        "Dropped {dropped_count} queued item(s) for {peer_name} (device unpaired)."
+                    crate::bridge::app::show_message(tr!(
+                        "CoreHost",
+                        "Dropped %1 queued item(s) for %2 (device unpaired).",
+                        dropped_count,
+                        peer_name
                     ));
                 }
                 crate::notifications::apply(&event);

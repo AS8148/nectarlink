@@ -6,6 +6,7 @@
 //! phone from the tray or Command Palette; a phone can lock this PC or put it
 //! to sleep.
 
+use crate::i18n::tr;
 use nectarlink_core::{
     ClipKind, DeviceId, Error, FeatureState, HandoffKind, HandoffLink, LinkState, PowerAction,
     address_to_geo_uri, classify_clip, extract_handoff_link, format_video_timestamp, geo_to_maps_https,
@@ -119,14 +120,20 @@ fn notice(title: &str, body: &str) {
 pub fn open_copied_link_on_phone() {
     let Clip::Text { .. } = clipboard::read() else {
         return notice(
-            "Copy a link or address first",
-            "Copy a web link, video URL, or street address, then choose this again to open it on your phone.",
+            &tr!("Links", "Copy a link or address first"),
+            &tr!(
+                "Links",
+                "Copy a web link, video URL, or street address, then choose this again to open it on your phone."
+            ),
         );
     };
     let Some(handoff) = handoff_from_clipboard() else {
         return notice(
-            "That's not a link or address",
-            "Copy a web link (https://…), geo: URI, or street address, then choose this again.",
+            &tr!("Links", "That's not a link or address"),
+            &tr!(
+                "Links",
+                "Copy a web link (https://…), geo: URI, or street address, then choose this again."
+            ),
         );
     };
     let node = core_host::node();
@@ -149,8 +156,8 @@ pub fn open_copied_link_on_phone() {
     });
     let Some((phone, name)) = phone else {
         return notice(
-            "No phone to open it on",
-            "Pair a phone first, or enable opening links on your phone.",
+            &tr!("Links", "No phone to open it on"),
+            &tr!("Links", "Pair a phone first, or enable opening links on your phone."),
         );
     };
     send(phone, name, handoff);
@@ -174,21 +181,23 @@ fn send(phone: DeviceId, name: String, handoff: HandoffLink) {
     core_host::spawn(async move {
         let body = match handoff.kind {
             HandoffKind::MapLocation => {
-                format!("{}: tap the notification on your phone to open in Maps.", handoff.label)
+                tr!("Links", "%1: tap the notification on your phone to open in Maps.", handoff.label)
             }
             HandoffKind::VideoLink if handoff.timestamp_secs.is_some() => {
-                format!("{}: tap the notification on your phone to continue watching.", handoff.label)
+                tr!("Links", "%1: tap the notification on your phone to continue watching.", handoff.label)
             }
-            _ => "Tap the notification on your phone to open it.".into(),
+            _ => tr!("Links", "Tap the notification on your phone to open it."),
         };
         match node.open_link(phone, handoff.url).await {
             Ok(()) => {
                 if !crate::bridge::app::show_offline_queued_toast(phone, None) {
-                    notice(&format!("Sent to {name}"), &body);
+                    notice(&tr!("Links", "Sent to %1", name), &body);
                 }
             }
-            Err(Error::Unsupported) => notice("Couldn't send it", &format!("Update NectarLink on {name}.")),
-            Err(e) => notice("Couldn't send it", &describe(&e)),
+            Err(Error::Unsupported) => {
+                notice(&tr!("Links", "Couldn't send it"), &tr!("Links", "Update NectarLink on %1.", name))
+            }
+            Err(e) => notice(&tr!("Links", "Couldn't send it"), &describe(&e)),
         }
     });
 }

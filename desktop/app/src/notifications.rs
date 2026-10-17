@@ -4,6 +4,7 @@
 //! them), and what the user does with a toast or the feed goes back to the
 //! phone.
 
+use crate::i18n::tr;
 use std::{
     collections::{HashMap, HashSet},
     sync::{
@@ -119,7 +120,7 @@ pub fn copy_otp(code: &str) {
         return;
     }
     if crate::win::clipboard::write_private(trimmed).is_ok() {
-        crate::bridge::app::show_message("Code copied");
+        crate::bridge::app::show_message(tr!("Notifications", "Code copied"));
     }
 }
 

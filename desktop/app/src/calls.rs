@@ -5,6 +5,7 @@
 //! notification to mute or end it), and a notification for calls nobody
 //! answered.
 
+use crate::i18n::tr;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -359,7 +360,7 @@ pub fn command(device: DeviceId, call: String, command: CallCommand) {
     core_host::spawn(async move {
         match node.call_command(device, call, command).await {
             Ok(()) => {}
-            Err(Error::NotFound) => show_message("That call is over."),
+            Err(Error::NotFound) => show_message(tr!("Calls", "That call is over.")),
             Err(e) => show_message(describe(&e)),
         }
     });
@@ -431,7 +432,7 @@ pub fn on_toast(key: &str, action: &str) {
                         show_in_progress(device, &active);
                     }
                 }
-                Err(Error::NotFound) => show_message("That call is over."),
+                Err(Error::NotFound) => show_message(tr!("Calls", "That call is over.")),
                 Err(e) => show_message(describe(&e)),
             }
         });
@@ -448,7 +449,7 @@ pub fn on_toast(key: &str, action: &str) {
                 }
             }
             Ok(()) => {}
-            Err(Error::NotFound) => show_message("That call is over."),
+            Err(Error::NotFound) => show_message(tr!("Calls", "That call is over.")),
             Err(e) => show_message(describe(&e)),
         }
     });

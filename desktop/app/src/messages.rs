@@ -5,6 +5,7 @@
 //! one inbox. Texts, MMS image attachments, and inline chat replies sent from
 //! here go out through the phone.
 
+use crate::i18n::tr;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -1098,7 +1099,9 @@ pub fn send(body: String) {
     });
     match to {
         Some(to) if to.len() == 1 => send_to(to, body),
-        Some(_) => crate::bridge::app::show_message("Group texts can't be sent from the PC yet."),
+        Some(_) => {
+            crate::bridge::app::show_message(tr!("Messages", "Group texts can't be sent from the PC yet."))
+        }
         None => {}
     }
 }

@@ -6,6 +6,7 @@
 //! listening in. A virtual microphone of NectarLink's own needs an audio
 //! driver and is a later, separate step (GitHub #7).
 
+use crate::i18n::tr;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU32, Ordering},
@@ -178,12 +179,14 @@ pub fn start(phone: DeviceId) {
     set_phase(Phase::Asking(phone));
     core_host::spawn(async move {
         match node.mic_start(phone).await {
-            Ok(()) => show_message(format!("Tap Start on {name} to use its microphone.")),
+            Ok(()) => show_message(tr!("PhoneMic", "Tap Start on %1 to use its microphone.", name)),
             Err(e) => {
                 set_phase(Phase::Off);
                 show_message(match e {
-                    Error::Unsupported => format!("Update NectarLink on {name} to use its microphone."),
-                    Error::Denied => format!("The microphone is turned off for this PC on {name}."),
+                    Error::Unsupported => {
+                        tr!("PhoneMic", "Update NectarLink on %1 to use its microphone.", name)
+                    }
+                    Error::Denied => tr!("PhoneMic", "The microphone is turned off for this PC on %1.", name),
                     other => describe(&other),
                 });
             }

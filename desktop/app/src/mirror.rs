@@ -6,6 +6,7 @@
 //! keyframe. The phone's sound, when it sends it, plays on the PC's
 //! speakers.
 
+use crate::i18n::tr;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -396,7 +397,7 @@ fn free_path(dir: &Path, name: &str) -> PathBuf {
 pub fn screenshot_clipboard(window: Window) {
     let Some(bitmap) = latest_bitmap(&window) else {
         set_notice(window, "Wait for the screen to appear first");
-        show_message("Wait for the screen to appear first.");
+        show_message(tr!("Mirror", "Wait for the screen to appear first."));
         return;
     };
     let copied = encode_png(&bitmap)
@@ -405,12 +406,12 @@ pub fn screenshot_clipboard(window: Window) {
     match copied {
         Ok(()) => {
             set_notice(window, "Screenshot copied to clipboard");
-            show_message("Screenshot copied to clipboard.");
+            show_message(tr!("Mirror", "Screenshot copied to clipboard."));
         }
         Err(e) => {
             tracing::warn!(error = %e, "can't copy mirror screenshot");
             set_notice(window, "Couldn't copy screenshot");
-            show_message("The screenshot couldn't be copied to the clipboard.");
+            show_message(tr!("Mirror", "The screenshot couldn't be copied to the clipboard."));
         }
     }
 }
@@ -419,7 +420,7 @@ pub fn screenshot_clipboard(window: Window) {
 pub fn screenshot_file(window: Window) {
     let Some(bitmap) = latest_bitmap(&window) else {
         set_notice(window, "Wait for the screen to appear first");
-        show_message("Wait for the screen to appear first.");
+        show_message(tr!("Mirror", "Wait for the screen to appear first."));
         return;
     };
     let png = match encode_png(&bitmap) {
@@ -427,7 +428,7 @@ pub fn screenshot_file(window: Window) {
         Err(e) => {
             tracing::warn!(error = %e, "can't encode mirror screenshot");
             set_notice(window, "Couldn't save screenshot");
-            show_message("The screenshot couldn't be saved.");
+            show_message(tr!("Mirror", "The screenshot couldn't be saved."));
             return;
         }
     };
@@ -436,14 +437,14 @@ pub fn screenshot_file(window: Window) {
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::warn!(error = %e, "can't create Downloads\\Nectarlink");
         set_notice(window, "Couldn't save screenshot");
-        show_message("The screenshot couldn't be saved.");
+        show_message(tr!("Mirror", "The screenshot couldn't be saved."));
         return;
     }
     let path = free_path(&dir, &base_name);
     if let Err(e) = std::fs::write(&path, &png) {
         tracing::warn!(error = %e, "can't write mirror screenshot");
         set_notice(window, "Couldn't save screenshot");
-        show_message("The screenshot couldn't be saved.");
+        show_message(tr!("Mirror", "The screenshot couldn't be saved."));
         return;
     }
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or(&base_name).to_owned();
@@ -477,7 +478,7 @@ pub fn screenshot_file(window: Window) {
         call: false,
     });
     set_notice(window, format!("Saved {file_name}"));
-    show_message(format!("Saved {file_name} to Downloads\\Nectarlink."));
+    show_message(tr!("Mirror", "Saved %1 to Downloads\\Nectarlink.", file_name));
 }
 
 /// Whether `window` is currently recording to an MP4 file.
@@ -511,7 +512,7 @@ pub fn toggle_recording(window: Window) {
     }
     if !matches!(phase(&window), Some(Phase::Showing)) {
         set_notice(window, "Wait for the screen to appear first");
-        show_message("Wait for the screen to appear first.");
+        show_message(tr!("Mirror", "Wait for the screen to appear first."));
         return;
     }
     let base_name = local_timestamp_filename("Mirror", "mp4");
@@ -519,7 +520,7 @@ pub fn toggle_recording(window: Window) {
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::warn!(error = %e, "can't create Downloads\\Nectarlink");
         set_notice(window, "Couldn't start recording");
-        show_message("Couldn't start recording.");
+        show_message(tr!("Mirror", "Couldn't start recording."));
         return;
     }
     let path = free_path(&dir, &base_name);
@@ -622,7 +623,7 @@ pub fn stop_recording(window: Window) {
                     call: false,
                 });
                 set_notice(window, format!("Saved {file_name}"));
-                show_message(format!("Saved {file_name} to Downloads\\Nectarlink."));
+                show_message(tr!("Mirror", "Saved %1 to Downloads\\Nectarlink.", file_name));
             }
             Ok(Err(msg)) => {
                 set_notice(window, msg.clone());

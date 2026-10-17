@@ -4,6 +4,7 @@
 //! it can be controlled; what plays on this PC goes to the phones (see
 //! `win::media_sessions`).
 
+use crate::i18n::tr;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -194,9 +195,9 @@ fn send(device: DeviceId, player: String, action: MediaAction, position: Option<
         let result = node.media_command(device, player, action, position).await;
         let message = match result {
             Ok(()) => return,
-            Err(Error::NotFound) => "That player isn't playing anymore.".to_owned(),
-            Err(Error::Unsupported) => "That player can't do that.".to_owned(),
-            Err(Error::Denied) => "Media is turned off for that device.".to_owned(),
+            Err(Error::NotFound) => tr!("Media", "That player isn't playing anymore."),
+            Err(Error::Unsupported) => tr!("Media", "That player can't do that."),
+            Err(Error::Denied) => tr!("Media", "Media is turned off for that device."),
             Err(e) => describe(&e),
         };
         tracing::debug!(message, "media command failed");

@@ -5,6 +5,7 @@
 //! clipboard" sends it on demand, and what a phone sends lands on the
 //! Windows clipboard.
 
+use crate::i18n::tr;
 use std::{
     collections::HashMap,
     sync::{
@@ -171,7 +172,7 @@ fn make_thumbs(node: Node, ids: Vec<String>) {
 pub fn copy_history_item(id: &str) {
     let Some(node) = core_host::node() else { return };
     match node.copy_clipboard_history(id) {
-        Ok(()) => show_message("Copied to clipboard"),
+        Ok(()) => show_message(tr!("Clipboard", "Copied to clipboard")),
         Err(e) => show_message(describe(&e)),
     }
 }
@@ -281,36 +282,41 @@ pub fn send_now(device: DeviceId) {
     let image = matches!(clip, Clip::Image(_));
     match clip {
         Clip::Private => {
-            return show_message("What you copied is marked private by its app, so it wasn't sent.");
+            return show_message(tr!(
+                "Clipboard",
+                "What you copied is marked private by its app, so it wasn't sent."
+            ));
         }
         Clip::Empty => {
             if let Some(files) = clipboard::read_files() {
                 crate::transfers::send(device, files);
                 if is_online {
-                    show_message(format!("Sending copied files to {name}…"));
+                    show_message(tr!("Clipboard", "Sending copied files to %1…", name));
                 }
                 return;
             }
-            return show_message("There's no text, image, or file on the clipboard.");
+            return show_message(tr!("Clipboard", "There's no text, image, or file on the clipboard."));
         }
         Clip::Text { .. } | Clip::Image(_) => {}
     }
     core_host::spawn(async move {
         let Some(content) = Content::from_clip(clip).await else {
-            return show_message("That image can't be read.");
+            return show_message(tr!("Clipboard", "That image can't be read."));
         };
         match content.send(&node, device).await {
             Ok(()) => {
                 if !crate::bridge::app::show_offline_queued_toast(device, None) {
-                    show_message(format!("Sent to {name}."));
+                    show_message(tr!("Clipboard", "Sent to %1.", name));
                 }
             }
-            Err(Error::TooLarge) if image => show_message("That image is too large to send."),
-            Err(Error::TooLarge) => show_message("That's too much text to send at once."),
-            Err(Error::Unsupported) if image => {
-                show_message(format!("Update NectarLink on {name} to send it images."))
+            Err(Error::TooLarge) if image => {
+                show_message(tr!("Clipboard", "That image is too large to send."))
             }
-            Err(Error::Denied) => show_message(format!("The clipboard is turned off for {name}.")),
+            Err(Error::TooLarge) => show_message(tr!("Clipboard", "That's too much text to send at once.")),
+            Err(Error::Unsupported) if image => {
+                show_message(tr!("Clipboard", "Update NectarLink on %1 to send it images.", name))
+            }
+            Err(Error::Denied) => show_message(tr!("Clipboard", "The clipboard is turned off for %1.", name)),
             Err(e) => show_message(describe(&e)),
         }
     });
@@ -325,10 +331,12 @@ pub fn send_history_item(device: DeviceId, id: &str) {
         match node.resend_clipboard_history(device, &id).await {
             Ok(()) => {
                 if !crate::bridge::app::show_offline_queued_toast(device, None) {
-                    show_message(format!("Sent to {name}."));
+                    show_message(tr!("Clipboard", "Sent to %1.", name));
                 }
             }
-            Err(Error::NotFound) => show_message("That clip is no longer in clipboard history."),
+            Err(Error::NotFound) => {
+                show_message(tr!("Clipboard", "That clip is no longer in clipboard history."))
+            }
             Err(e) => show_message(describe(&e)),
         }
     });
@@ -376,7 +384,7 @@ pub fn on_event(event: &NodeEvent) {
             });
         } else {
             *LAST_SUGGESTION.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            show_message(format!("Copied from {name}."));
+            show_message(tr!("Clipboard", "Copied from %1.", name));
         }
     }
 }

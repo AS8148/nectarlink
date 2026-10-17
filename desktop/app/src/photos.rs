@@ -7,6 +7,7 @@
 //!   folder or `Downloads\Nectarlink`), Copy to clipboard, and Open in the
 //!   Windows Photos app or default video player.
 
+use crate::i18n::tr;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -206,8 +207,10 @@ pub fn on_toast(key: &str, action: Option<&str>) {
     core_host::spawn(async move {
         match node.fetch_photo(device, photo_id).await {
             Ok(transfer) => asked(transfer, intent),
-            Err(Error::NotFound) => show_message("That photo isn't on the phone anymore."),
-            Err(Error::Denied) => show_message("The phone doesn't share photos or files with this PC."),
+            Err(Error::NotFound) => show_message(tr!("Photos", "That photo isn't on the phone anymore.")),
+            Err(Error::Denied) => {
+                show_message(tr!("Photos", "The phone doesn't share photos or files with this PC."))
+            }
             Err(e) => show_message(describe(&e)),
         }
     });
@@ -399,10 +402,10 @@ fn deliver(transfer_id: &str, intent: Intent, saved: &[PathBuf]) {
             match final_paths.as_slice() {
                 [one] => {
                     let name = one.file_name().and_then(|n| n.to_str()).unwrap_or("Photo");
-                    show_message(format!("Saved {name} to {dest_label}."));
+                    show_message(tr!("Photos", "Saved %1 to %2.", name, dest_label));
                 }
                 many if !many.is_empty() => {
-                    show_message(format!("Saved {} items to {dest_label}.", many.len()));
+                    show_message(tr!("Photos", "Saved %1 items to %2.", many.len(), dest_label));
                 }
                 _ => {}
             }
@@ -456,15 +459,15 @@ fn copy_file_to_clipboard(path: &Path, remove_after: bool, notify_ui: bool) {
                 let _ = std::fs::remove_file(path);
             }
             if notify_ui {
-                show_message("Copied to clipboard.");
+                show_message(tr!("Photos", "Copied to clipboard."));
             }
         }
         Err(reason) => {
             tracing::warn!(reason, "can't copy a photo");
             if remove_after {
-                show_message("The photo couldn't be copied. It's in Downloads\\Nectarlink.");
+                show_message(tr!("Photos", "The photo couldn't be copied. It's in Downloads\\Nectarlink."));
             } else {
-                show_message("The photo couldn't be copied to the clipboard.");
+                show_message(tr!("Photos", "The photo couldn't be copied to the clipboard."));
             }
         }
     }
@@ -1187,7 +1190,7 @@ pub fn open_latest_photo(device: DeviceId) {
     let Some(node) = core_host::node() else { return };
 
     if let Some((id, None)) = cached_or_first {
-        show_message("Opening latest photo…");
+        show_message(tr!("Photos", "Opening latest photo…"));
         core_host::spawn(async move {
             match node.fetch_photo(device, id.clone()).await {
                 Ok(transfer) => asked(transfer, Intent::Open { item_id: Some(id) }),
@@ -1223,12 +1226,12 @@ pub fn open_latest_photo(device: DeviceId) {
         if let Some(path) = timeline_fallback {
             crate::transfers::open(&path);
         } else {
-            show_message("The phone isn't connected right now.");
+            show_message(tr!("Photos", "The phone isn't connected right now."));
         }
         return;
     }
 
-    show_message("Opening latest photo…");
+    show_message(tr!("Photos", "Opening latest photo…"));
     core_host::spawn(async move {
         match node.photo_list(device, None, None, 1).await {
             Ok(items) => {
@@ -1236,7 +1239,7 @@ pub fn open_latest_photo(device: DeviceId) {
                     if let Some(path) = timeline_fallback {
                         crate::transfers::open(&path);
                     } else {
-                        show_message("No recent photos found on the phone.");
+                        show_message(tr!("Photos", "No recent photos found on the phone."));
                     }
                     return;
                 };
@@ -1345,8 +1348,8 @@ pub fn save_items(ids: Vec<String>, folder: Option<PathBuf>) {
 
 fn show_photo_error(error: &Error) {
     match error {
-        Error::NotFound => show_message("That photo isn't on the phone anymore."),
-        Error::Denied => show_message("The phone doesn't share photos or files with this PC."),
+        Error::NotFound => show_message(tr!("Photos", "That photo isn't on the phone anymore.")),
+        Error::Denied => show_message(tr!("Photos", "The phone doesn't share photos or files with this PC.")),
         other => show_message(describe(other)),
     }
 }

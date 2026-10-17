@@ -3,6 +3,7 @@
 //! user picks or drops, opening what arrived, and a Windows notification
 //! when files from a phone are saved.
 
+use crate::i18n::tr;
 use std::path::{Path, PathBuf};
 
 use nectarlink_core::{DeviceId, Direction, Error, NodeEvent, Transfer, TransferState};
@@ -50,8 +51,10 @@ fn send_with_mode(device: DeviceId, paths: Vec<PathBuf>, handoff: bool) {
     core_host::spawn(async move {
         let files = match tokio::task::spawn_blocking(move || nectarlink_core::outgoing_paths(&paths)).await {
             Ok(Ok(files)) if !files.is_empty() => files,
-            Ok(Ok(_)) => return show_message("There's nothing to send in there."),
-            Ok(Err(Error::TooLarge)) => return show_message("That's too many files to send at once."),
+            Ok(Ok(_)) => return show_message(tr!("Transfers", "There's nothing to send in there.")),
+            Ok(Err(Error::TooLarge)) => {
+                return show_message(tr!("Transfers", "That's too many files to send at once."));
+            }
             Ok(Err(e)) => return show_message(describe(&e)),
             Err(_) => return,
         };
@@ -64,7 +67,7 @@ fn send_with_mode(device: DeviceId, paths: Vec<PathBuf>, handoff: bool) {
             Ok(transfer_id) => {
                 crate::bridge::app::show_offline_queued_toast(device, Some(transfer_id));
             }
-            Err(Error::Denied) => show_message("Files are turned off for that device."),
+            Err(Error::Denied) => show_message(tr!("Transfers", "Files are turned off for that device.")),
             Err(e) => show_message(describe(&e)),
         }
     });

@@ -6,6 +6,7 @@
 //! clipboard on arrival, and either restores focus + synthesizes `Ctrl+V` into
 //! the original target window or prompts the user if that window was closed.
 
+use crate::i18n::tr;
 use std::{
     sync::{
         Mutex,
@@ -168,7 +169,10 @@ pub fn start_for_index(preferred_index: usize, mode_raw: &str) {
             .map(|d| (d.id, d.info.name.clone(), matches!(d.link, LinkState::Online { .. })))
     });
     let Some((device_id, device_name, online)) = chosen else {
-        crate::bridge::app::show_message("Pair your phone first to take a photo or scan a document.");
+        crate::bridge::app::show_message(tr!(
+            "ContinuityCamera",
+            "Pair your phone first to take a photo or scan a document."
+        ));
         return;
     };
 
@@ -264,9 +268,12 @@ pub fn confirm_paste() {
     if let Some((hwnd, title)) = crate::win::tray::snapshot_target_window() {
         spawn_focus_and_paste(hwnd);
         let label = if title.is_empty() { "active window".to_owned() } else { title };
-        crate::bridge::app::show_message(format!("Pasted into {label}"));
+        crate::bridge::app::show_message(tr!("ContinuityCamera", "Pasted into %1", label));
     } else {
-        crate::bridge::app::show_message("Image is on your clipboard. Press Ctrl+V in your target app.");
+        crate::bridge::app::show_message(tr!(
+            "ContinuityCamera",
+            "Image is on your clipboard. Press Ctrl+V in your target app."
+        ));
     }
 }
 
@@ -311,7 +318,11 @@ pub fn on_event(event: &NodeEvent) {
             if let Err(e) = crate::win::clipboard::write_image(mime, data) {
                 tracing::warn!(error = %e, "can't copy continuity camera image to clipboard");
                 notify_continuity();
-                crate::bridge::app::show_message(format!("Couldn’t copy image to clipboard: {e}"));
+                crate::bridge::app::show_message(tr!(
+                    "ContinuityCamera",
+                    "Couldn’t copy image to clipboard: %1",
+                    e
+                ));
                 return;
             }
 

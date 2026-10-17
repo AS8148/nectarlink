@@ -5,6 +5,7 @@
 //! Loads 100 entries per page on demand so QML never instantiates all 5,000
 //! retained entries at once.
 
+use crate::i18n::tr;
 use std::{path::Path, pin::Pin};
 
 use cxx_qt::{CxxQtType, Threading};
@@ -194,7 +195,7 @@ fn role_value(row: &Row, role: &str) -> QVariant {
         "deviceName" => text(&row.device_name),
         "timestamp" => QVariant::from(&(e.timestamp as f64)),
         "prevTimestamp" => QVariant::from(&(row.prev_timestamp as f64)),
-        "title" => text(&row.title),
+        "title" => text(&crate::i18n::timeline_title(&row.title)),
         "subtitle" => text(&row.subtitle),
         "sizeBytes" => QVariant::from(&(e.size_bytes as f64)),
         "durationSecs" => QVariant::from(&(e.duration_secs as i32)),
@@ -347,7 +348,7 @@ impl qobject::TimelineModel {
                     if path.exists() {
                         crate::transfers::open(path);
                     } else {
-                        show_message("That file was moved or deleted.");
+                        show_message(tr!("Timeline", "That file was moved or deleted."));
                     }
                 }
             }
@@ -360,7 +361,7 @@ impl qobject::TimelineModel {
                             show_message(e);
                         }
                     }
-                    None => show_message("That isn't a web link."),
+                    None => show_message(tr!("Timeline", "That isn't a web link.")),
                 }
             }
             TimelineKind::Clip | TimelineKind::Session => {}
@@ -374,7 +375,7 @@ impl qobject::TimelineModel {
             if path.exists() {
                 crate::transfers::show_in_folder(path);
             } else {
-                show_message("That file was moved or deleted.");
+                show_message(tr!("Timeline", "That file was moved or deleted."));
             }
         }
     }
@@ -390,14 +391,14 @@ impl qobject::TimelineModel {
             TimelineKind::Link => {
                 let url = if row.entry.target.is_empty() { &row.entry.title } else { &row.entry.target };
                 match crate::win::clipboard::write(url) {
-                    Ok(()) => show_message("Copied link to clipboard."),
+                    Ok(()) => show_message(tr!("Timeline", "Copied link to clipboard.")),
                     Err(e) => show_message(e),
                 }
             }
             TimelineKind::Photo => {
                 let path = Path::new(&row.primary_path);
                 if !path.exists() {
-                    return show_message("That photo was moved or deleted.");
+                    return show_message(tr!("Timeline", "That photo was moved or deleted."));
                 }
                 let mime =
                     match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
@@ -408,8 +409,8 @@ impl qobject::TimelineModel {
                     .map_err(|e| e.to_string())
                     .and_then(|bytes| crate::win::clipboard::write_image(mime, &bytes))
                 {
-                    Ok(()) => show_message("Copied to clipboard."),
-                    Err(_) => show_message("The photo couldn't be copied to the clipboard."),
+                    Ok(()) => show_message(tr!("Timeline", "Copied to clipboard.")),
+                    Err(_) => show_message(tr!("Timeline", "The photo couldn't be copied to the clipboard.")),
                 }
             }
             _ => {}
@@ -420,7 +421,7 @@ impl qobject::TimelineModel {
         let Some(row) = self.find_row(entry_id) else { return };
         let target_device = resolve_target_device(device, Some(row.entry.device_id));
         let Some(target_device) = target_device else {
-            return show_message("No phone is paired yet.");
+            return show_message(tr!("Timeline", "No phone is paired yet."));
         };
         let (device_name, is_online) = core_host::host().hub.read(|s| {
             let name = s.name_of(&target_device).unwrap_or_else(|| "your phone".into());
@@ -432,11 +433,11 @@ impl qobject::TimelineModel {
             TimelineKind::File | TimelineKind::Photo | TimelineKind::Recording => {
                 let paths = existing_paths(&row.entry.target);
                 if paths.is_empty() {
-                    return show_message("That file was moved or deleted.");
+                    return show_message(tr!("Timeline", "That file was moved or deleted."));
                 }
                 crate::transfers::send(target_device, paths);
                 if is_online {
-                    show_message(format!("Sending to {device_name}…"));
+                    show_message(tr!("Timeline", "Sending to %1…", device_name));
                 }
             }
             TimelineKind::Clip => {
@@ -446,10 +447,12 @@ impl qobject::TimelineModel {
                     match node.resend_clipboard_history(target_device, &clip_id).await {
                         Ok(()) => {
                             if !crate::bridge::app::show_offline_queued_toast(target_device, None) {
-                                show_message(format!("Sent clip to {device_name}."));
+                                show_message(tr!("Timeline", "Sent clip to %1.", device_name));
                             }
                         }
-                        Err(Error::NotFound) => show_message("That clip is no longer in clipboard history."),
+                        Err(Error::NotFound) => {
+                            show_message(tr!("Timeline", "That clip is no longer in clipboard history."))
+                        }
                         Err(e) => show_message(describe(&e)),
                     }
                 });
@@ -472,14 +475,14 @@ impl qobject::TimelineModel {
         let Ok(id) = String::from(entry_id).parse::<i64>() else { return };
         if let Some(Err(e)) = core_host::node().map(|node| node.delete_timeline_entry(id)) {
             tracing::warn!(error = %e, "can't remove a Timeline entry");
-            show_message("That entry couldn't be removed. Try again.");
+            show_message(tr!("Timeline", "That entry couldn't be removed. Try again."));
         }
     }
 
     pub fn clear_all(self: Pin<&mut Self>) {
         if let Some(Err(e)) = core_host::node().map(|node| node.clear_timeline()) {
             tracing::warn!(error = %e, "can't clear the Timeline");
-            show_message("The Timeline couldn't be cleared. Try again.");
+            show_message(tr!("Timeline", "The Timeline couldn't be cleared. Try again."));
         }
     }
 
@@ -753,7 +756,7 @@ pub fn preview_json() -> String {
                 "incoming": r.entry.incoming,
                 "deviceName": r.device_name,
                 "timestamp": r.entry.timestamp,
-                "title": r.title,
+                "title": crate::i18n::timeline_title(&r.title),
                 "subtitle": r.subtitle,
                 "thumbUrl": r.thumb_url,
             })

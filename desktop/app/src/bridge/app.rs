@@ -2,6 +2,7 @@
 //! `AppController`: app-wide state and commands for QML (core status, this
 //! PC, capabilities, ringing, appearance) plus the tray icon.
 
+use crate::i18n::tr;
 use std::{
     pin::Pin,
     sync::{
@@ -687,13 +688,13 @@ pub(crate) fn open_dialer(device: DeviceId, number: &str) {
 /// Explains a failed command in a sentence the user understands.
 pub(crate) fn describe(error: &Error) -> String {
     match error {
-        Error::Offline => "The device isn't connected right now.".into(),
-        Error::NotPaired => "That device isn't paired anymore.".into(),
-        Error::Timeout => "The device didn't answer in time.".into(),
-        Error::Denied | Error::Declined => "The device declined.".into(),
-        Error::Unsupported => "The device's app doesn't support that yet.".into(),
+        Error::Offline => tr!("Errors", "The device isn't connected right now."),
+        Error::NotPaired => tr!("Errors", "That device isn't paired anymore."),
+        Error::Timeout => tr!("Errors", "The device didn't answer in time."),
+        Error::Denied | Error::Declined => tr!("Errors", "The device declined."),
+        Error::Unsupported => tr!("Errors", "The device's app doesn't support that yet."),
         Error::QueueFull(msg) => msg.clone(),
-        other => format!("Something went wrong: {other}"),
+        other => tr!("Errors", "Something went wrong: %1", other),
     }
 }
 
@@ -1390,7 +1391,7 @@ impl qobject::AppController {
                 } else {
                     crate::transfers::cancel_all_queued(Some(device));
                 }
-                show_message("Send cancelled");
+                show_message(tr!("App", "Send cancelled"));
             }
             _ => crate::clipboard::run_last_suggestion(),
         }
@@ -1775,7 +1776,7 @@ impl qobject::AppController {
     pub fn clear_message_cache(self: Pin<&mut Self>) {
         if let Some(Err(e)) = core_host::node().map(|node| node.clear_message_cache()) {
             tracing::warn!(error = %e, "can't clear the message cache");
-            show_message("Some messages couldn't be cleared. Try again.");
+            show_message(tr!("App", "Some messages couldn't be cleared. Try again."));
         }
         crate::messages::clear_cache();
         core_host::host().hub.changed(Changes::DATA_RETENTION);
@@ -1791,7 +1792,7 @@ impl qobject::AppController {
     pub fn clear_received_file_history(self: Pin<&mut Self>) {
         if let Some(Err(e)) = core_host::node().map(|node| node.clear_received_file_history()) {
             tracing::warn!(error = %e, "can't clear the received file history");
-            show_message("The received file history couldn't be cleared. Try again.");
+            show_message(tr!("App", "The received file history couldn't be cleared. Try again."));
         }
         core_host::host()
             .hub
@@ -1820,7 +1821,7 @@ impl qobject::AppController {
         crate::photos::clear_cache();
         self.as_mut().refresh_data_retention();
         if failed {
-            show_message("Some history couldn't be cleared. Try again.");
+            show_message(tr!("App", "Some history couldn't be cleared. Try again."));
         } else {
             self.toast(QString::from("Cleared all local history and caches"));
         }
@@ -1910,7 +1911,7 @@ impl qobject::AppController {
 
     pub fn drop_to_shelf(&self, urls: &QList<QVariant>, text: &QString) {
         let (Some(device), device_name, online) = resolve_shelf_device(self.current_device) else {
-            show_message("No phone is paired yet.");
+            show_message(tr!("App", "No phone is paired yet."));
             return;
         };
 
@@ -1953,7 +1954,7 @@ impl qobject::AppController {
         if !paths.is_empty() {
             crate::transfers::send(device, paths);
             if online {
-                show_message(format!("Sending to {device_name}…"));
+                show_message(tr!("App", "Sending to %1…", device_name));
             }
             return;
         }
@@ -1971,7 +1972,7 @@ impl qobject::AppController {
                     match node.send_clipboard(device, dropped_text).await {
                         Ok(()) => {
                             if !show_offline_queued_toast(device, None) {
-                                show_message(format!("Sent text to {name}."));
+                                show_message(tr!("App", "Sent text to %1.", name));
                             }
                         }
                         Err(e) => show_message(describe(&e)),
@@ -2006,8 +2007,10 @@ impl qobject::AppController {
                                 .map_err(|e| e.to_string())
                                 .and_then(|b| crate::win::clipboard::write_image(mime, &b))
                             {
-                                Ok(()) => show_message("Copied to clipboard."),
-                                Err(_) => show_message("The photo couldn't be copied to the clipboard."),
+                                Ok(()) => show_message(tr!("App", "Copied to clipboard.")),
+                                Err(_) => {
+                                    show_message(tr!("App", "The photo couldn't be copied to the clipboard."))
+                                }
                             }
                         }
                         _ => crate::transfers::open(p),
@@ -2027,7 +2030,7 @@ impl qobject::AppController {
                 if !s.is_empty() {
                     crate::clipboard::copy_history_item(&s);
                 } else {
-                    show_message("Already on clipboard.");
+                    show_message(tr!("App", "Already on clipboard."));
                 }
             }
             "file" => {
@@ -2039,7 +2042,7 @@ impl qobject::AppController {
                         crate::transfers::open(p);
                     }
                 } else {
-                    show_message("That file is no longer in its saved location.");
+                    show_message(tr!("App", "That file is no longer in its saved location."));
                 }
             }
             _ => {}
@@ -2052,8 +2055,8 @@ impl qobject::AppController {
             return;
         }
         match crate::win::clipboard::write(&s) {
-            Ok(()) => show_message("Copied to clipboard."),
-            Err(_) => show_message("Could not copy to the clipboard."),
+            Ok(()) => show_message(tr!("App", "Copied to clipboard.")),
+            Err(_) => show_message(tr!("App", "Could not copy to the clipboard.")),
         }
     }
 
