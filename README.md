@@ -252,6 +252,12 @@ Releases are built by CI from a `v*` tag; see
 - [Architecture decision records](docs/adr) and the [design system](docs/design/README.md)
 - [Project plan and roadmap](docs/PLAN.md)
 
+## Questions and ideas
+
+Ask questions, share ideas and show your setup in
+[Discussions](https://github.com/thtbee/nectarlink/discussions). Issues are for
+bugs and agreed feature work.
+
 ## Contributing
 
 Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first;

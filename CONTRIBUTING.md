@@ -71,6 +71,11 @@ These come from the plan and will grow into a full style guide:
 - Format with `cargo fmt` and keep `cargo clippy` clean. Android code follows
   the official Kotlin style.
 
+## Questions and ideas
+
+Questions, ideas that need talking through, and "how do I…" belong in
+[Discussions](https://github.com/thtbee/nectarlink/discussions), not issues.
+
 ## Reporting bugs
 
 Open an issue with your Windows build, phone model, Android version, and the
