@@ -307,7 +307,7 @@ Window {
         visible: win.phase === "showing" && video.frameSize.width > 0
         readonly property bool toolbarHasFocus: copyShotBtn.activeFocus || saveShotBtn.activeFocus
             || recordBtn.activeFocus || stayAwakeBtn.activeFocus || screenOffBtn.activeFocus || soundBtn.activeFocus
-        opacity: topZoneHover.hovered || toolbarHover.hovered || toolbarWakeTimer.running || Mirror.muted
+        opacity: topZoneHover.hovered || toolbarHover.hovered || toolbarWakeTimer.running
             || win.info.recording === true || win.info.screenOff === true || toolbarHasFocus ? 1 : 0
         Behavior on opacity { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast } }
 
@@ -376,6 +376,32 @@ Window {
                 label: Mirror.muted ? qsTr("Play the phone's sound here") : qsTr("Mute the phone's sound here")
                 onClicked: Mirror.toggleSound()
             }
+        }
+    }
+
+    // The phone's sound is muted (in every window): a small badge in the
+    // toolbar's corner says so, instead of the whole toolbar staying over
+    // the picture. A click plays the sound again.
+    Rectangle {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 12
+        width: 32
+        height: 32
+        radius: 16
+        color: Qt.rgba(0, 0, 0, 0.68)
+        visible: opacity > 0
+        opacity: Mirror.muted && win.info.sound === true && toolbar.visible && toolbar.opacity === 0 ? 1 : 0
+        Behavior on opacity { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.fadeFast } }
+        IconButton {
+            anchors.centerIn: parent
+            width: 28
+            height: 28
+            iconSize: 14
+            iconPath: Icons.soundOff
+            iconColor: "white"
+            label: qsTr("Play the phone's sound here")
+            onClicked: Mirror.toggleSound()
         }
     }
 
