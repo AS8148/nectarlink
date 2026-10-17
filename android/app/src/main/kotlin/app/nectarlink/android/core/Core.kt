@@ -1891,14 +1891,24 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         remoteOps.trySend { runCatching { it.remoteLaser(id, on, x, y) } }
     }
 
-    /** Asks a paired PC to start streaming its desktop screen to this phone (`mirror.start`, session 0). */
-    fun startPcMirror(id: String, maxSize: Int = 1280, fps: Int = 30, bitrate: Int = 4_000_000) {
+    /**
+     * Asks a paired PC to start streaming its desktop screen to this phone (`mirror.start`,
+     * session 0), or with [watch], what that PC player plays, with its sound (Play on phone).
+     */
+    fun startPcMirror(
+        id: String,
+        maxSize: Int = 1280,
+        fps: Int = 30,
+        bitrate: Int = 4_000_000,
+        watch: String? = null,
+    ) {
         command {
             it.startPcMirror(
                 id,
                 maxSize.coerceIn(320, 1920).toUInt(),
                 fps.coerceIn(10, 60).toUInt(),
                 bitrate.coerceIn(500_000, 20_000_000).toUInt(),
+                watch,
             )
         }
     }

@@ -14,10 +14,16 @@ use std::{
 
 use nectarlink_protocol::{
     DeviceId, Envelope, ErrorCode,
-    messages::{MediaCommand, MediaPlayer, MediaState, media_actions, media_limits::PLAYERS, types},
+    messages::{
+        MediaCommand, MediaPlayer, MediaState, MediaWatch, media_actions, media_limits::PLAYERS, media_watch,
+        types,
+    },
 };
 
-use crate::{Result, events::NodeEvent, node::Shared, session::Session};
+use crate::{Error, Result, events::NodeEvent, node::Shared, session::Session};
+
+/// How long a Play on phone offer stays open for the phone to take.
+const WATCH_OFFER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// The device toggle that allows media for a device.
 pub(crate) const TOGGLE: &str = "media";
@@ -209,6 +215,10 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
             }
         }
         types::MEDIA_SYNC => shared.send_media_state(session).await,
+        types::MEDIA_WATCH => {
+            let reply = watch_offered(shared, &peer, env.body()?).await;
+            session.send(reply.reply_to(env.id)).await?;
+        }
         types::MEDIA_COMMAND => {
             let command: MediaCommand = env.body()?;
             let reply = run_command(shared, &peer, command).await;
@@ -217,6 +227,101 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
         _ => return Ok(false),
     }
     Ok(true)
+}
+
+/// Play on phone, on the PC: offers `peer` what `player` plays. The offer
+/// is what lets that phone start mirroring with `watch` (see
+/// [`watch_allowed`]).
+pub(crate) async fn offer_watch(
+    shared: &Arc<Shared>,
+    peer: DeviceId,
+    player: String,
+    title: Option<String>,
+) -> Result<()> {
+    let watch = MediaWatch { player, title };
+    if !watch.is_valid() {
+        return Err(Error::Internal("not a player to offer".into()));
+    }
+    if !shared.local_capabilities().iter().any(|c| c == media_watch::STREAM) {
+        return Err(Error::Unsupported);
+    }
+    if !shared.store.get_peer(&peer)?.is_some_and(|p| p.caps.contains(media_watch::WATCH)) {
+        return Err(Error::Unsupported);
+    }
+    if !shared.toggle_on(&peer, TOGGLE) {
+        return Err(Error::Denied);
+    }
+    let session = shared.session(&peer).ok_or(Error::Offline)?;
+    let player = watch.player.clone();
+    shared
+        .watch_offers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(peer, (player, std::time::Instant::now()));
+    let env = Envelope::new(types::MEDIA_WATCH, &watch)?;
+    let answer =
+        session.request(env, crate::session::REQUEST_TIMEOUT).await.and_then(|r| Ok(r.expect(types::OK)?));
+    if answer.is_err() {
+        shared.watch_offers.lock().unwrap_or_else(|e| e.into_inner()).remove(&peer);
+    }
+    answer.map(|_| ())
+}
+
+/// Whether `peer` may watch `player`: this PC offered it, and the phone
+/// takes it (or comes back to it) in time. Taking it renews the offer.
+pub(crate) fn watch_allowed(shared: &Shared, peer: &DeviceId, player: &str) -> bool {
+    let mut offers = shared.watch_offers.lock().unwrap_or_else(|e| e.into_inner());
+    match offers.get_mut(peer) {
+        Some((offered, at)) if offered == player && at.elapsed() < WATCH_OFFER => {
+            *at = std::time::Instant::now();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Whether `peer` has a Play on phone offer from this PC open (so this PC
+/// may open the stream to it).
+pub(crate) fn watch_open(shared: &Shared, peer: &DeviceId) -> bool {
+    shared
+        .watch_offers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(peer)
+        .is_some_and(|(_, at)| at.elapsed() < WATCH_OFFER)
+}
+
+/// Watching stopped: the offer stays open for a while from now.
+pub(crate) fn renew_watch(shared: &Shared, peer: &DeviceId) {
+    if let Some((_, at)) = shared.watch_offers.lock().unwrap_or_else(|e| e.into_inner()).get_mut(peer) {
+        *at = std::time::Instant::now();
+    }
+}
+
+/// The phone's side of `media.watch`: show the offer.
+async fn watch_offered(shared: &Arc<Shared>, peer: &DeviceId, watch: MediaWatch) -> Envelope {
+    if !shared.local_capabilities().iter().any(|c| c == media_watch::WATCH) {
+        return Envelope::error(ErrorCode::Unsupported, "this device doesn't show a PC's playback");
+    }
+    if !shared.toggle_on(peer, TOGGLE) {
+        return Envelope::error(ErrorCode::Denied, "media is off for this device");
+    }
+    if !watch.is_valid() {
+        return Envelope::error(ErrorCode::BadMessage, "invalid watch offer");
+    }
+    let platform = shared.platform.clone();
+    let peer = *peer;
+    let MediaWatch { player, title } = watch;
+    match tokio::task::spawn_blocking(move || platform.watch_offered(&peer, &player, title.as_deref()))
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()))
+    {
+        Ok(()) => Envelope::empty(types::OK),
+        Err(reason) => {
+            tracing::warn!(reason, "can't show a watch offer");
+            Envelope::error(ErrorCode::Internal, "can't show it")
+        }
+    }
 }
 
 async fn run_command(shared: &Arc<Shared>, peer: &DeviceId, command: MediaCommand) -> Envelope {

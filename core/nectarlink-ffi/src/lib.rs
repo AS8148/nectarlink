@@ -3885,19 +3885,29 @@ impl NectarlinkNode {
         .await
     }
 
-    /// Asks a paired PC to stream its screen to this phone (`mirror.start`, `session == 0`).
-    pub async fn start_pc_mirror(&self, pc_id: String, max_size: u32, fps: u32, bitrate: u32) -> Result<()> {
+    /// Asks a paired PC to stream its screen to this phone (`mirror.start`, `session == 0`),
+    /// or with `watch`, what that PC player plays, with its sound (Play on phone, after the
+    /// PC offered it).
+    pub async fn start_pc_mirror(
+        &self,
+        pc_id: String,
+        max_size: u32,
+        fps: u32,
+        bitrate: u32,
+        watch: Option<String>,
+    ) -> Result<()> {
         let id = parse_id(&pc_id)?;
         let node = self.node.clone();
         let options = core::MirrorStart {
             max_size,
             fps,
             bitrate,
-            audio: false,
+            audio: watch.is_some(),
             session: core::MIRROR_SCREEN,
             app: None,
             stay_awake: false,
             screen_off: false,
+            watch,
         };
         self.run(async move { Ok(node.mirror_start(id, options).await?) }).await
     }

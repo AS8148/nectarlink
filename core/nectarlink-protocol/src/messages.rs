@@ -38,6 +38,7 @@ pub mod types {
     pub const MEDIA_STATE: &str = "media.state";
     pub const MEDIA_SYNC: &str = "media.sync";
     pub const MEDIA_COMMAND: &str = "media.command";
+    pub const MEDIA_WATCH: &str = "media.watch";
     pub const PC_POWER: &str = "pc.power";
     pub const PC_WAKE_INFO: &str = "pc.wake_info";
     pub const LINK_OPEN: &str = "link.open";
@@ -1004,6 +1005,32 @@ pub struct MediaCommand {
     pub position: Option<u64>,
 }
 
+/// Play on phone (`docs/protocol/media.md` §4).
+pub mod media_watch {
+    /// Offered by phones that show a PC's playback streamed to them.
+    pub const WATCH: &str = "media.watch";
+    /// Offered by PCs that stream a player's picture and sound on request.
+    pub const STREAM: &str = "media.stream";
+}
+
+/// Body of `media.watch`: a PC offers to stream what a player of its own
+/// plays to the phone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaWatch {
+    /// The PC's ID for the player, as in `media.state`.
+    pub player: String,
+    /// What it plays, to show with the offer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+impl MediaWatch {
+    pub fn is_valid(&self) -> bool {
+        (1..=media_limits::ID_BYTES).contains(&self.player.len())
+            && self.title.as_ref().is_none_or(|t| t.chars().count() <= media_limits::TEXT_CHARS)
+    }
+}
+
 // ---- Actions (docs/protocol/actions.md) ----
 
 /// Body of `pc.power`: `lock` or `sleep`.
@@ -1278,17 +1305,30 @@ pub struct MirrorStart {
     /// Turn the phone's physical screen off while mirroring (`session == SCREEN`, Elevated).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub screen_off: bool,
+    /// Play on phone: show what this PC player (its ID, as in `media.state`)
+    /// plays instead of the PC's screen (`session == SCREEN`, sent to a PC
+    /// that offered it with `media.watch`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch: Option<String>,
 }
 
 impl MirrorStart {
     /// The screen without an app, or an app with a session of its own.
     pub fn is_valid(&self) -> bool {
-        match &self.app {
-            None => self.session == mirror::SCREEN,
-            Some(app) => {
-                self.session != mirror::SCREEN && is_package_name(app) && !self.stay_awake && !self.screen_off
+        let watch_ok = self
+            .watch
+            .as_ref()
+            .is_none_or(|p| self.app.is_none() && (1..=media_limits::ID_BYTES).contains(&p.len()));
+        watch_ok
+            && match &self.app {
+                None => self.session == mirror::SCREEN,
+                Some(app) => {
+                    self.session != mirror::SCREEN
+                        && is_package_name(app)
+                        && !self.stay_awake
+                        && !self.screen_off
+                }
             }
-        }
     }
 }
 
@@ -5010,6 +5050,40 @@ mod tests {
         let rename = StorageRename { from: "a.txt".into(), to: "b.txt".into() };
         assert!(rename.is_valid());
         assert!(!StorageRename { from: "a.txt".into(), to: "a.txt".into() }.is_valid());
+    }
+
+    #[test]
+    fn play_on_phone_messages_validate() {
+        let offer = MediaWatch { player: "Chrome".into(), title: Some("A video".into()) };
+        assert!(offer.is_valid());
+        assert!(!MediaWatch { player: String::new(), title: None }.is_valid());
+        assert!(!MediaWatch { player: "p".repeat(257), title: None }.is_valid());
+        assert!(!MediaWatch { player: "Chrome".into(), title: Some("t".repeat(257)) }.is_valid());
+
+        let screen = MirrorStart {
+            max_size: 1280,
+            fps: 30,
+            bitrate: 4_000_000,
+            audio: true,
+            session: mirror::SCREEN,
+            app: None,
+            stay_awake: false,
+            screen_off: false,
+            watch: Some("Chrome".into()),
+        };
+        assert!(screen.is_valid());
+        // Watching is of the PC's screen session only, never with an app.
+        assert!(!MirrorStart { session: 3, ..screen.clone() }.is_valid());
+        assert!(
+            !MirrorStart { session: 3, app: Some("com.example.app".into()), ..screen.clone() }.is_valid()
+        );
+        assert!(!MirrorStart { watch: Some(String::new()), ..screen.clone() }.is_valid());
+        // Older PCs and phones leave it out.
+        let plain = MirrorStart { watch: None, ..screen };
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&plain, &mut bytes).unwrap();
+        let back: MirrorStart = ciborium::from_reader(bytes.as_slice()).unwrap();
+        assert_eq!(back, plain);
     }
 
     #[test]

@@ -333,14 +333,25 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
     match env.t.as_str() {
         types::MIRROR_START => {
             let options: MirrorStart = env.body()?;
-            let needs = if options.app.is_some() { mirror::VIRTUAL_DISPLAY } else { mirror::CAPTURE };
             let desktop = is_local_desktop(shared);
-            let allowed =
-                if desktop { pc_mirror_allowed(shared, &peer) } else { shared.toggle_on(&peer, TOGGLE) };
+            let needs = if options.app.is_some() {
+                mirror::VIRTUAL_DISPLAY
+            } else if desktop && options.watch.is_some() {
+                nectarlink_protocol::messages::media_watch::STREAM
+            } else {
+                mirror::CAPTURE
+            };
+            let allowed = match &options.watch {
+                // Play on phone: only what this PC offered that phone.
+                Some(player) if desktop => crate::media::watch_allowed(shared, &peer, player),
+                Some(_) => false,
+                None if desktop => pc_mirror_allowed(shared, &peer),
+                None => shared.toggle_on(&peer, TOGGLE),
+            };
             let reply = if !options.is_valid() {
                 Envelope::error(ErrorCode::BadMessage, "invalid mirroring options")
             } else if !allowed {
-                if desktop && options.app.is_none() {
+                if desktop && options.app.is_none() && options.watch.is_none() {
                     shared.emit(NodeEvent::PcMirrorRequested { device: peer, options: options.clone() });
                 }
                 Envelope::error(ErrorCode::Denied, "mirroring is off for this device")
@@ -370,6 +381,9 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
             shared.stop_showing(&peer, mirroring);
             if mirroring == mirror::SCREEN {
                 shared.pc_mirror_sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(&peer);
+                // Watching stopped: the phone may come back to it for a while
+                // (the screen rotated, the app went to the background).
+                crate::media::renew_watch(shared, &peer);
             }
             shared.emit(NodeEvent::Mirroring { device: peer, session: mirroring, on: false });
             tokio::task::spawn_blocking(move || platform.mirror_stop_requested(&peer, mirroring));
@@ -543,7 +557,7 @@ impl MirrorStream {
 /// sound stream to one that asked for the sound too.
 pub(crate) async fn open(shared: &Arc<Shared>, session: &Session, audio: bool) -> Result<MirrorStream> {
     let allowed = if is_local_desktop(shared) {
-        pc_mirror_allowed(shared, &session.peer)
+        pc_mirror_allowed(shared, &session.peer) || crate::media::watch_open(shared, &session.peer)
     } else {
         shared.toggle_on(&session.peer, TOGGLE)
     };

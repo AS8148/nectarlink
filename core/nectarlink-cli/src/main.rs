@@ -3122,6 +3122,7 @@ async fn run(cli: &Cli, node: &Node) -> Result<()> {
                 app: app.clone(),
                 stay_awake: false,
                 screen_off: false,
+                watch: None,
             };
             node.mirror_start(id, options).await.context("the phone didn't ask its user")?;
             println!(

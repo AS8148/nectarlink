@@ -150,6 +150,8 @@ pub(crate) struct Shared {
     pub(crate) mirror_stops: Mutex<HashMap<MirrorStop, Arc<tokio::sync::Notify>>>,
     /// Peers granted one-time reverse-mirror consent for the current session.
     pub(crate) pc_mirror_sessions: Mutex<std::collections::HashSet<DeviceId>>,
+    /// Play on phone offers this PC made, by phone: the player and when.
+    pub(crate) watch_offers: Mutex<HashMap<DeviceId, (String, std::time::Instant)>>,
     /// Stop signals for phone webcam streams arriving here, by phone.
     pub(crate) webcam_stops: Mutex<HashMap<DeviceId, Arc<tokio::sync::Notify>>>,
     /// Per-peer rate limiters and prompt state for remote input.
@@ -1083,6 +1085,7 @@ impl Shared {
         if current {
             sessions.remove(&ended.peer);
             lock(&self.pc_mirror_sessions).remove(&ended.peer);
+            lock(&self.watch_offers).remove(&ended.peer);
             lock(&self.storage).remove_peer(&ended.peer);
             self.toggles.remove_peer(&ended.peer);
             self.deck.remove_peer(&ended.peer);
@@ -1406,6 +1409,7 @@ impl Node {
             deck: Default::default(),
             mirror_stops: Mutex::new(HashMap::new()),
             pc_mirror_sessions: Mutex::new(std::collections::HashSet::new()),
+            watch_offers: Mutex::new(HashMap::new()),
             webcam_stops: Mutex::new(HashMap::new()),
             remote: Mutex::new(Default::default()),
             storage: Mutex::new(Default::default()),
@@ -2848,6 +2852,14 @@ impl Node {
     /// artwork every time: the core sends it once per device and session.
     pub async fn media_changed(&self, players: Vec<MediaPlayer>) {
         self.shared.media_changed(players).await;
+    }
+
+    /// Play on phone: offers `peer` (a phone) what this PC's `player` plays,
+    /// streamed (`docs/protocol/media.md` §4). The phone shows the offer;
+    /// taking it starts mirroring with `watch`, which this PC then allows
+    /// for that phone and player.
+    pub async fn offer_watch(&self, peer: DeviceId, player: String, title: Option<String>) -> Result<()> {
+        crate::media::offer_watch(&self.shared, peer, player, title).await
     }
 
     /// Runs a command on a paired device's media player.

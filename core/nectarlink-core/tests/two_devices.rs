@@ -40,6 +40,7 @@ struct RecordingPlatform {
     mms_sent: Mutex<Vec<MmsRecord>>,
     mirror_asks: Mutex<Vec<String>>,
     mirror_reject: std::sync::atomic::AtomicBool,
+    watch_offers: Mutex<Vec<String>>,
     /// What a PC got of a phone's screen.
     screen: Arc<ScreenSink>,
     webcam_asks: Mutex<Vec<String>>,
@@ -131,7 +132,17 @@ impl Platform for RecordingPlatform {
         }
         let sound = if options.audio { " with sound" } else { "" };
         let app = options.app.as_deref().map(|a| format!(" {a} as {}", options.session)).unwrap_or_default();
-        self.mirror_asks.lock().unwrap().push(format!("start {}{sound}{app}", options.max_size));
+        let watch = options.watch.as_deref().map(|p| format!(" watching {p}")).unwrap_or_default();
+        self.mirror_asks.lock().unwrap().push(format!("start {}{sound}{app}{watch}", options.max_size));
+        Ok(())
+    }
+    fn watch_offered(
+        &self,
+        _from: &nectarlink_core::DeviceId,
+        player: &str,
+        title: Option<&str>,
+    ) -> Result<(), String> {
+        self.watch_offers.lock().unwrap().push(format!("{player}: {}", title.unwrap_or("")));
         Ok(())
     }
     fn mirror_stop_requested(&self, _peer: &nectarlink_core::DeviceId, session: u32) {
@@ -1683,6 +1694,7 @@ async fn the_phone_screen_streams_to_the_pc() {
         app: None,
         stay_awake: false,
         screen_off: false,
+        watch: None,
     };
     with_timeout("start", pc.node.mirror_start(phone_id, options)).await.unwrap();
     assert_eq!(*phone.platform.mirror_asks.lock().unwrap(), ["start 1920 with sound"]);
@@ -1802,6 +1814,7 @@ async fn phone_apps_open_in_windows_of_their_own() {
         app: Some("com.example.chat".into()),
         stay_awake: false,
         screen_off: false,
+        watch: None,
     };
 
     // Not Elevated yet: no apps, no app windows.
@@ -4954,6 +4967,7 @@ async fn usb_transport_carries_features_when_wifi_unavailable() {
         app: None,
         stay_awake: false,
         screen_off: false,
+        watch: None,
     };
     with_timeout("start mirror over USB", pc.node.mirror_start(phone_id, options)).await.unwrap();
     let stream = Arc::new(with_timeout("open mirror over USB", phone.node.mirror_open(pc_id)).await.unwrap());
@@ -5009,6 +5023,7 @@ async fn reverse_mirror_requires_pc_consent_and_remote_input_toggle() {
         app: None,
         stay_awake: false,
         screen_off: false,
+        watch: None,
     };
 
     // (a) A paired phone calling `mirror_start` against a PC is denied by default
@@ -5569,6 +5584,78 @@ async fn pc_audio_reaches_the_phone_over_both_paths() {
     }
     assert!(heard > 0, "the phone never surfaced the PC's audio");
 
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn play_on_phone_lets_the_phone_watch_only_what_the_pc_offered() {
+    use nectarlink_core::{MEDIA_STREAM, MEDIA_WATCH, MIRROR_SCREEN, MirrorStart};
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[MEDIA_STREAM]).await;
+    let mut phone =
+        device_with("Pixel", DeviceKind::Phone, &[MEDIA_WATCH, nectarlink_core::MIRROR_VIEW]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+    let watch = |player: &str| MirrorStart {
+        max_size: 1280,
+        fps: 30,
+        bitrate: 4_000_000,
+        audio: true,
+        session: MIRROR_SCREEN,
+        app: None,
+        stay_awake: false,
+        screen_off: false,
+        watch: Some(player.into()),
+    };
+
+    // Not offered: the phone can't watch, and the PC isn't asked to share its screen.
+    let early = phone.node.mirror_start(pc_id, watch("Chrome")).await;
+    assert!(matches!(early, Err(Error::Denied)), "{early:?}");
+    assert!(pc.platform.mirror_asks.lock().unwrap().is_empty());
+
+    with_timeout("offer", pc.node.offer_watch(phone_id, "Chrome".into(), Some("A video".into())))
+        .await
+        .unwrap();
+    assert_eq!(*phone.platform.watch_offers.lock().unwrap(), ["Chrome: A video"]);
+
+    // Another player than the one offered: no.
+    let other = phone.node.mirror_start(pc_id, watch("Spotify")).await;
+    assert!(matches!(other, Err(Error::Denied)), "{other:?}");
+
+    // The one offered: the PC streams it, with its sound.
+    with_timeout("watch", phone.node.mirror_start(pc_id, watch("Chrome"))).await.unwrap();
+    assert_eq!(*pc.platform.mirror_asks.lock().unwrap(), ["start 1280 with sound watching Chrome"]);
+    // The PC may open the stream to it, though screen sharing is off for the phone.
+    let stream = with_timeout("open", pc.node.mirror_open(phone_id)).await.unwrap();
+    drop(stream);
+
+    // Stopped and started again (the phone rotated): still allowed.
+    with_timeout("stop", phone.node.mirror_stop(pc_id, MIRROR_SCREEN)).await;
+    with_timeout("watch again", phone.node.mirror_start(pc_id, watch("Chrome"))).await.unwrap();
+
+    // The screen itself stays off limits.
+    let screen = MirrorStart { watch: None, audio: false, ..watch("Chrome") };
+    let denied = phone.node.mirror_start(pc_id, screen).await;
+    assert!(matches!(denied, Err(Error::Denied)), "{denied:?}");
+
+    // With media off for the phone, the PC can't offer.
+    pc.node.set_device_toggle(phone_id, "media", false).unwrap();
+    let off = pc.node.offer_watch(phone_id, "Chrome".into(), None).await;
+    assert!(matches!(off, Err(Error::Denied)), "{off:?}");
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn play_on_phone_needs_a_phone_that_can_watch() {
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[nectarlink_core::MEDIA_STREAM]).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &[]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let offer = pc.node.offer_watch(phone.node.device_id(), "Chrome".into(), None).await;
+    assert!(matches!(offer, Err(Error::Unsupported)), "{offer:?}");
+    assert!(phone.platform.watch_offers.lock().unwrap().is_empty());
     pc.node.shutdown().await;
     phone.node.shutdown().await;
 }

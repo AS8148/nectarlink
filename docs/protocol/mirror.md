@@ -31,7 +31,7 @@ On the control stream.
 ```
 t = "mirror.start"     id = n   b = { max_size: uint, fps: uint, bitrate: uint, ? audio: bool,
                                      ? session: uint, ? app: text,
-                                     ? stay_awake: bool, ? screen_off: bool }
+                                     ? stay_awake: bool, ? screen_off: bool, ? watch: text }
 t = "mirror.stop"      id = n   b = { ? session: uint }
 t = "mirror.power"              b = { ? stay_awake: bool, ? screen_off: bool }
 t = "mirror.keyframe"           b = { ? session: uint }
@@ -55,6 +55,9 @@ means 0, so PCs and phones that predate sessions work as before.
   user agrees, and sound only if the phone can (it may share the screen
   without it). Errors: `DENIED` (mirroring is off for the PC),
   `UNSUPPORTED` (no `mirror.capture`).
+- `watch` (phone → PC, `session` 0 only, never with `app`): Play on phone.
+  Show what this PC player plays instead of the PC's screen, after the PC
+  offered it with `media.watch` ([media.md](media.md) §4).
 - `mirror.stop` (either way): stop. The PC stops reading the video stream;
   the phone stops sharing, restores normal display power, and finishes it.
 - `mirror.power` (PC → phone): update `stay_awake` and `screen_off` while

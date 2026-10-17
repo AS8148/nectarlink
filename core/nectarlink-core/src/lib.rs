@@ -29,6 +29,7 @@ pub mod otp;
 mod pairing;
 pub mod palette;
 mod photos;
+pub mod play_on_phone;
 pub mod remote;
 mod session;
 mod sms;
@@ -101,6 +102,7 @@ pub use nectarlink_protocol::{
         },
         format_mac, ipv4_broadcast, is_package_name, is_valid_storage_dir_path, is_valid_storage_id,
         is_valid_storage_name, is_valid_storage_path, magic_packet,
+        media_watch::{STREAM as MEDIA_STREAM, WATCH as MEDIA_WATCH},
         mirror::{
             AUDIO as MIRROR_AUDIO, AUDIO_PLAYBACK as MIRROR_AUDIO_PLAYBACK, AV1 as MIRROR_AV1,
             CAPTURE as MIRROR_CAPTURE, H264 as MIRROR_H264, H265 as MIRROR_H265, INPUT as MIRROR_INPUT,
@@ -140,6 +142,7 @@ pub use palette::{
     achromatic_scheme, downsample_rgb, downsample_rgba, extract_artwork_scheme_rgb,
     extract_artwork_scheme_rgba, scheme_from_seed_rgb, scheme_json, seed_from_grid, seed_from_pixels,
 };
+pub use play_on_phone::PlayOnPhone;
 pub use remote::{ButtonAction, INPUT_INJECT, KeyMod, MouseButton, RemoteInput, SlideAction, remote_keys};
 pub use storage::{FolderStorage, StorageError, StorageReadFile, TOGGLE as STORAGE_TOGGLE};
 pub use store::{

@@ -320,6 +320,18 @@ pub trait Platform: Send + Sync + 'static {
         Err("this device has no contacts".into())
     }
 
+    /// Play on phone: a paired PC offers to stream what `player` plays
+    /// (`title`). The phone shows the offer; taking it starts mirroring with
+    /// `watch` set to `player`.
+    fn watch_offered(
+        &self,
+        _from: &nectarlink_protocol::DeviceId,
+        _player: &str,
+        _title: Option<&str>,
+    ) -> Result<(), String> {
+        Err("this device doesn't show a PC's playback".into())
+    }
+
     /// Run a command on one of this device's media players (a paired device
     /// asked); `position` is set for [`MediaAction::Seek`].
     fn media_command(
