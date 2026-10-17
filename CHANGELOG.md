@@ -73,6 +73,10 @@ change things that need a step from you, and its notes say so.
 - **Mirroring with Elevated starts without asking on the phone.** Starting it
   failed on the phone (it opened the helper's stream on the main thread,
   which Android refuses), so it fell back to asking you to share the screen.
+- **Typing on the PC from the phone works like a normal keyboard.** In
+  Control PC, Backspace deletes, the symbols page stays open for more than
+  one symbol, autocorrect and suggestions work, and letters no longer come
+  out jumbled.
 - Android: Phone as webcam no longer crashes the app when its preview
   comes back (the same fix covers the QR scanner and Continuity Camera).
 - Android: on Hive, the category chips at the top of Settings and the
