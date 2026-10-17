@@ -3293,6 +3293,14 @@ impl NectarlinkNode {
         self.run(async move { Ok(node.ring(id, on).await?) }).await
     }
 
+    /// Dismisses a paired phone's or tablet's notification there, after it
+    /// was dismissed here (`notify.dismiss`).
+    pub async fn dismiss_peer_notification(&self, id: String, key: String) -> Result<()> {
+        let id = parse_id(&id)?;
+        let node = self.node.clone();
+        self.run(async move { Ok(node.dismiss_notification(id, key).await?) }).await
+    }
+
     pub fn capabilities(&self, id: String) -> Result<Vec<Feature>> {
         Ok(features(&self.node.capabilities(parse_id(&id)?)?))
     }

@@ -118,6 +118,16 @@ A pair that isn't one phone (or tablet) and one desktop (or laptop) has every
 feature Unsupported (`DeviceKinds`). An `Unknown` device kind falls back to
 the OS (`android` → phone, `windows`/`macos` → desktop).
 
+Two Android devices (a phone and a tablet, or two phones) get the features
+of `ANDROID_PAIR_FEATURES` instead, from this device's side: `pair.battery`
+and `pair.ring` (the other device's battery, and ringing it),
+`pair.notifications` (its notifications shown here: it offers
+`notify.mirror` and this device `notify.show`, toggle `notifications`),
+`pair.clipboard`, `pair.files` and `pair.links` (sending it the clipboard,
+files and links). Their requirements name the other device (`Peer`) and
+this one (`Here`) rather than a role. Every other pair has them
+Unsupported, as two Android devices have the PC features.
+
 ## Per-device toggles
 
 `notifications`, `messages`, `calls`, `contacts`, `clipboard`, `files`,

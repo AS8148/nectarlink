@@ -42,6 +42,7 @@ capability is missing.
 | `notify.live` | Includes live progress, timer, and Android 16 Live Update metadata on mirrored notifications ([notifications service](notifications.md)) | notification access |
 | `notify.reply` | Accepts inline replies and actions on notifications | notification access |
 | `notify.sensitive` | Forwards notifications Android hides as sensitive (e.g. one-time codes) | Elevated |
+| `notify.show` | Shows a paired phone's or tablet's notifications ([notifications service](notifications.md)) | app update |
 | `sms.read` | Lists conversations and messages ([messages](sms.md)) | SMS permission |
 | `sms.send` | Sends texts when a PC asks ([messages](sms.md)) | SMS permission |
 | `call.state` | Reports incoming and ongoing calls ([calls](calls.md)) | phone permission |

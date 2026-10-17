@@ -74,6 +74,11 @@ pub enum Unlock {
 pub enum Requirement {
     /// The device in `role` announces capability `id` (protocol §6).
     Cap { role: Role, id: &'static str, unlock: Unlock },
+    /// The other device of the pair announces capability `id` (for pairs of
+    /// Android devices, where both are phones).
+    Peer { id: &'static str, unlock: Unlock },
+    /// This device announces capability `id`.
+    Here { id: &'static str, unlock: Unlock },
     /// The phone runs at this power level or higher.
     PowerAtLeast(PowerLevel),
     /// The phone runs this Android release or newer.
@@ -375,32 +380,52 @@ pub struct MatrixInputs<'a> {
     pub toggles: &'a HashMap<String, bool>,
 }
 
-/// Computes the state of every feature in [`FEATURES`] for one pair.
+/// Computes the state of every feature in [`FEATURES`] and
+/// [`ANDROID_PAIR_FEATURES`] for one pair: the first for a phone (or
+/// tablet) and a PC, the second for two Android devices; the other list is
+/// Unsupported for the pair.
 pub fn compute(device: DeviceId, inputs: MatrixInputs<'_>) -> CapabilityMatrix {
-    let pair = match (inputs.local.role(), inputs.peer.role()) {
-        (Some(Role::Phone), Some(Role::Desktop)) => Some((inputs.local, inputs.peer)),
-        (Some(Role::Desktop), Some(Role::Phone)) => Some((inputs.peer, inputs.local)),
+    let (local, peer) = (inputs.local, inputs.peer);
+    let pc_pair = match (local.role(), peer.role()) {
+        (Some(Role::Phone), Some(Role::Desktop)) => Some((local, peer)),
+        (Some(Role::Desktop), Some(Role::Phone)) => Some((peer, local)),
         _ => None,
     };
-    let features = FEATURES
-        .iter()
-        .map(|def| {
-            let state = match pair {
-                Some((phone, desktop)) => {
-                    let ctx = Context { phone, desktop, paths: inputs.paths, toggles: inputs.toggles };
-                    evaluate(def, &ctx)
-                }
-                None => FeatureState::Unsupported { reason: UnsupportedReason::DeviceKinds },
-            };
-            (def.id, state)
-        })
-        .collect();
+    let android_pair = local.os == "android" && peer.os == "android";
+    let run = |list: &'static [FeatureDef], applies: Option<(&DeviceFacts, &DeviceFacts)>| {
+        list.iter()
+            .map(|def| {
+                let state = match applies {
+                    Some((phone, desktop)) => {
+                        let ctx = Context {
+                            phone,
+                            desktop,
+                            local,
+                            peer,
+                            paths: inputs.paths,
+                            toggles: inputs.toggles,
+                        };
+                        evaluate(def, &ctx)
+                    }
+                    None => FeatureState::Unsupported { reason: UnsupportedReason::DeviceKinds },
+                };
+                (def.id, state)
+            })
+            .collect::<Vec<_>>()
+    };
+    // In a pair of Android devices, "phone" requirements are about the
+    // other device (and its Android version).
+    let mut features = run(FEATURES, pc_pair);
+    features.extend(run(ANDROID_PAIR_FEATURES, android_pair.then_some((peer, local))));
+    let features = features.into_iter().collect();
     CapabilityMatrix { device, features }
 }
 
 struct Context<'a> {
     phone: &'a DeviceFacts,
     desktop: &'a DeviceFacts,
+    local: &'a DeviceFacts,
+    peer: &'a DeviceFacts,
     paths: &'a [ConnectionPath],
     toggles: &'a HashMap<String, bool>,
 }
@@ -439,6 +464,20 @@ fn check(req: &Requirement, ctx: &Context<'_>) -> Check {
                 Unlock::Permission(p) => Check::Unlockable(Upgrade::new(UpgradeAction::GrantPermission(p))),
                 Unlock::Addon(addon) => Check::Unlockable(Upgrade::new(UpgradeAction::EnableAddon(addon))),
                 Unlock::UpdateApp => Check::Unlockable(Upgrade::new(UpgradeAction::UpdateApp(role))),
+            }
+        }
+        Requirement::Peer { id, unlock } | Requirement::Here { id, unlock } => {
+            let facts = if matches!(req, Requirement::Peer { .. }) { ctx.peer } else { ctx.local };
+            if facts.caps.contains(id) {
+                return Check::Met;
+            }
+            let role = facts.role().unwrap_or(Role::Phone);
+            match unlock {
+                Unlock::Permission(p) => Check::Unlockable(Upgrade::new(UpgradeAction::GrantPermission(p))),
+                Unlock::Addon(addon) => Check::Unlockable(Upgrade::new(UpgradeAction::EnableAddon(addon))),
+                Unlock::Power(_) | Unlock::UpdateApp => {
+                    Check::Unlockable(Upgrade::new(UpgradeAction::UpdateApp(role)))
+                }
             }
         }
         Requirement::PowerAtLeast(level) => {
@@ -543,6 +582,63 @@ const fn desktop(id: &'static str, unlock: Unlock) -> Requirement {
 }
 
 const ELEVATED: Unlock = Unlock::Power(PowerLevel::Elevated);
+
+const fn peer(id: &'static str) -> Requirement {
+    Requirement::Peer { id, unlock: Unlock::UpdateApp }
+}
+
+const fn here(id: &'static str) -> Requirement {
+    Requirement::Here { id, unlock: Unlock::UpdateApp }
+}
+
+/// What a phone and a tablet (or two phones) do for each other, from this
+/// device's side: the other one's battery, ringing it, its notifications
+/// shown here, and sending it the clipboard, files and links.
+pub const ANDROID_PAIR_FEATURES: &[FeatureDef] = &[
+    FeatureDef {
+        id: "pair.battery",
+        group: FeatureGroup::Device,
+        requires: &[peer("device.battery")],
+        partial: None,
+    },
+    FeatureDef {
+        id: "pair.ring",
+        group: FeatureGroup::Device,
+        requires: &[peer("device.ring")],
+        partial: None,
+    },
+    FeatureDef {
+        id: "pair.notifications",
+        group: FeatureGroup::Notifications,
+        requires: &[
+            Requirement::Peer {
+                id: "notify.mirror",
+                unlock: Unlock::Permission(Permission::NotificationAccess),
+            },
+            here("notify.show"),
+            DeviceToggle("notifications"),
+        ],
+        partial: None,
+    },
+    FeatureDef {
+        id: "pair.clipboard",
+        group: FeatureGroup::Clipboard,
+        requires: &[peer("clip.write"), DeviceToggle("clipboard")],
+        partial: None,
+    },
+    FeatureDef {
+        id: "pair.files",
+        group: FeatureGroup::Files,
+        requires: &[peer("files.transfer"), DeviceToggle("files")],
+        partial: None,
+    },
+    FeatureDef {
+        id: "pair.links",
+        group: FeatureGroup::Device,
+        requires: &[peer("link.open")],
+        partial: None,
+    },
+];
 const ASSIST: Unlock = Unlock::Power(PowerLevel::Assist);
 const UPDATE: Unlock = Unlock::UpdateApp;
 
@@ -1259,5 +1355,79 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_phone_and_a_tablet_get_the_android_pair_features() {
+        let phone = facts(
+            DeviceKind::Phone,
+            "android",
+            "16",
+            PowerLevel::Basic,
+            &[
+                "device.ring",
+                "device.battery",
+                "notify.mirror",
+                "notify.show",
+                "clip.write",
+                "files.transfer",
+                "link.open",
+            ],
+        );
+        let tablet = facts(
+            DeviceKind::Tablet,
+            "android",
+            "15",
+            PowerLevel::Basic,
+            &["device.ring", "device.battery", "notify.show", "clip.write", "files.transfer", "link.open"],
+        );
+        let toggles = HashMap::new();
+        let paths = [ConnectionPath::Lan];
+        // On the tablet: the phone's notifications show here.
+        let on_tablet = compute(
+            DeviceId([1; 32]),
+            MatrixInputs { local: &tablet, peer: &phone, paths: &paths, toggles: &toggles },
+        );
+        for id in
+            ["pair.battery", "pair.ring", "pair.notifications", "pair.clipboard", "pair.files", "pair.links"]
+        {
+            assert_eq!(on_tablet.state(id), Some(FeatureState::Available), "{id}");
+        }
+        // PC features don't apply to two Android devices.
+        assert_eq!(
+            on_tablet.state("device.find_phone"),
+            Some(FeatureState::Unsupported { reason: UnsupportedReason::DeviceKinds })
+        );
+        // On the phone: the tablet doesn't share its notifications (no notification
+        // access there), so they can't show here until it's granted on the tablet.
+        let on_phone = compute(
+            DeviceId([2; 32]),
+            MatrixInputs { local: &phone, peer: &tablet, paths: &paths, toggles: &toggles },
+        );
+        assert!(matches!(
+            on_phone.state("pair.notifications"),
+            Some(FeatureState::Locked { upgrade }) if upgrade.action == UpgradeAction::GrantPermission(Permission::NotificationAccess)
+        ));
+        // Off for the device: locked behind its toggle.
+        let off = HashMap::from([("clipboard".to_owned(), false)]);
+        let no_clip = compute(
+            DeviceId([1; 32]),
+            MatrixInputs { local: &tablet, peer: &phone, paths: &paths, toggles: &off },
+        );
+        assert!(matches!(no_clip.state("pair.clipboard"), Some(FeatureState::Locked { .. })));
+    }
+
+    #[test]
+    fn a_phone_and_a_pc_have_no_android_pair_features() {
+        let matrix = matrix_with(
+            &facts(DeviceKind::Phone, "android", "16", PowerLevel::Basic, BASIC_PHONE),
+            &pc(),
+            &HashMap::new(),
+        );
+        assert_eq!(
+            matrix.state("pair.ring"),
+            Some(FeatureState::Unsupported { reason: UnsupportedReason::DeviceKinds })
+        );
+        assert_eq!(matrix.state("device.find_phone"), Some(FeatureState::Available));
     }
 }

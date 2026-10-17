@@ -27,6 +27,8 @@ use crate::{
 
 /// The device toggle that allows notifications for a device.
 pub(crate) const TOGGLE: &str = "notifications";
+/// Offered by phones and tablets that show a paired device's notifications.
+pub const SHOW: &str = "notify.show";
 
 /// A snapshot stays well under the 1 MiB frame limit (v0 §3).
 const SNAPSHOT_BUDGET: usize = 768 * 1024;
@@ -203,12 +205,13 @@ impl Shared {
         self.toggle_on(peer, TOGGLE)
     }
 
-    /// Sessions that should get this phone's notifications: connected PCs
-    /// the user allows.
+    /// Sessions that should get this phone's notifications: connected
+    /// devices that show them (PCs, and phones or tablets that offer
+    /// `notify.show`) and the user allows.
     fn notification_targets(&self) -> Vec<Arc<Session>> {
         self.live_sessions()
             .into_iter()
-            .filter(|s| self.is_desktop(&s.peer) && self.notifications_allowed(&s.peer))
+            .filter(|s| self.shows_notifications(&s.peer) && self.notifications_allowed(&s.peer))
             .collect()
     }
 
@@ -216,10 +219,20 @@ impl Shared {
         self.store.get_peer(peer).ok().flatten().is_some_and(|p| role_of(&p.info) == Some(Role::Desktop))
     }
 
+    /// Whether `peer` shows this device's notifications: a PC does, and a
+    /// phone or tablet that offers `notify.show`.
+    pub(crate) fn shows_notifications(&self, peer: &DeviceId) -> bool {
+        self.store
+            .get_peer(peer)
+            .ok()
+            .flatten()
+            .is_some_and(|p| role_of(&p.info) == Some(Role::Desktop) || p.caps.contains(SHOW))
+    }
+
     /// Sends this phone's notifications to one PC: everything when the
     /// user allows it, an empty list (which clears the PC) when not.
     pub(crate) async fn send_notification_snapshot(&self, session: &Arc<Session>) {
-        if !self.notifications.is_active() || !self.is_desktop(&session.peer) {
+        if !self.notifications.is_active() || !self.shows_notifications(&session.peer) {
             return;
         }
         let snapshot = if self.notifications_allowed(&session.peer) {

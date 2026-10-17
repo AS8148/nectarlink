@@ -4,7 +4,9 @@
 > allowed until v1. License: CC BY 4.0.
 
 A phone mirrors its notifications to paired PCs, which show them (as toasts
-and in a feed) and can dismiss them, reply to them and run their actions.
+and in a feed) and can dismiss them, reply to them and run their actions,
+and to paired phones and tablets that offer `notify.show`, which show them
+in their own notification shade and dismiss them there.
 
 All messages travel on the **control stream** (v0 §4). Notifications are
 small, latency matters more than throughput, and their order must be kept:
@@ -18,6 +20,7 @@ a `notify.removed` must never overtake the `notify.posted` it removes.
 | `notify.live` | phone | Includes `live` metadata on ongoing progress, timer, and Android 16 Live Update notifications |
 | `notify.reply` | phone | Handles `notify.dismiss` and `notify.action` |
 | `notify.sensitive` | phone | Includes notifications Android hides from apps as sensitive (one-time codes) |
+| `notify.show` | phone, tablet | Shows a paired phone's or tablet's notifications; a phone sends them to it as to a PC (PCs needn't offer it) |
 
 A PC that doesn't offer anything still receives these events; a peer that
 doesn't know them ignores them (v0 §3.1).

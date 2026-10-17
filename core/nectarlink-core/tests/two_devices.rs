@@ -5759,3 +5759,60 @@ async fn a_pc_without_mic_listen_refuses_a_phones_microphone() {
     pc.node.shutdown().await;
     phone.node.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phones_notifications_show_on_a_paired_tablet_that_shows_them() {
+    let mut tablet = device_with("Tab", DeviceKind::Tablet, &[nectarlink_core::NOTIFY_SHOW]).await;
+    let mut phone = device("Pixel", DeviceKind::Phone).await;
+    pair_qr(&mut tablet, &mut phone).await;
+    let phone_id = phone.node.device_id();
+    grant_notification_access(&phone).await;
+
+    phone.node.notifications_reset(vec![note("a", "com.chat", "Sam", true)]).await;
+    let items = wait_for(&mut tablet, "snapshot", |e| match e {
+        NodeEvent::NotificationsReset { device, items } if *device == phone_id => Some(items.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(items.len(), 1);
+
+    phone.node.notification_posted(note("b", "com.chat", "Kim", true)).await;
+    let posted = wait_for(&mut tablet, "posted", |e| match e {
+        NodeEvent::NotificationPosted { device, notification } if *device == phone_id => {
+            Some(notification.key.clone())
+        }
+        _ => None,
+    })
+    .await;
+    assert_eq!(posted, "b");
+
+    // Dismissed on the tablet: gone on the phone too.
+    with_timeout("dismiss", tablet.node.dismiss_notification(phone_id, "b".into())).await.unwrap();
+
+    tablet.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_keeps_its_notifications_from_a_phone_that_doesnt_show_them() {
+    let mut other = device("Other phone", DeviceKind::Phone).await;
+    let mut phone = device("Pixel", DeviceKind::Phone).await;
+    pair_qr(&mut other, &mut phone).await;
+    grant_notification_access(&phone).await;
+    phone.node.notification_posted(note("a", "com.chat", "Sam", true)).await;
+    let got = tokio::time::timeout(Duration::from_millis(800), async {
+        loop {
+            match other.events.recv().await {
+                Ok(NodeEvent::NotificationPosted { .. } | NodeEvent::NotificationsReset { .. }) => {
+                    return true;
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => return false,
+            }
+        }
+    })
+    .await;
+    assert!(!matches!(got, Ok(true)), "notifications went to a phone that doesn't show them");
+    other.node.shutdown().await;
+    phone.node.shutdown().await;
+}
