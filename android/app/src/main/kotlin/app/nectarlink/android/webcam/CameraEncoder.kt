@@ -460,7 +460,8 @@ internal class CameraEncoder(
         }
 
         private fun drainLoop() {
-            val cfgBytes = webcamConfig(width.toUInt(), height.toUInt(), camera, fps.toUInt())
+            val maxHeight = if (supports4k) 2160u else 1080u
+            val cfgBytes = webcamConfig(width.toUInt(), height.toUInt(), camera, fps.toUInt(), maxHeight)
             if (stream.send(VideoPacketKind.CONFIG, 0u, cfgBytes) == MirrorSendResult.CLOSED) {
                 this@CameraEncoder.stop()
                 return

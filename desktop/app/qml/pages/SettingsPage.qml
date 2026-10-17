@@ -1686,11 +1686,11 @@ Item {
                             iconPath: Icons.camera
                             title: qsTr("Resolution")
                             Segmented {
+                                // 4K only when the phone's camera in use can stream it.
                                 options: [
                                     { value: "720", label: "720p" },
-                                    { value: "1080", label: "1080p" },
-                                    { value: "2160", label: "4K" }
-                                ]
+                                    { value: "1080", label: "1080p" }
+                                ].concat(Webcam.uhd ? [{ value: "2160", label: "4K" }] : [])
                                 value: String(Webcam.height)
                                 onPicked: (value) => Webcam.setResolution(Number(value))
                             }

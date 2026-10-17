@@ -5055,6 +5055,7 @@ fn stream_webcam(
         height,
         camera: camera.into(),
         fps,
+        max_height: 2160,
     }
     .to_cbor();
     if webcam.send(PacketKind::Config, 0, config) == MirrorSend::Closed {

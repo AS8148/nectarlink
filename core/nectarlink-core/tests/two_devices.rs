@@ -3215,6 +3215,7 @@ async fn the_phone_camera_streams_to_the_pc_as_a_webcam() {
         height: 1080,
         camera: nectarlink_core::WEBCAM_CAMERA_BACK.into(),
         fps: 30,
+        max_height: 2160,
     };
     let sender = stream.clone();
     let sent = tokio::task::spawn_blocking(move || {
@@ -3601,9 +3602,15 @@ async fn timeline_records_files_clips_links_photos_recordings_and_sessions_witho
     .await;
 
     let wstream = phone.node.webcam_open(pc_id).await.unwrap();
-    let wcfg =
-        WebcamConfig { codec: "h264".into(), width: 1280, height: 720, camera: "back".into(), fps: 30 }
-            .to_cbor();
+    let wcfg = WebcamConfig {
+        codec: "h264".into(),
+        width: 1280,
+        height: 720,
+        camera: "back".into(),
+        fps: 30,
+        max_height: 1080,
+    }
+    .to_cbor();
     let _ = tokio::task::block_in_place(|| wstream.send(PacketKind::Config, 0, wcfg));
     wait_for(&mut pc, "webcam started", |e| match e {
         NodeEvent::Webcam { device, on: true } if *device == phone_id => Some(()),

@@ -1178,10 +1178,12 @@ pub fn mirror_audio_config(rate: u32, channels: u8) -> Vec<u8> {
     core::MirrorAudioConfig { codec: core::MIRROR_PCM.into(), rate, channels }.to_cbor()
 }
 
-/// The bytes of a config packet for an H.264 webcam stream (`docs/protocol/webcam.md`).
+/// The bytes of a config packet for an H.264 webcam stream
+/// (`docs/protocol/webcam.md`); `max_height` is 2160 when the camera in use
+/// can stream 4K, else 1080.
 #[uniffi::export]
-pub fn webcam_config(width: u32, height: u32, camera: String, fps: u32) -> Vec<u8> {
-    core::WebcamConfig { codec: core::WEBCAM_H264.into(), width, height, camera, fps }.to_cbor()
+pub fn webcam_config(width: u32, height: u32, camera: String, fps: u32, max_height: u32) -> Vec<u8> {
+    core::WebcamConfig { codec: core::WEBCAM_H264.into(), width, height, camera, fps, max_height }.to_cbor()
 }
 
 /// What a PC asked the phone's camera to stream (`docs/protocol/webcam.md`).

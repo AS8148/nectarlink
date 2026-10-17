@@ -86,7 +86,7 @@ Followed by a sequence of framed video packets (`core/nectarlink-protocol/src/vi
 
 | `kind` | Name | Payload |
 |---|---|---|
-| `0` | `Config` | CBOR `WebcamConfig` (`{ codec: "h264", width: uint, height: uint, camera: "back" \| "front", fps: uint }`), sent at the start of the stream and whenever resolution or camera changes |
+| `0` | `Config` | CBOR `WebcamConfig` (`{ codec: "h264", width: uint, height: uint, camera: "back" \| "front", fps: uint, max_height: uint }`), sent at the start of the stream and whenever resolution or camera changes. `max_height` is the highest resolution the camera in use can stream, by its short side: `2160` when it can do 4K, else `1080`. The PC offers 4K only when it is `2160`; when it is absent (phones before 0.1.5) it counts as `2160`. |
 | `1` | `Frame` | Annex B H.264 non-IDR access unit |
 | `2` | `Keyframe` | Annex B H.264 IDR access unit (preceded by SPS and PPS NAL units) |
 

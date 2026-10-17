@@ -88,6 +88,9 @@ static STATE: Mutex<Option<State>> = Mutex::new(None);
 static MIRROR: AtomicBool = AtomicBool::new(false);
 static CAMERA_FRONT: AtomicBool = AtomicBool::new(false);
 static HEIGHT: AtomicU32 = AtomicU32::new(720);
+/// Whether the phone's camera in use can stream 4K, as its last stream said
+/// (offered until a phone says it can't).
+static UHD: AtomicBool = AtomicBool::new(true);
 static PREVIEW_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
@@ -248,6 +251,12 @@ pub fn set_selected_phone(device: DeviceId) {
 
 pub fn height() -> u32 {
     HEIGHT.load(Ordering::Relaxed)
+}
+
+/// Whether to offer 4K: the phone's camera in use can stream it, as far as
+/// the PC knows.
+pub fn uhd() -> bool {
+    UHD.load(Ordering::Relaxed)
 }
 
 pub fn set_height(h: u32) {
@@ -614,6 +623,7 @@ impl Video {
 impl WebcamSink for Sink {
     fn config(&self, config: WebcamConfig) {
         follow_stream(config.width, config.height);
+        UHD.store(config.max_height >= 2160, Ordering::Relaxed);
         state(|s| {
             s.preferred_phone = Some(self.device);
             s.phase = Phase::Streaming {

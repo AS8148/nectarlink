@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `Webcam`: QML singleton exposing the Windows virtual camera add-on status,
-//! webcam preferences (phone, 720p/1080p, mirror), and live stream state.
+//! webcam preferences (phone, 720p, 1080p or 4K when the camera can, mirror),
+//! and live stream state.
 
 use std::pin::Pin;
 
@@ -28,6 +29,7 @@ pub mod qobject {
         #[qproperty(QString, selected_phone, cxx_name = "selectedPhone")]
         #[qproperty(QString, selected_phone_name, cxx_name = "selectedPhoneName")]
         #[qproperty(i32, height)]
+        #[qproperty(bool, uhd)]
         #[qproperty(QString, camera)]
         #[qproperty(bool, mirror)]
         #[qproperty(QString, phase)]
@@ -72,6 +74,7 @@ pub struct WebcamRust {
     selected_phone: QString,
     selected_phone_name: QString,
     height: i32,
+    uhd: bool,
     camera: QString,
     mirror: bool,
     phase: QString,
@@ -103,6 +106,7 @@ impl qobject::Webcam {
         self.as_mut().set_addon_registered(webcam::addon_registered());
         self.as_mut().set_addon_busy(webcam::addon_busy());
         self.as_mut().set_height(webcam::height() as i32);
+        self.as_mut().set_uhd(webcam::uhd());
         self.as_mut().set_camera(QString::from(webcam::camera()));
         self.as_mut().set_mirror(webcam::mirror());
 

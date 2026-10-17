@@ -1610,6 +1610,15 @@ pub struct WebcamConfig {
     /// Frames per second.
     #[serde(default = "default_webcam_fps")]
     pub fps: u32,
+    /// The highest resolution the camera in use can stream, by its short
+    /// side: 2160 when it can do 4K, else 1080. Phones before 0.1.5 don't
+    /// say, and fall back to 1080p themselves when asked for 4K it can't do.
+    #[serde(default = "default_webcam_max_height")]
+    pub max_height: u32,
+}
+
+fn default_webcam_max_height() -> u32 {
+    2160
 }
 
 impl WebcamConfig {
@@ -5029,11 +5038,27 @@ mod tests {
             height: 720,
             camera: webcam::CAMERA_BACK.into(),
             fps: 30,
+            max_height: 1080,
         };
         assert!(cfg.is_valid());
         assert_eq!(WebcamConfig::from_cbor(&cfg.to_cbor()).unwrap(), cfg);
         assert!(!WebcamConfig { codec: "vp8".into(), ..cfg.clone() }.is_valid());
         assert!(!WebcamConfig { width: 0, ..cfg }.is_valid());
+
+        // A phone before 0.1.5 doesn't say what its camera can do: 4K stays offered.
+        #[derive(Serialize)]
+        struct Before {
+            codec: &'static str,
+            width: u32,
+            height: u32,
+            camera: &'static str,
+            fps: u32,
+        }
+        let mut old = Vec::new();
+        let before =
+            Before { codec: webcam::H264, width: 1920, height: 1080, camera: webcam::CAMERA_FRONT, fps: 30 };
+        ciborium::into_writer(&before, &mut old).unwrap();
+        assert_eq!(WebcamConfig::from_cbor(&old).unwrap().max_height, 2160);
     }
 
     #[test]
