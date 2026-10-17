@@ -8,13 +8,15 @@ change things that need a step from you, and its notes say so.
 
 ### New
 
-- **Play on phone.** The PC's media card has a button that moves what
-  plays there to your phone. Streaming services that protect their video
+- **Play on phone.** A switch on Home, under Phone as speaker (and a button
+  on the PC's media card), moves what plays on the PC to your phone. The
+  switch waits, greyed out, until a video plays. Streaming services that protect their video
   (Netflix, Prime Video, JioHotstar, Disney+ and others) open in their
   app on the phone and the PC pauses. Anything else streams from the PC
   as it plays, picture and sound, so your browser's ad blocker still
   works on YouTube: the phone shows just the video, even with other
-  windows over it on the PC. Tap the notification on the phone to watch.
+  windows over it on the PC, in Chrome, Edge, Firefox, Zen and other
+  browsers. Tap the notification on the phone to watch.
   The PC mutes its speakers while you watch and turns them back on after
   (**Settings › Camera & Audio** to keep them on).
   Scripts can do the same through the local API
@@ -26,7 +28,8 @@ change things that need a step from you, and its notes say so.
   microphone Discord, Zoom, OBS or Teams can pick
   ([#7](https://github.com/thtbee/nectarlink/issues/7)). A microphone of
   NectarLink's own, without the cable, needs an audio driver and comes
-  later.
+  later. A volume slider sets how loud it plays, and the phone evens out a
+  quiet voice where it can.
 - **Pair a phone with a tablet (or another phone).** In NectarLink's
   pairing screen, **Pair a phone or tablet instead** shows a code to scan
   from the other device. Once paired, each shows the other on Home with its
@@ -35,7 +38,9 @@ change things that need a step from you, and its notes say so.
 - **The Windows app follows the system language**, and speaks Simplified
   Chinese, by [@zzz1465720680](https://github.com/zzz1465720680)
   ([#16](https://github.com/thtbee/nectarlink/pull/16),
-  [#17](https://github.com/thtbee/nectarlink/pull/17)).
+  [#17](https://github.com/thtbee/nectarlink/pull/17)), or the language
+  you pick in **Settings › General**. Its messages and errors are
+  translated too.
 
 ### Changed
 
@@ -44,6 +49,26 @@ change things that need a step from you, and its notes say so.
   can't, the stream stayed at 1080p and the choice moved back. The phone
   now says what the camera in use can do, and the PC's choices follow it,
   also when you switch cameras.
+- **The phone's apps show at once.** The list of apps to open in windows
+  was fetched with every icon each time it opened. The PC now keeps the
+  last list, also for the next start, and refreshes it in the background;
+  the phone keeps the icons it already drew.
+
+### Fixed
+
+- Turning on LocalSend closed the Windows app.
+- Browsing the PC's files from the phone showed nothing. It works with
+  **Your PC in your pocket** on, and says what to do when it can't list a
+  folder.
+- Samsung's Camera, and other apps that check their screen's shape,
+  crashed in an app window. App windows now always have a common screen
+  shape.
+- With several app windows open, the phone could drop its connection to
+  the PC for a moment and every window had to start again. Messages that
+  keep the connection alive now go ahead of the video.
+- The "sharing your screen" bar had no background.
+- The PC's log filled with network adapter warnings and kept only a few
+  hours.
 
 ## 0.1.4 (2026-10-17)
 
