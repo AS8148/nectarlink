@@ -161,8 +161,10 @@ if (Test-Path (Join-Path $root 'desktop\app\i18n')) {
     $translationSources = @(Get-ChildItem (Join-Path $root 'desktop\app\i18n') -Filter '*.ts')
 }
 if ($translationSources.Count -gt 0) {
-    $lrelease = Join-Path $QtRoot 'bin\lrelease.exe'
-    if (-not (Test-Path $lrelease)) { throw "lrelease not found under $QtRoot; pass -QtRoot" }
+    # A host tool: the x64 kit's, as an ARM64 kit's own can't run here.
+    $lrelease = Join-Path $hostKit 'bin\lrelease.exe'
+    if (-not (Test-Path $lrelease)) { $lrelease = Join-Path $QtRoot 'bin\lrelease.exe' }
+    if (-not (Test-Path $lrelease)) { throw "lrelease not found under $hostKit or $QtRoot; pass -QtRoot" }
     foreach ($source in $translationSources) {
         $ts = $source.FullName
         $qm = Join-Path $stage "$($source.BaseName).qm"
@@ -182,7 +184,8 @@ foreach ($style in 'Fusion', 'Imagine', 'Material', 'Universal') {
 # so it runs on PCs without the Visual C++ Redistributable.
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $vs = if (Test-Path $vswhere) {
-    & $vswhere -latest -products * -property installationPath
+    $component = if ($isArm64) { 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }
+    & $vswhere -latest -products * -requires $component -property installationPath
 } else { $null }
 $crtArch = if ($isArm64) { 'arm64' } else { 'x64' }
 $redistDirs = @()
