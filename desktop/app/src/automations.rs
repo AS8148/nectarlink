@@ -2,6 +2,7 @@
 //! Automations ("When X, Do Y", §3.11 P2): lightweight event-driven rules
 //! persisted in `settings.json` (`automation_rules`).
 
+use crate::i18n::tr;
 use std::{
     collections::HashMap,
     sync::{Mutex, OnceLock},
@@ -77,7 +78,7 @@ fn execute_rule(rule: &AutomationRule) {
         let _ = crate::pc_notifications::forward_to_phones(
             "NectarLink Automations",
             &rule.name,
-            &format!("Triggered by {}", rule.trigger),
+            &tr!("Automations", "Triggered by %1", rule.trigger),
         );
     }
 }

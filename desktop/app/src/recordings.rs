@@ -6,6 +6,7 @@
 
 #![allow(unsafe_code)]
 
+use crate::i18n::tr;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -520,7 +521,7 @@ pub fn on_done(transfer: Transfer) {
         toast::show(Toast {
             device: TOAST_GROUP.into(),
             key: final_path.to_string_lossy().into_owned(),
-            title: format!("Recording from {device} saved"),
+            title: tr!("Recordings", "Recording from %1 saved", device),
             body,
             attribution: "NectarLink".into(),
             icon: None,

@@ -387,7 +387,7 @@ fn show(device: DeviceId, n: &Notification) {
     }
     let mut actions: Vec<(String, String)> = Vec::new();
     if otp.is_some() {
-        actions.push((ACTION_COPY_OTP.to_owned(), "Copy code".to_owned()));
+        actions.push((ACTION_COPY_OTP.to_owned(), tr!("Notifications", "Copy code")));
     }
     actions.extend(n.actions.iter().filter(|a| !a.reply).map(|a| (a.id.clone(), a.title.clone())));
     let reply = n.actions.iter().find(|a| a.reply);
@@ -590,7 +590,7 @@ pub fn run_action(device: &str, key: String, action: String, reply: Option<Strin
 
 fn report(error: &Error) {
     let message = match error {
-        Error::NotFound => "That notification is gone from the phone.".to_owned(),
+        Error::NotFound => tr!("Notifications", "That notification is gone from the phone."),
         other => crate::bridge::app::describe(other),
     };
     crate::bridge::app::show_message(message);

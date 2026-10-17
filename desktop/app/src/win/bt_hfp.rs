@@ -9,6 +9,7 @@
 
 #![allow(dead_code)]
 
+use crate::i18n::tr;
 use std::sync::{Mutex, OnceLock};
 
 use windows::{
@@ -86,7 +87,7 @@ pub fn probe_status(phone_name: Option<&str>) -> HfpStatus {
                 available: true,
                 connected: true,
                 device_name: name.clone(),
-                detail: format!("Bluetooth connected ({name})."),
+                detail: tr!("BtHfp", "Bluetooth connected (%1).", name),
             };
         }
         *guard = None;
@@ -109,9 +110,9 @@ pub fn probe_status(phone_name: Option<&str>) -> HfpStatus {
             .and_then(|dev| dev.ConnectionStatus().ok())
             == Some(BluetoothConnectionStatus::Connected);
         let detail = if connected {
-            format!("Bluetooth connected ({display}).")
+            tr!("BtHfp", "Bluetooth connected (%1).", display)
         } else {
-            format!("Bluetooth paired with {display} (not currently connected).")
+            tr!("BtHfp", "Bluetooth paired with %1 (not currently connected).", display)
         };
         HfpStatus { available: true, connected, device_name: display, detail }
     } else {
@@ -119,7 +120,7 @@ pub fn probe_status(phone_name: Option<&str>) -> HfpStatus {
             available: false,
             connected: false,
             device_name: String::new(),
-            detail: "No paired Bluetooth phone endpoint found in Windows.".into(),
+            detail: tr!("BtHfp", "No paired Bluetooth phone endpoint found in Windows."),
         }
     }
 }
@@ -135,13 +136,13 @@ pub fn connect_audio(phone_name: Option<&str>) -> Result<HfpStatus, String> {
             available: true,
             connected: true,
             device_name: name.clone(),
-            detail: format!("Bluetooth connected ({name})."),
+            detail: tr!("BtHfp", "Bluetooth connected (%1).", name),
         });
     }
 
     let endpoints = enumerate_endpoints().map_err(|e| e.to_string())?;
     let Some((id, name)) = match_endpoint(&endpoints, phone_name) else {
-        return Err("No paired Bluetooth phone endpoint found in Windows.".into());
+        return Err(tr!("BtHfp", "No paired Bluetooth phone endpoint found in Windows."));
     };
     let display =
         if name.trim().is_empty() { phone_name.unwrap_or("your phone").to_owned() } else { name.clone() };
@@ -161,9 +162,9 @@ pub fn connect_audio(phone_name: Option<&str>) -> Result<HfpStatus, String> {
     }
 
     let detail = if connected {
-        format!("Bluetooth connected ({display}).")
+        tr!("BtHfp", "Bluetooth connected (%1).", display)
     } else {
-        format!("Bluetooth paired with {display} (not currently connected).")
+        tr!("BtHfp", "Bluetooth paired with %1 (not currently connected).", display)
     };
 
     Ok(HfpStatus { available: true, connected, device_name: display, detail })

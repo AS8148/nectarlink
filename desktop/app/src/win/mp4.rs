@@ -7,6 +7,7 @@
 //! PC. When phone audio (16-bit PCM) is present, it is encoded to AAC-LC
 //! (`MFAudioFormat_AAC`) into the same `.mp4` container.
 
+use crate::i18n::tr;
 use std::{
     path::{Path, PathBuf},
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -247,7 +248,7 @@ impl MirrorRecorder {
             return Ok(self.path);
         }
         let _ = std::fs::remove_file(&self.path);
-        Err("No video frames were recorded yet.".into())
+        Err(tr!("Mp4", "No video frames were recorded yet."))
     }
 }
 

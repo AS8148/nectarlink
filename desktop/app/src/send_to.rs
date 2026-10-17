@@ -4,6 +4,7 @@
 //! files and follows the transfer in a Windows notification with a progress
 //! bar, so nothing else needs to open.
 
+use crate::i18n::tr;
 use std::{
     collections::HashMap,
     io,
@@ -157,7 +158,7 @@ fn reconcile(dir: &Path, desired: &[(DeviceId, String)], exe: &Path) -> io::Resu
             Shortcut {
                 target: exe.to_owned(),
                 arguments: format!("{ARG} {id}"),
-                description: format!("Send to {name} with NectarLink"),
+                description: tr!("SendTo", "Send to %1 with NectarLink", name),
             },
         ));
     }
@@ -258,8 +259,8 @@ fn share(files: Vec<PathBuf>, url: Option<String>, text: Option<String>) {
                         toast::show(Toast {
                             device: TOAST_GROUP.into(),
                             key: "share-text".into(),
-                            title: format!("Sent to {device_name}"),
-                            body: "Copied to your phone's clipboard.".into(),
+                            title: tr!("SendTo", "Sent to %1", device_name),
+                            body: tr!("SendTo", "Copied to your phone's clipboard."),
                             attribution: "NectarLink".into(),
                             icon: None,
                             image: None,
@@ -273,7 +274,7 @@ fn share(files: Vec<PathBuf>, url: Option<String>, text: Option<String>) {
                         let _ = crate::bridge::app::show_offline_queued_toast(device_id, None);
                     }
                 }
-                Err(e) => failed(&format!("Couldn't share with {device_name}"), &describe(&e)),
+                Err(e) => failed(&tr!("SendTo", "Couldn't share with %1", device_name), &describe(&e)),
             }
         }
     });
@@ -336,30 +337,35 @@ fn send(device: String, paths: Vec<PathBuf>) {
         let Some((id, name)) = name else {
             return failed("Couldn't send", "That device isn't paired with this PC anymore.");
         };
-        let outgoing = match tokio::task::spawn_blocking(move || nectarlink_core::outgoing_paths(&paths))
-            .await
-        {
-            Ok(Ok(files)) if !files.is_empty() => files,
-            Ok(Ok(_)) => {
-                return failed(&format!("Couldn't send to {name}"), "There's nothing to send in there.");
-            }
-            Ok(Err(Error::TooLarge)) => {
-                return failed(&format!("Couldn't send to {name}"), "That's too many files to send at once.");
-            }
-            Ok(Err(_)) | Err(_) => {
-                return failed(&format!("Couldn't send to {name}"), "Those files can't be read.");
-            }
-        };
+        let outgoing =
+            match tokio::task::spawn_blocking(move || nectarlink_core::outgoing_paths(&paths)).await {
+                Ok(Ok(files)) if !files.is_empty() => files,
+                Ok(Ok(_)) => {
+                    return failed(
+                        &tr!("SendTo", "Couldn't send to %1", name),
+                        "There's nothing to send in there.",
+                    );
+                }
+                Ok(Err(Error::TooLarge)) => {
+                    return failed(
+                        &tr!("SendTo", "Couldn't send to %1", name),
+                        "That's too many files to send at once.",
+                    );
+                }
+                Ok(Err(_)) | Err(_) => {
+                    return failed(&tr!("SendTo", "Couldn't send to %1", name), "Those files can't be read.");
+                }
+            };
         match node.send_files(id, outgoing).await {
             Ok(transfer_id) => {
                 let _ = crate::bridge::app::show_offline_queued_toast(id, Some(transfer_id.clone()));
                 track(transfer_id, name);
             }
             Err(Error::Denied) => failed(
-                &format!("Couldn't send to {name}"),
+                &tr!("SendTo", "Couldn't send to %1", name),
                 "Files are turned off for this device. Turn them on in NectarLink.",
             ),
-            Err(e) => failed(&format!("Couldn't send to {name}"), &describe(&e)),
+            Err(e) => failed(&tr!("SendTo", "Couldn't send to %1", name), &describe(&e)),
         }
     });
 }
@@ -447,8 +453,8 @@ fn update(map: &mut HashMap<String, Tracked>, transfer: &Transfer) {
                 status: match transfer.state {
                     TransferState::Paused => "Paused".into(),
                     TransferState::Waiting => format!("{device} is offline. Will send when it's back."),
-                    TransferState::Requested => format!("Waiting for {device}…"),
-                    _ => format!("Sending to {device}…"),
+                    TransferState::Requested => tr!("SendTo", "Waiting for %1…", device),
+                    _ => tr!("SendTo", "Sending to %1…", device),
                 },
                 value: (transfer.total > 0).then(|| transfer.done as f64 / transfer.total as f64),
                 label: format!("{} of {}", size(transfer.done), size(transfer.total)),
@@ -470,22 +476,22 @@ fn update(map: &mut HashMap<String, Tracked>, transfer: &Transfer) {
             tracked.shown = Some((Instant::now(), progress));
         }
         TransferState::Done { .. } => {
-            toast::show(finished(title, format!("Sent to {device}")));
+            toast::show(finished(title, tr!("SendTo", "Sent to %1", device)));
             map.remove(&transfer.id);
         }
         TransferState::Failed(failure) => {
             let body = match failure {
                 TransferFailure::Denied => format!("{device} doesn't accept files from this PC."),
-                TransferFailure::Unreachable => format!("Couldn't reach {device}."),
+                TransferFailure::Unreachable => tr!("SendTo", "Couldn't reach %1.", device),
                 TransferFailure::NoSpace => format!("{device} is out of space."),
                 TransferFailure::Integrity => {
-                    "File failed integrity check; partial file kept to resume.".into()
+                    tr!("SendTo", "File failed integrity check; partial file kept to resume.")
                 }
                 TransferFailure::Interrupted | TransferFailure::Other(_) => {
-                    "The transfer didn't go through.".into()
+                    tr!("SendTo", "The transfer didn't go through.")
                 }
             };
-            toast::show(finished(format!("Couldn't send {title}"), body));
+            toast::show(finished(tr!("SendTo", "Couldn't send %1", title), body));
             map.remove(&transfer.id);
         }
         TransferState::Cancelled => {

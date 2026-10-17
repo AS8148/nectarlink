@@ -7,6 +7,7 @@
 
 #![allow(unsafe_code, dead_code)]
 
+use crate::i18n::tr;
 use std::{
     fs,
     io::Write,
@@ -128,7 +129,7 @@ fn truncate_preview(text: &str, max_chars: usize) -> String {
 /// Renders an Adaptive Card v1.5 JSON payload for `state`.
 pub fn render_adaptive_card(state: &WidgetState) -> String {
     let title = if state.phone_name.trim().is_empty() {
-        "No phone connected".to_owned()
+        tr!("Widget", "No phone connected")
     } else {
         state.phone_name.trim().to_owned()
     };
@@ -137,10 +138,10 @@ pub fn render_adaptive_card(state: &WidgetState) -> String {
     let battery_text = match state.battery_level {
         Some(level) if state.battery_charging => format!("{level}% · Charging"),
         Some(level) => format!("{level}%"),
-        None => "Not available".to_owned(),
+        None => tr!("Widget", "Not available"),
     };
     let clip_text = if state.last_clip_preview.trim().is_empty() {
-        "No recent clipboard items".to_owned()
+        tr!("Widget", "No recent clipboard items")
     } else {
         truncate_preview(&state.last_clip_preview, 120)
     };

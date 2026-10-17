@@ -153,8 +153,8 @@ fn show(device: DeviceId, photo: &Photo) {
     toast::show(Toast {
         device: TOAST_GROUP.into(),
         key: format!("{device} {}", photo.id),
-        title: if photo.screenshot { "New screenshot".into() } else { "New photo".into() },
-        body: format!("From {name}"),
+        title: if photo.screenshot { tr!("Photos", "New screenshot") } else { tr!("Photos", "New photo") },
+        body: tr!("Photos", "From %1", name),
         attribution: "NectarLink".into(),
         icon: None,
         image: preview,

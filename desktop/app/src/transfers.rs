@@ -250,12 +250,12 @@ pub fn on_event(event: &NodeEvent) {
                 core_host::node()
                     .and_then(|n| n.localsend_peers().into_iter().find(|p| p.id == t.device).map(|p| p.alias))
             })
-            .unwrap_or_else(|| "Nearby device".into());
+            .unwrap_or_else(|| tr!("Transfers", "Nearby device"));
         toast::show(Toast {
             device: TOAST_GROUP.into(),
             key: format!("req:{}", t.id),
             title: format!("{device} wants to send {}", title(t)),
-            body: "Accept in NectarLink to save to Downloads\\Nectarlink".into(),
+            body: tr!("Transfers", "Accept in NectarLink to save to Downloads\\Nectarlink"),
             attribution: "LocalSend".into(),
             icon: None,
             image: None,
@@ -297,9 +297,9 @@ pub fn on_event(event: &NodeEvent) {
         key: first.to_string_lossy().into_owned(),
         title,
         body: if auto_open {
-            format!("From {device}, opened from Downloads\\Nectarlink")
+            tr!("Transfers", "From %1, opened from Downloads\\Nectarlink", device)
         } else {
-            format!("From {device}, saved in Downloads\\Nectarlink")
+            tr!("Transfers", "From %1, saved in Downloads\\Nectarlink", device)
         },
         attribution: "NectarLink".into(),
         icon: None,

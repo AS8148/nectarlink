@@ -516,9 +516,9 @@ pub fn install_update_in_background() {
             let result = crate::updater::install(move |done, total| {
                 let fraction = if total > 0 { (done as f64 / total as f64).clamp(0.0, 1.0) } else { -1.0 };
                 let text = if total > 0 {
-                    format!("Downloading the update · {} of {}", megabytes(done), megabytes(total))
+                    tr!("App", "Downloading the update · %1 of %2", megabytes(done), megabytes(total))
                 } else {
-                    "Downloading the update…".to_owned()
+                    tr!("App", "Downloading the update…")
                 };
                 let _ = progress_qt.queue(move |mut object| {
                     object.as_mut().set_update_progress(fraction);
@@ -627,7 +627,7 @@ pub(crate) fn show_message_with_action(message: impl Into<String>, action_label:
 pub(crate) fn show_offline_queued_toast(device: DeviceId, item_id: Option<String>) -> bool {
     let (online, device_name) = core_host::host().hub.read(|s| {
         let online = s.devices.iter().any(|d| d.id == device && matches!(d.link, LinkState::Online { .. }));
-        let name = s.name_of(&device).unwrap_or_else(|| "Your phone".into());
+        let name = s.name_of(&device).unwrap_or_else(|| tr!("App", "Your phone"));
         (online, name)
     });
     if online {
@@ -803,14 +803,14 @@ impl cxx_qt::Initialize for qobject::AppController {
         );
 
         let labels = tray::MenuLabels {
-            open: "Open NectarLink".into(),
-            command_palette: "Command palette".into(),
-            shelf: "Toggle Shelf".into(),
-            take_photo: "Take photo with phone".into(),
-            scan_document: "Scan document with phone".into(),
-            find_phone: "Find my phone".into(),
-            open_link: "Open copied link on phone".into(),
-            quit: "Quit NectarLink".into(),
+            open: tr!("App", "Open NectarLink"),
+            command_palette: tr!("App", "Command palette"),
+            shelf: tr!("App", "Toggle Shelf"),
+            take_photo: tr!("App", "Take photo with phone"),
+            scan_document: tr!("App", "Scan document with phone"),
+            find_phone: tr!("App", "Find my phone"),
+            open_link: tr!("App", "Open copied link on phone"),
+            quit: tr!("App", "Quit NectarLink"),
         };
         match tray::Tray::create("NectarLink", labels, move |event| on_tray_event(&qt, event)) {
             Ok(tray) => self.rust_mut().tray = Some(tray),
@@ -960,7 +960,7 @@ pub(crate) fn format_tray_device_summary(name: &str, b: &nectarlink_core::Batter
     let charging = if b.charging { ", charging" } else { "" };
     let mut parts = vec![format!("{name} · {}%{charging}", b.level)];
     if let Some(w) = b.wifi_bars {
-        parts.push(format!("Wi-Fi {w}/4"));
+        parts.push(tr!("App", "Wi-Fi %1/4", w));
     }
     if let Some(c) = b.cell_bars {
         let label = b.cell_type.as_deref().filter(|s| !s.is_empty()).unwrap_or("Cell");
@@ -1092,9 +1092,9 @@ fn phone_colors_json(devices: &[crate::state::DeviceView]) -> String {
             let id_str = d.id.to_string();
             let key = if multiple { format!("phone:{id_str}") } else { "phone".to_owned() };
             let label = if multiple {
-                format!("My phone's colors ({})", d.info.name)
+                tr!("App", "My phone's colors (%1)", d.info.name)
             } else {
-                "My phone's colors".to_owned()
+                tr!("App", "My phone's colors")
             };
             serde_json::json!({
                 "id": id_str,
@@ -1248,13 +1248,13 @@ impl qobject::AppController {
         self.as_mut().set_phone_toggles_revision(toggles_version as i32);
 
         let mut tooltip = match (devices, online) {
-            (0, _) => "NectarLink · no devices paired".to_owned(),
-            (_, 0) => "NectarLink · not connected".to_owned(),
+            (0, _) => tr!("App", "NectarLink · no devices paired"),
+            (_, 0) => tr!("App", "NectarLink · not connected"),
             (_, 1) => battery.map_or_else(
-                || "NectarLink · 1 device connected".to_owned(),
-                |b| format!("NectarLink · {b}"),
+                || tr!("App", "NectarLink · 1 device connected"),
+                |b| tr!("App", "NectarLink · %1", b),
             ),
-            (_, n) => format!("NectarLink · {n} devices connected"),
+            (_, n) => tr!("App", "NectarLink · %1 devices connected", n),
         };
         if waiting_count > 0 {
             tooltip.push_str(&format!(" · {waiting_count} waiting"));

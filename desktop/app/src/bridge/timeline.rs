@@ -607,7 +607,7 @@ fn describe_entry(
             let title = if entry.title.is_empty() {
                 match entry.kind {
                     TimelineKind::Photo => "Photo".into(),
-                    TimelineKind::Recording => "Voice recording".into(),
+                    TimelineKind::Recording => tr!("Timeline", "Voice recording"),
                     _ => "File".into(),
                 }
             } else {
@@ -666,9 +666,9 @@ fn describe_entry(
                 raw_detail = detail;
                 friendly
             } else if !clip_thumb.is_empty() || entry.detail == "image" {
-                "Copied image".into()
+                tr!("Timeline", "Copied image")
             } else {
-                "Clip (removed from clipboard history)".into()
+                tr!("Timeline", "Clip (removed from clipboard history)")
             };
             let mut parts = vec![who];
             if entry.size_bytes > 0 {
@@ -702,7 +702,7 @@ fn describe_entry(
             if entry.duration_secs > 0 {
                 parts.push(format_duration(entry.duration_secs as u32));
             } else {
-                parts.push("In progress".into());
+                parts.push(tr!("Timeline", "In progress"));
             }
             (title, parts.join(" · "), String::new(), String::new(), 1, false, false, false, false)
         }

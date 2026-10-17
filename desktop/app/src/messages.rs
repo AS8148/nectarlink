@@ -966,7 +966,7 @@ fn detect_or_convert_attachment(path: &Path, raw: Vec<u8>) -> Result<(String, Ve
     }
     // Convert BMP/TIFF/ICO or other Windows-decodable images to PNG.
     let bitmap = crate::win::image::decode(&raw)
-        .map_err(|_| "Only image or voice-note audio files can be attached.".to_owned())?;
+        .map_err(|_| tr!("Messages", "Only image or voice-note audio files can be attached."))?;
     let png = crate::win::image::encode_png(&bitmap).map_err(|e| e.to_string())?;
     Ok(("image/png".into(), png))
 }
@@ -1006,7 +1006,7 @@ fn stage_attachment_bytes(name: String, mime: String, data: Vec<u8>) -> bool {
         preview_path.as_ref().map(|p| crate::icons::file_url(p)).unwrap_or_default()
     };
     let (data, error) = if data.len() > MAX_ATTACHMENT_BYTES {
-        (Vec::new(), format!("Attachment is {size_text} (MMS supports up to 900 KB)"))
+        (Vec::new(), tr!("Messages", "Attachment is %1 (MMS supports up to 900 KB)", size_text))
     } else {
         (data, String::new())
     };

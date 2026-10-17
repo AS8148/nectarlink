@@ -19,6 +19,7 @@
 //! The renamed copies matter: the installer closes running copies of
 //! `nectarlink-desktop.exe` by name, which would otherwise include these.
 
+use crate::i18n::tr;
 use std::{
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
@@ -169,9 +170,10 @@ pub fn install(installer: &Path, on_event: impl FnMut(Event)) -> Outcome {
 pub fn remove(installed: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
     let uninstaller = installed.join("uninstall.exe");
     if !uninstaller.is_file() {
-        return Outcome::Failed(
-            "The uninstaller is missing. Reinstall NectarLink, then uninstall it.".into(),
-        );
+        return Outcome::Failed(tr!(
+            "Setup",
+            "The uninstaller is missing. Reinstall NectarLink, then uninstall it."
+        ));
     }
     let progress = progress_file("remove");
     let params = format!("/S /PROGRESS={}", progress.display());
@@ -218,7 +220,7 @@ fn run_tracked(
         Ok(process) => process,
         Err(crate::win::elevated::Error::Declined) => return Outcome::Declined,
         Err(crate::win::elevated::Error::Other(e)) => {
-            return Outcome::Failed(format!("Couldn't start setup: {e}"));
+            return Outcome::Failed(tr!("Setup", "Couldn't start setup: %1", e));
         }
     };
     let started = Instant::now();
@@ -250,11 +252,14 @@ fn run_tracked(
             return if code == 0 {
                 Outcome::Done
             } else {
-                Outcome::Failed(format!("Setup stopped with code {code}."))
+                Outcome::Failed(tr!("Setup", "Setup stopped with code %1.", code))
             };
         }
         if started.elapsed() > limit {
-            return Outcome::Failed("Setup is taking too long. Try again after restarting the PC.".into());
+            return Outcome::Failed(tr!(
+                "Setup",
+                "Setup is taking too long. Try again after restarting the PC."
+            ));
         }
         std::thread::sleep(Duration::from_millis(120));
     }

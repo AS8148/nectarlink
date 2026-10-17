@@ -122,8 +122,12 @@ pub fn view() -> ContinuityView {
         Some(active) if !active.queued_offline => {
             let mode_str = active.mode.as_str().to_owned();
             let status_str = match active.mode {
-                CameraCaptureMode::Photo => format!("Take a photo on {}…", active.device_name),
-                CameraCaptureMode::Scan => format!("Scan a document on {}…", active.device_name),
+                CameraCaptureMode::Photo => {
+                    tr!("ContinuityCamera", "Take a photo on %1…", active.device_name)
+                }
+                CameraCaptureMode::Scan => {
+                    tr!("ContinuityCamera", "Scan a document on %1…", active.device_name)
+                }
             };
             (true, mode_str, status_str)
         }
@@ -199,8 +203,10 @@ pub fn start_for_index(preferred_index: usize, mode_raw: &str) {
 
     if online {
         let open_msg = match mode {
-            CameraCaptureMode::Photo => format!("Opening camera on {device_name}…"),
-            CameraCaptureMode::Scan => format!("Opening document scanner on {device_name}…"),
+            CameraCaptureMode::Photo => tr!("ContinuityCamera", "Opening camera on %1…", device_name),
+            CameraCaptureMode::Scan => {
+                tr!("ContinuityCamera", "Opening document scanner on %1…", device_name)
+            }
         };
         crate::bridge::app::show_message(open_msg);
     }
@@ -229,10 +235,16 @@ pub fn start_for_index(preferred_index: usize, mode_raw: &str) {
                 if should_report {
                     notify_continuity();
                     let msg = match err {
-                        Error::Denied => format!("Allow Photos access for {device_name} in Settings first."),
+                        Error::Denied => tr!(
+                            "ContinuityCamera",
+                            "Allow Photos access for %1 in Settings first.",
+                            device_name
+                        ),
                         Error::Unsupported => format!("{device_name} doesn’t support Continuity Camera yet."),
                         Error::Offline => format!("{device_name} is not connected."),
-                        other => format!("Couldn’t open camera on {device_name}: {other}"),
+                        other => {
+                            tr!("ContinuityCamera", "Couldn’t open camera on %1: %2", device_name, other)
+                        }
                     };
                     crate::bridge::app::show_message(msg);
                 }
@@ -373,11 +385,11 @@ pub fn on_event(event: &NodeEvent) {
             if let Some(active) = removed {
                 notify_continuity();
                 let msg = match reason.as_deref() {
-                    Some("busy") => format!("Camera is busy on {}.", active.device_name),
+                    Some("busy") => tr!("ContinuityCamera", "Camera is busy on %1.", active.device_name),
                     Some("permission_denied") => {
-                        format!("Camera permission was denied on {}.", active.device_name)
+                        tr!("ContinuityCamera", "Camera permission was denied on %1.", active.device_name)
                     }
-                    _ => format!("Camera capture cancelled on {}.", active.device_name),
+                    _ => tr!("ContinuityCamera", "Camera capture cancelled on %1.", active.device_name),
                 };
                 crate::bridge::app::show_message(msg);
             }

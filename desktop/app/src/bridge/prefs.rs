@@ -3,6 +3,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use crate::i18n::tr;
 use std::{
     path::PathBuf,
     pin::Pin,
@@ -716,7 +717,7 @@ impl qobject::Preferences {
     pub fn test_obs(&self) {
         let spawned = std::thread::Builder::new().name("obs-test".into()).spawn(|| {
             let message = match crate::deck::send_obs_command("GetVersion") {
-                Ok(()) => "Connected to OBS.".to_owned(),
+                Ok(()) => tr!("Prefs", "Connected to OBS."),
                 Err(e) => e,
             };
             crate::bridge::app::show_message(message);

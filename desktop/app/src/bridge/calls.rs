@@ -3,6 +3,7 @@
 //! controls QML sends to it, the phone's call log and contacts, and dialing
 //! a number from the PC.
 
+use crate::i18n::tr;
 use std::pin::Pin;
 
 use cxx_qt::{CxxQtType, Threading};
@@ -235,7 +236,7 @@ impl qobject::PhoneCall {
                 let number = call.number.clone().filter(|n| !n.trim().is_empty());
                 match name {
                     Some(name) => (name, number.unwrap_or_default()),
-                    None => (number.unwrap_or_else(|| "Unknown caller".into()), String::new()),
+                    None => (number.unwrap_or_else(|| tr!("Calls", "Unknown caller")), String::new()),
                 }
             }
             None => Default::default(),

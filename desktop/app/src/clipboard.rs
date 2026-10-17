@@ -367,11 +367,11 @@ pub fn on_event(event: &NodeEvent) {
         if let Some(suggestion) = suggestion {
             let label = suggestion.action_label();
             *LAST_SUGGESTION.lock().unwrap_or_else(|e| e.into_inner()) = Some((*device, suggestion));
-            show_message_with_action(format!("Copied from {name}."), label);
+            show_message_with_action(tr!("Clipboard", "Copied from %1.", name), label);
             crate::win::toast::show(crate::win::toast::Toast {
                 device: TOAST_GROUP.into(),
                 key: "clip_suggestion".into(),
-                title: format!("Copied from {name}"),
+                title: tr!("Clipboard", "Copied from %1", name),
                 body: String::new(),
                 attribution: String::new(),
                 icon: None,

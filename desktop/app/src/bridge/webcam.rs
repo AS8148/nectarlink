@@ -3,6 +3,7 @@
 //! webcam preferences (phone, 720p, 1080p or 4K when the camera can, mirror),
 //! and live stream state.
 
+use crate::i18n::tr;
 use std::pin::Pin;
 
 use cxx_qt::Threading;
@@ -120,14 +121,14 @@ impl qobject::Webcam {
             Phase::Idle => ("idle", String::new(), String::new()),
             Phase::Asking { device } => {
                 let name = hub.read(|s| s.name_of(&device)).unwrap_or_else(|| "phone".into());
-                ("asking", device.to_string(), format!("Starting camera on {name}…"))
+                ("asking", device.to_string(), tr!("Webcam", "Starting camera on %1…", name))
             }
             Phase::Streaming { device, width, height, fps } => {
                 let name = hub.read(|s| s.name_of(&device)).unwrap_or_else(|| "phone".into());
                 (
                     "streaming",
                     device.to_string(),
-                    format!("Streaming {width} × {height} · {fps} fps from {name}"),
+                    tr!("Webcam", "Streaming %1 × %2 · %3 fps from %4", width, height, fps, name),
                 )
             }
             Phase::Ended { reason } => ("ended", String::new(), reason),

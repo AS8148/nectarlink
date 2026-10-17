@@ -229,12 +229,17 @@ pub fn execute(id: &str) -> Option<PaletteUiAction> {
         core_host::spawn(core_host::refresh_wake());
         let msg = core_host::host().hub.read(|s| match s.wake.primary() {
             Some(adapter) if s.wake.state_str() == "enabled" => {
-                format!("Wake-on-LAN is ready on {} (phones can wake this PC).", adapter.label)
+                tr!("CommandPalette", "Wake-on-LAN is ready on %1 (phones can wake this PC).", adapter.label)
             }
             Some(adapter) => {
-                format!("Wake-on-LAN on {} is {}. Check Settings.", adapter.label, s.wake.state_str())
+                tr!(
+                    "CommandPalette",
+                    "Wake-on-LAN on %1 is %2. Check Settings.",
+                    adapter.label,
+                    s.wake.state_str()
+                )
             }
-            None => "No physical network adapter found for Wake-on-LAN.".to_owned(),
+            None => tr!("CommandPalette", "No physical network adapter found for Wake-on-LAN."),
         });
         show_message(msg);
         return Some(PaletteUiAction::NavigatePage { page: "settings".to_owned(), device_index: None });
@@ -490,9 +495,9 @@ fn build_candidates() -> Vec<PaletteCandidate> {
             .map(|(idx, d)| (idx, d.id, d.info.name.clone(), matches!(d.link, LinkState::Online { .. })))
             .collect();
         let wake_sub = match s.wake.primary() {
-            Some(a) if s.wake.state_str() == "enabled" => format!("Ready on {}", a.label),
+            Some(a) if s.wake.state_str() == "enabled" => tr!("CommandPalette", "Ready on %1", a.label),
             Some(a) => format!("{} ({})", a.label, s.wake.state_str()),
-            None => "Check Wake-on-LAN status in Settings".to_owned(),
+            None => tr!("CommandPalette", "Check Wake-on-LAN status in Settings"),
         };
         (devs, s.toggles.clone(), wake_sub)
     });
@@ -513,8 +518,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         let status_badge = if online { dev_name.clone() } else { format!("{dev_name} (offline)") };
         out.push(PaletteCandidate {
             id: format!("action:send_clipboard:{dev_id}"),
-            title: "Send clipboard".into(),
-            subtitle: format!("Send copied text or image to {dev_name}"),
+            title: tr!("CommandPalette", "Send clipboard"),
+            subtitle: tr!("CommandPalette", "Send copied text or image to %1", dev_name),
             category: "Actions".into(),
             icon: "clipboard".into(),
             badge: status_badge.clone(),
@@ -524,8 +529,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         });
         out.push(PaletteCandidate {
             id: format!("action:ring:{dev_id}"),
-            title: "Find my phone".into(),
-            subtitle: format!("Make {dev_name} ring at full volume"),
+            title: tr!("CommandPalette", "Find my phone"),
+            subtitle: tr!("CommandPalette", "Make %1 ring at full volume", dev_name),
             category: "Actions".into(),
             icon: "ring".into(),
             badge: status_badge.clone(),
@@ -535,8 +540,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         });
         out.push(PaletteCandidate {
             id: format!("action:open_last_photo:{dev_id}"),
-            title: "Open last photo".into(),
-            subtitle: format!("Open the newest photo or screenshot from {dev_name}"),
+            title: tr!("CommandPalette", "Open last photo"),
+            subtitle: tr!("CommandPalette", "Open the newest photo or screenshot from %1", dev_name),
             category: "Actions".into(),
             icon: "photo".into(),
             badge: status_badge.clone(),
@@ -546,8 +551,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         });
         out.push(PaletteCandidate {
             id: format!("action:record_voice:{dev_id}"),
-            title: "Record voice".into(),
-            subtitle: format!("Open voice recordings folder for {dev_name}"),
+            title: tr!("CommandPalette", "Record voice"),
+            subtitle: tr!("CommandPalette", "Open voice recordings folder for %1", dev_name),
             category: "Actions".into(),
             icon: "mic".into(),
             badge: status_badge.clone(),
@@ -560,8 +565,15 @@ fn build_candidates() -> Vec<PaletteCandidate> {
     // Shelf & Continuity Camera actions (global hotkeys shown as badges/shortcuts)
     out.push(PaletteCandidate {
         id: "action:toggle_shelf".into(),
-        title: if crate::bridge::app::is_shelf_open() { "Hide Shelf".into() } else { "Open Shelf".into() },
-        subtitle: "Slide-out edge panel with latest photo, screenshot, clipboard, and recent files".into(),
+        title: if crate::bridge::app::is_shelf_open() {
+            tr!("CommandPalette", "Hide Shelf")
+        } else {
+            tr!("CommandPalette", "Open Shelf")
+        },
+        subtitle: tr!(
+            "CommandPalette",
+            "Slide-out edge panel with latest photo, screenshot, clipboard, and recent files"
+        ),
         category: "Actions".into(),
         icon: "folder".into(),
         badge: "Shelf".into(),
@@ -571,8 +583,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
     });
     out.push(PaletteCandidate {
         id: "action:continuity_photo".into(),
-        title: "Take photo with phone".into(),
-        subtitle: "Capture a photo on your phone and paste it into the active window".into(),
+        title: tr!("CommandPalette", "Take photo with phone"),
+        subtitle: tr!("CommandPalette", "Capture a photo on your phone and paste it into the active window"),
         category: "Actions".into(),
         icon: "camera".into(),
         badge: "Continuity".into(),
@@ -582,8 +594,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
     });
     out.push(PaletteCandidate {
         id: "action:continuity_scan".into(),
-        title: "Scan document with phone".into(),
-        subtitle: "Scan a document on your phone and paste it into the active window".into(),
+        title: tr!("CommandPalette", "Scan document with phone"),
+        subtitle: tr!("CommandPalette", "Scan a document on your phone and paste it into the active window"),
         category: "Actions".into(),
         icon: "clipboardList".into(),
         badge: "Continuity".into(),
@@ -594,26 +606,26 @@ fn build_candidates() -> Vec<PaletteCandidate> {
     let (link_title, link_sub, link_badge, link_keywords) = match crate::links::handoff_from_clipboard() {
         Some(h) => match h.kind {
             nectarlink_core::HandoffKind::MapLocation => (
-                "Open copied location in Maps on phone".to_owned(),
+                tr!("CommandPalette", "Open copied location in Maps on phone"),
                 h.label,
-                "Handoff · Map".to_owned(),
+                tr!("CommandPalette", "Handoff · Map"),
                 "open copied link map location address directions geo handoff phone".to_owned(),
             ),
             nectarlink_core::HandoffKind::VideoLink => (
-                "Continue copied video on phone".to_owned(),
+                tr!("CommandPalette", "Continue copied video on phone"),
                 h.label,
-                "Handoff · Video".to_owned(),
+                tr!("CommandPalette", "Handoff · Video"),
                 "open copied link video youtube timestamp watch continue handoff phone".to_owned(),
             ),
             nectarlink_core::HandoffKind::WebLink => (
-                "Open copied link on phone".to_owned(),
+                tr!("CommandPalette", "Open copied link on phone"),
                 h.label,
                 "Handoff".to_owned(),
                 "open copied link url browser web share handoff phone".to_owned(),
             ),
         },
         None => (
-            "Open copied link on phone".to_owned(),
+            tr!("CommandPalette", "Open copied link on phone"),
             "Send a web URL, video with timestamp, or map location on your clipboard to your phone"
                 .to_owned(),
             "Handoff".to_owned(),
@@ -635,8 +647,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
     if let Some((_, dev_id, ref dev_name, _)) = primary {
         out.push(PaletteCandidate {
             id: format!("action:mirror_screen:{dev_id}"),
-            title: "Mirror phone screen".into(),
-            subtitle: format!("Stream {dev_name}'s screen in a desktop window"),
+            title: tr!("CommandPalette", "Mirror phone screen"),
+            subtitle: tr!("CommandPalette", "Stream %1's screen in a desktop window", dev_name),
             category: "Actions".into(),
             icon: "mirror".into(),
             badge: dev_name.clone(),
@@ -648,11 +660,15 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         out.push(PaletteCandidate {
             id: format!("action:type_on_phone:{dev_id}"),
             title: if typing_active {
-                "Stop typing on phone".into()
+                tr!("CommandPalette", "Stop typing on phone")
             } else {
-                "Type on phone with PC keyboard".into()
+                tr!("CommandPalette", "Type on phone with PC keyboard")
             },
-            subtitle: format!("Send live keystrokes and text to {dev_name} without screen mirroring"),
+            subtitle: tr!(
+                "CommandPalette",
+                "Send live keystrokes and text to %1 without screen mirroring",
+                dev_name
+            ),
             category: "Actions".into(),
             icon: "keyboard".into(),
             badge: dev_name.clone(),
@@ -666,8 +682,16 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         );
         out.push(PaletteCandidate {
             id: format!("action:webcam:{dev_id}"),
-            title: if webcam_streaming { "Stop phone webcam".into() } else { "Use phone as webcam".into() },
-            subtitle: format!("Stream {dev_name}'s camera into the NectarLink virtual webcam"),
+            title: if webcam_streaming {
+                tr!("CommandPalette", "Stop phone webcam")
+            } else {
+                tr!("CommandPalette", "Use phone as webcam")
+            },
+            subtitle: tr!(
+                "CommandPalette",
+                "Stream %1's camera into the NectarLink virtual webcam",
+                dev_name
+            ),
             category: "Actions".into(),
             icon: "video".into(),
             badge: dev_name.clone(),
@@ -677,19 +701,23 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         });
         out.push(PaletteCandidate {
             id: format!("action:handoff_file:{dev_id}"),
-            title: "Hand off document to phone".into(),
-            subtitle: format!("Send a document to {dev_name} and open it automatically upon arrival"),
+            title: tr!("CommandPalette", "Hand off document to phone"),
+            subtitle: tr!(
+                "CommandPalette",
+                "Send a document to %1 and open it automatically upon arrival",
+                dev_name
+            ),
             category: "Actions".into(),
             icon: "send".into(),
-            badge: "Handoff · Doc".into(),
+            badge: tr!("CommandPalette", "Handoff · Doc"),
             shortcut: String::new(),
             keywords: format!("hand off handoff document file open pdf doc txt send {dev_name}"),
             base_boost: 77,
         });
         out.push(PaletteCandidate {
             id: format!("action:phone_storage:{dev_id}"),
-            title: "Browse phone storage in File Explorer".into(),
-            subtitle: format!("Open {dev_name}'s Cloud Files folder in Explorer"),
+            title: tr!("CommandPalette", "Browse phone storage in File Explorer"),
+            subtitle: tr!("CommandPalette", "Open %1's Cloud Files folder in Explorer", dev_name),
             category: "Actions".into(),
             icon: "folder".into(),
             badge: dev_name.clone(),
@@ -709,8 +737,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
             let badge = if *online { dev_name.clone() } else { format!("{dev_name} (offline)") };
             out.push(PaletteCandidate {
                 id: format!("action:send_clipboard:{dev_id}"),
-                title: format!("Send clipboard to {dev_name}"),
-                subtitle: "Send copied text or image".into(),
+                title: tr!("CommandPalette", "Send clipboard to %1", dev_name),
+                subtitle: tr!("CommandPalette", "Send copied text or image"),
                 category: "Actions".into(),
                 icon: "clipboard".into(),
                 badge: badge.clone(),
@@ -720,8 +748,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
             });
             out.push(PaletteCandidate {
                 id: format!("action:ring:{dev_id}"),
-                title: format!("Find {dev_name}"),
-                subtitle: "Make phone ring at full volume".into(),
+                title: tr!("CommandPalette", "Find %1", dev_name),
+                subtitle: tr!("CommandPalette", "Make phone ring at full volume"),
                 category: "Actions".into(),
                 icon: "ring".into(),
                 badge: badge.clone(),
@@ -731,8 +759,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
             });
             out.push(PaletteCandidate {
                 id: format!("action:open_last_photo:{dev_id}"),
-                title: format!("Open last photo from {dev_name}"),
-                subtitle: "Open newest photo or screenshot".into(),
+                title: tr!("CommandPalette", "Open last photo from %1", dev_name),
+                subtitle: tr!("CommandPalette", "Open newest photo or screenshot"),
                 category: "Actions".into(),
                 icon: "photo".into(),
                 badge,
@@ -757,8 +785,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
     });
     out.push(PaletteCandidate {
         id: "action:sync_now".into(),
-        title: "Sync now".into(),
-        subtitle: "Reconnect paired phones and refresh notifications and media".into(),
+        title: tr!("CommandPalette", "Sync now"),
+        subtitle: tr!("CommandPalette", "Reconnect paired phones and refresh notifications and media"),
         category: "Actions".into(),
         icon: "refresh".into(),
         badge: String::new(),
@@ -768,8 +796,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
     });
     out.push(PaletteCandidate {
         id: "action:doctor".into(),
-        title: "Connection Doctor".into(),
-        subtitle: "Diagnose and fix firewall, discovery, or network issues".into(),
+        title: tr!("CommandPalette", "Connection Doctor"),
+        subtitle: tr!("CommandPalette", "Diagnose and fix firewall, discovery, or network issues"),
         category: "Actions".into(),
         icon: "bolt".into(),
         badge: String::new(),
@@ -779,8 +807,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
     });
     out.push(PaletteCandidate {
         id: "action:pair".into(),
-        title: "Pair a new phone".into(),
-        subtitle: "Show QR code and pairing code to link another phone".into(),
+        title: tr!("CommandPalette", "Pair a new phone"),
+        subtitle: tr!("CommandPalette", "Show QR code and pairing code to link another phone"),
         category: "Actions".into(),
         icon: "plus".into(),
         badge: String::new(),
@@ -790,8 +818,11 @@ fn build_candidates() -> Vec<PaletteCandidate> {
     });
     out.push(PaletteCandidate {
         id: "action:features_guide".into(),
-        title: "Features guide".into(),
-        subtitle: "Browse all 28 features, live capability status, and where to find them".into(),
+        title: tr!("CommandPalette", "Features guide"),
+        subtitle: tr!(
+            "CommandPalette",
+            "Browse all 28 features, live capability status, and where to find them"
+        ),
         category: "Actions".into(),
         icon: "book".into(),
         badge: "Guide".into(),
@@ -801,8 +832,8 @@ fn build_candidates() -> Vec<PaletteCandidate> {
     });
     out.push(PaletteCandidate {
         id: "action:setup_walkthrough".into(),
-        title: "Setup walkthrough".into(),
-        subtitle: "Re-open the step-by-step setup walkthrough".into(),
+        title: tr!("CommandPalette", "Setup walkthrough"),
+        subtitle: tr!("CommandPalette", "Re-open the step-by-step setup walkthrough"),
         category: "Actions".into(),
         icon: "compass".into(),
         badge: "Setup".into(),
@@ -822,9 +853,9 @@ fn build_candidates() -> Vec<PaletteCandidate> {
 
         out.push(PaletteCandidate {
             id: format!("toggle:{dev_id}:dnd"),
-            title: "Toggle Do Not Disturb".into(),
-            subtitle: format!("Switch Do Not Disturb on {dev_name}"),
-            category: "Quick Toggles".into(),
+            title: tr!("CommandPalette", "Toggle Do Not Disturb"),
+            subtitle: tr!("CommandPalette", "Switch Do Not Disturb on %1", dev_name),
+            category: tr!("CommandPalette", "Quick Toggles"),
             icon: "moon".into(),
             badge: dnd_badge.into(),
             shortcut: String::new(),
@@ -833,9 +864,9 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         });
         out.push(PaletteCandidate {
             id: format!("toggle:{dev_id}:flashlight"),
-            title: "Toggle Flashlight".into(),
-            subtitle: format!("Switch torch / flashlight on {dev_name}"),
-            category: "Quick Toggles".into(),
+            title: tr!("CommandPalette", "Toggle Flashlight"),
+            subtitle: tr!("CommandPalette", "Switch torch / flashlight on %1", dev_name),
+            category: tr!("CommandPalette", "Quick Toggles"),
             icon: "flashlight".into(),
             badge: flash_badge.into(),
             shortcut: String::new(),
@@ -844,9 +875,9 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         });
         out.push(PaletteCandidate {
             id: format!("toggle:{dev_id}:ringer:normal"),
-            title: "Ringer: Sound".into(),
-            subtitle: format!("Set {dev_name}'s ringer mode to normal sound"),
-            category: "Quick Toggles".into(),
+            title: tr!("CommandPalette", "Ringer: Sound"),
+            subtitle: tr!("CommandPalette", "Set %1's ringer mode to normal sound", dev_name),
+            category: tr!("CommandPalette", "Quick Toggles"),
             icon: "speaker".into(),
             badge: dev_name.clone(),
             shortcut: String::new(),
@@ -855,9 +886,9 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         });
         out.push(PaletteCandidate {
             id: format!("toggle:{dev_id}:ringer:vibrate"),
-            title: "Ringer: Vibrate".into(),
-            subtitle: format!("Set {dev_name}'s ringer mode to vibrate"),
-            category: "Quick Toggles".into(),
+            title: tr!("CommandPalette", "Ringer: Vibrate"),
+            subtitle: tr!("CommandPalette", "Set %1's ringer mode to vibrate", dev_name),
+            category: tr!("CommandPalette", "Quick Toggles"),
             icon: "ring".into(),
             badge: dev_name.clone(),
             shortcut: String::new(),
@@ -866,9 +897,9 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         });
         out.push(PaletteCandidate {
             id: format!("toggle:{dev_id}:ringer:silent"),
-            title: "Ringer: Silent".into(),
-            subtitle: format!("Mute {dev_name}'s ringer"),
-            category: "Quick Toggles".into(),
+            title: tr!("CommandPalette", "Ringer: Silent"),
+            subtitle: tr!("CommandPalette", "Mute %1's ringer", dev_name),
+            category: tr!("CommandPalette", "Quick Toggles"),
             icon: "soundOff".into(),
             badge: dev_name.clone(),
             shortcut: String::new(),
@@ -877,9 +908,9 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         });
         out.push(PaletteCandidate {
             id: format!("toggle:{dev_id}:wifi"),
-            title: "Toggle Wi-Fi".into(),
-            subtitle: format!("Switch Wi-Fi on {dev_name}"),
-            category: "Quick Toggles".into(),
+            title: tr!("CommandPalette", "Toggle Wi-Fi"),
+            subtitle: tr!("CommandPalette", "Switch Wi-Fi on %1", dev_name),
+            category: tr!("CommandPalette", "Quick Toggles"),
             icon: "wifi".into(),
             badge: wifi_badge.into(),
             shortcut: String::new(),
@@ -888,9 +919,9 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         });
         out.push(PaletteCandidate {
             id: format!("toggle:{dev_id}:bluetooth"),
-            title: "Toggle Bluetooth".into(),
-            subtitle: format!("Switch Bluetooth on {dev_name}"),
-            category: "Quick Toggles".into(),
+            title: tr!("CommandPalette", "Toggle Bluetooth"),
+            subtitle: tr!("CommandPalette", "Switch Bluetooth on %1", dev_name),
+            category: tr!("CommandPalette", "Quick Toggles"),
             icon: "bluetooth".into(),
             badge: bt_badge.into(),
             shortcut: String::new(),
@@ -912,13 +943,13 @@ fn build_candidates() -> Vec<PaletteCandidate> {
                 continue;
             }
             let sub_text = if sub.trim().is_empty() || sub.trim() == clean {
-                format!("Open conversation on {dev_name}")
+                tr!("CommandPalette", "Open conversation on %1", dev_name)
             } else {
                 format!("{sub} · {dev_name}")
             };
             out.push(PaletteCandidate {
                 id: format!("text_thread:{dev_id}:{thread_id}"),
-                title: format!("Text {clean}"),
+                title: tr!("CommandPalette", "Text %1", clean),
                 subtitle: sub_text,
                 category: "Messages".into(),
                 icon: "messages".into(),
@@ -940,7 +971,7 @@ fn build_candidates() -> Vec<PaletteCandidate> {
             if seen_text.insert(text_key) {
                 out.push(PaletteCandidate {
                     id: format!("text_contact:{dev_id}:{clean_num}\t{clean_name}"),
-                    title: format!("Text {clean_name}"),
+                    title: tr!("CommandPalette", "Text %1", clean_name),
                     subtitle: format!("{clean_num} · {dev_name}"),
                     category: "Messages".into(),
                     icon: "messages".into(),
@@ -953,13 +984,13 @@ fn build_candidates() -> Vec<PaletteCandidate> {
             let call_key = format!("{}|{}", clean_name.to_ascii_lowercase(), clean_num);
             if seen_call.insert(call_key) {
                 let subtitle = if clean_name == clean_num {
-                    format!("Place call on {dev_name}")
+                    tr!("CommandPalette", "Place call on %1", dev_name)
                 } else {
                     format!("{clean_num} · {dev_name}")
                 };
                 out.push(PaletteCandidate {
                     id: format!("call_contact:{dev_id}:{clean_num}"),
-                    title: format!("Call {clean_name}"),
+                    title: tr!("CommandPalette", "Call %1", clean_name),
                     subtitle,
                     category: "Calls".into(),
                     icon: "call".into(),
@@ -975,9 +1006,9 @@ fn build_candidates() -> Vec<PaletteCandidate> {
             let boost = if idx < 5 { 57 } else { 48 };
             out.push(PaletteCandidate {
                 id: format!("mirror_app:{dev_id}:{pkg}\t{label}"),
-                title: format!("Mirror {label}"),
-                subtitle: format!("Open {label} in a window from {dev_name}"),
-                category: "Mirror Apps".into(),
+                title: tr!("CommandPalette", "Mirror %1", label),
+                subtitle: tr!("CommandPalette", "Open %1 in a window from %2", label, dev_name),
+                category: tr!("CommandPalette", "Mirror Apps"),
                 icon: "mirror".into(),
                 badge: dev_name.clone(),
                 shortcut: String::new(),
@@ -1026,7 +1057,7 @@ fn build_candidates() -> Vec<PaletteCandidate> {
         for (idx, _, dev_name, online) in &devices {
             out.push(PaletteCandidate {
                 id: format!("nav_device:{idx}"),
-                title: format!("Switch to {dev_name}"),
+                title: tr!("CommandPalette", "Switch to %1", dev_name),
                 subtitle: if *online { "Connected".into() } else { "Offline".into() },
                 category: "Navigation".into(),
                 icon: "phone".into(),
@@ -1054,15 +1085,15 @@ fn build_candidates() -> Vec<PaletteCandidate> {
                     let head: String = chars.by_ref().take(60).collect();
                     if chars.next().is_some() { format!("{head}…") } else { head }
                 }
-                ClipboardItemKind::Image => "Copied image".into(),
+                ClipboardItemKind::Image => tr!("CommandPalette", "Copied image"),
             };
             if preview.is_empty() {
                 continue;
             }
             out.push(PaletteCandidate {
                 id: format!("clip_copy:{}", entry.id),
-                title: format!("Copy: {preview}"),
-                subtitle: format!("From {}", entry.device_name),
+                title: tr!("CommandPalette", "Copy: %1", preview),
+                subtitle: tr!("CommandPalette", "From %1", entry.device_name),
                 category: "Clipboard".into(),
                 icon: "copy".into(),
                 badge: if entry.pinned { "Pinned".into() } else { String::new() },
@@ -1096,13 +1127,13 @@ fn build_candidates() -> Vec<PaletteCandidate> {
             }
             out.push(PaletteCandidate {
                 id: format!("timeline_open:{target}"),
-                title: format!("Open {}", item.title),
+                title: tr!("CommandPalette", "Open %1", item.title),
                 subtitle: if item.detail.trim().is_empty() {
                     item.device_name.clone()
                 } else {
                     format!("{} · {}", item.detail, item.device_name)
                 },
-                category: "Recent Activity".into(),
+                category: tr!("CommandPalette", "Recent Activity"),
                 icon: icon.into(),
                 badge: item.kind.as_str().into(),
                 shortcut: String::new(),
@@ -1160,8 +1191,8 @@ fn synthesize_direct_command(candidates: &[PaletteCandidate], query: &str) -> Op
             if !target.is_empty() {
                 return Some(PaletteCandidate {
                     id: format!("text_contact:{dev_id}:{target}\t{target}"),
-                    title: format!("Text {target}"),
-                    subtitle: "Start a new message conversation".into(),
+                    title: tr!("CommandPalette", "Text %1", target),
+                    subtitle: tr!("CommandPalette", "Start a new message conversation"),
                     category: "Messages".into(),
                     icon: "messages".into(),
                     badge: "New".into(),
@@ -1179,8 +1210,8 @@ fn synthesize_direct_command(candidates: &[PaletteCandidate], query: &str) -> Op
             if !target.is_empty() {
                 return Some(PaletteCandidate {
                     id: format!("call_contact:{dev_id}:{target}"),
-                    title: format!("Call {target}"),
-                    subtitle: "Place a phone call or open in dialer".into(),
+                    title: tr!("CommandPalette", "Call %1", target),
+                    subtitle: tr!("CommandPalette", "Place a phone call or open in dialer"),
                     category: "Calls".into(),
                     icon: "call".into(),
                     badge: "Dial".into(),

@@ -2,6 +2,7 @@
 //! `NotificationList`: phone notifications (newest first) as a Qt list
 //! model, plus the commands QML runs on them.
 
+use crate::i18n::tr;
 use std::pin::Pin;
 
 use cxx_qt::{CxxQtType, Threading};
@@ -488,9 +489,9 @@ impl qobject::NotificationList {
             });
             if let Some(view) = found {
                 let label = if view.notification.app_name.is_empty() {
-                    "Notification dismissed".to_owned()
+                    tr!("Notifications", "Notification dismissed")
                 } else {
-                    format!("Dismissed from {}", view.notification.app_name)
+                    tr!("Notifications", "Dismissed from %1", view.notification.app_name)
                 };
                 core_host::host().hub.update(|s| s.record_dismissed(vec![view], label));
             }
@@ -515,9 +516,9 @@ impl qobject::NotificationList {
         let app_name = views[0].notification.app_name.clone();
         let count = views.len();
         let label = if count == 1 {
-            format!("Dismissed from {app_name}")
+            tr!("Notifications", "Dismissed from %1", app_name)
         } else {
-            format!("Dismissed {count} from {app_name}")
+            tr!("Notifications", "Dismissed %1 from %2", count, app_name)
         };
         let keys: Vec<String> = views.iter().map(|v| v.notification.key.clone()).collect();
         core_host::host().hub.update(|s| s.record_dismissed(views, label));
@@ -541,9 +542,9 @@ impl qobject::NotificationList {
         }
         let count = views.len();
         let label = if count == 1 {
-            "Notification dismissed".to_owned()
+            tr!("Notifications", "Notification dismissed")
         } else {
-            format!("Dismissed {count} notifications")
+            tr!("Notifications", "Dismissed %1 notifications", count)
         };
         let keys: Vec<String> = views.iter().map(|v| v.notification.key.clone()).collect();
         core_host::host().hub.update(|s| s.record_dismissed(views, label));

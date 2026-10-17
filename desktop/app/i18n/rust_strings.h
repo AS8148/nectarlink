@@ -5,18 +5,49 @@
 
 static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("App", "Already on clipboard."), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Command palette"), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "Copied to clipboard."), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "Could not copy to the clipboard."), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Downloading the update · %1 of %2"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Downloading the update…"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Find my phone"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "My phone's colors"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "My phone's colors (%1)"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "NectarLink · %1"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "NectarLink · %1 devices connected"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "NectarLink · 1 device connected"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "NectarLink · no devices paired"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "NectarLink · not connected"), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "No phone is paired yet."), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Open NectarLink"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Open copied link on phone"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Quit NectarLink"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Scan document with phone"), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "Send cancelled"), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "Sending to %1…"), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "Sent text to %1."), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "Some history couldn't be cleared. Try again."), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "Some messages couldn't be cleared. Try again."), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Take photo with phone"), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "That file is no longer in its saved location."), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "The photo couldn't be copied to the clipboard."), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("App", "The received file history couldn't be cleared. Try again."), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Toggle Shelf"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Wi-Fi %1/4"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("App", "Your phone"), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("Automations", "Triggered by %1"), // desktop/app/src/automations.rs
+    QT_TRANSLATE_NOOP("Battery", "%1 is fully charged"), // desktop/app/src/battery.rs
+    QT_TRANSLATE_NOOP("Battery", "You can unplug it."), // desktop/app/src/battery.rs
+    QT_TRANSLATE_NOOP("Battery", "Your phone"), // desktop/app/src/battery.rs
+    QT_TRANSLATE_NOOP("BtHfp", "Bluetooth connected (%1)."), // desktop/app/src/win/bt_hfp.rs
+    QT_TRANSLATE_NOOP("BtHfp", "Bluetooth paired with %1 (not currently connected)."), // desktop/app/src/win/bt_hfp.rs
+    QT_TRANSLATE_NOOP("BtHfp", "No paired Bluetooth phone endpoint found in Windows."), // desktop/app/src/win/bt_hfp.rs
+    QT_TRANSLATE_NOOP("Calls", "Calling %1"), // desktop/app/src/calls.rs
+    QT_TRANSLATE_NOOP("Calls", "Missed call from %1"), // desktop/app/src/calls.rs
+    QT_TRANSLATE_NOOP("Calls", "On a call with %1"), // desktop/app/src/calls.rs
     QT_TRANSLATE_NOOP("Calls", "That call is over."), // desktop/app/src/calls.rs
+    QT_TRANSLATE_NOOP("Calls", "Unknown caller"), // desktop/app/src/bridge/calls.rs
+    QT_TRANSLATE_NOOP("Clipboard", "Copied from %1"), // desktop/app/src/clipboard.rs
     QT_TRANSLATE_NOOP("Clipboard", "Copied from %1."), // desktop/app/src/clipboard.rs
     QT_TRANSLATE_NOOP("Clipboard", "Copied to clipboard"), // desktop/app/src/clipboard.rs
     QT_TRANSLATE_NOOP("Clipboard", "Sending copied files to %1…"), // desktop/app/src/clipboard.rs
@@ -29,18 +60,168 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Clipboard", "There's no text, image, or file on the clipboard."), // desktop/app/src/clipboard.rs
     QT_TRANSLATE_NOOP("Clipboard", "Update NectarLink on %1 to send it images."), // desktop/app/src/clipboard.rs
     QT_TRANSLATE_NOOP("Clipboard", "What you copied is marked private by its app, so it wasn't sent."), // desktop/app/src/clipboard.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Browse all 28 features, live capability status, and where to find them"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Browse phone storage in File Explorer"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Call %1"), // desktop/app/src/command_palette.rs
     QT_TRANSLATE_NOOP("CommandPalette", "Calling %1 on %2…"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Capture a photo on your phone and paste it into the active window"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Check Wake-on-LAN status in Settings"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Connection Doctor"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Continue copied video on phone"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Copied image"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Copy: %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Diagnose and fix firewall, discovery, or network issues"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Features guide"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Find %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Find my phone"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "From %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Hand off document to phone"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Handoff · Doc"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Handoff · Map"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Handoff · Video"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Hide Shelf"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Make %1 ring at full volume"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Make phone ring at full volume"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Mirror %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Mirror Apps"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Mirror phone screen"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Mute %1's ringer"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "No physical network adapter found for Wake-on-LAN."), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open %1 in a window from %2"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open %1's Cloud Files folder in Explorer"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open Shelf"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open conversation on %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open copied link on phone"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open copied location in Maps on phone"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open last photo"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open last photo from %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open newest photo or screenshot"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open the newest photo or screenshot from %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Open voice recordings folder for %1"), // desktop/app/src/command_palette.rs
     QT_TRANSLATE_NOOP("CommandPalette", "Opened Recordings folder. Start a voice note in NectarLink on %1 to send it here."), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Pair a new phone"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Place a phone call or open in dialer"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Place call on %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Quick Toggles"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Re-open the step-by-step setup walkthrough"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Ready on %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Recent Activity"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Reconnect paired phones and refresh notifications and media"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Record voice"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Ringer: Silent"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Ringer: Sound"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Ringer: Vibrate"), // desktop/app/src/command_palette.rs
     QT_TRANSLATE_NOOP("CommandPalette", "Ringing %1…"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Scan a document on your phone and paste it into the active window"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Scan document with phone"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Send a document to %1 and open it automatically upon arrival"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Send clipboard"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Send clipboard to %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Send copied text or image"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Send copied text or image to %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Send live keystrokes and text to %1 without screen mirroring"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Set %1's ringer mode to normal sound"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Set %1's ringer mode to vibrate"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Setup walkthrough"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Show QR code and pairing code to link another phone"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Slide-out edge panel with latest photo, screenshot, clipboard, and recent files"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Start a new message conversation"), // desktop/app/src/command_palette.rs
     QT_TRANSLATE_NOOP("CommandPalette", "Starting phone webcam…"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Stop phone webcam"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Stop typing on phone"), // desktop/app/src/command_palette.rs
     QT_TRANSLATE_NOOP("CommandPalette", "Stopped phone webcam."), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Stream %1's camera into the NectarLink virtual webcam"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Stream %1's screen in a desktop window"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Switch Bluetooth on %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Switch Do Not Disturb on %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Switch Wi-Fi on %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Switch to %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Switch torch / flashlight on %1"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Sync now"), // desktop/app/src/command_palette.rs
     QT_TRANSLATE_NOOP("CommandPalette", "Syncing devices…"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Take photo with phone"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Text %1"), // desktop/app/src/command_palette.rs
     QT_TRANSLATE_NOOP("CommandPalette", "That file is no longer in its saved location."), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Toggle Bluetooth"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Toggle Do Not Disturb"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Toggle Flashlight"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Toggle Wi-Fi"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Type on phone with PC keyboard"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Use phone as webcam"), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Wake-on-LAN is ready on %1 (phones can wake this PC)."), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("CommandPalette", "Wake-on-LAN on %1 is %2. Check Settings."), // desktop/app/src/command_palette.rs
+    QT_TRANSLATE_NOOP("ContinuityCamera", "Allow Photos access for %1 in Settings first."), // desktop/app/src/continuity_camera.rs
+    QT_TRANSLATE_NOOP("ContinuityCamera", "Camera capture cancelled on %1."), // desktop/app/src/continuity_camera.rs
+    QT_TRANSLATE_NOOP("ContinuityCamera", "Camera is busy on %1."), // desktop/app/src/continuity_camera.rs
+    QT_TRANSLATE_NOOP("ContinuityCamera", "Camera permission was denied on %1."), // desktop/app/src/continuity_camera.rs
     QT_TRANSLATE_NOOP("ContinuityCamera", "Couldn’t copy image to clipboard: %1"), // desktop/app/src/continuity_camera.rs
+    QT_TRANSLATE_NOOP("ContinuityCamera", "Couldn’t open camera on %1: %2"), // desktop/app/src/continuity_camera.rs
     QT_TRANSLATE_NOOP("ContinuityCamera", "Image is on your clipboard. Press Ctrl+V in your target app."), // desktop/app/src/continuity_camera.rs
+    QT_TRANSLATE_NOOP("ContinuityCamera", "Opening camera on %1…"), // desktop/app/src/continuity_camera.rs
+    QT_TRANSLATE_NOOP("ContinuityCamera", "Opening document scanner on %1…"), // desktop/app/src/continuity_camera.rs
     QT_TRANSLATE_NOOP("ContinuityCamera", "Pair your phone first to take a photo or scan a document."), // desktop/app/src/continuity_camera.rs
     QT_TRANSLATE_NOOP("ContinuityCamera", "Pasted into %1"), // desktop/app/src/continuity_camera.rs
+    QT_TRANSLATE_NOOP("ContinuityCamera", "Scan a document on %1…"), // desktop/app/src/continuity_camera.rs
+    QT_TRANSLATE_NOOP("ContinuityCamera", "Take a photo on %1…"), // desktop/app/src/continuity_camera.rs
     QT_TRANSLATE_NOOP("CoreHost", "Dropped %1 queued item(s) for %2 (device unpaired)."), // desktop/app/src/core_host.rs
+    QT_TRANSLATE_NOOP("Deck", "Alt + Tab"), // desktop/app/src/bridge/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Application path must end with .exe or .lnk."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Choose a key for the shortcut."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Choose an application (.exe or .lnk) on this PC."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Enter a command to run on this PC."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Enter an http:// or https:// web address."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Enter the text snippet to type."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Invalid action configuration."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Invalid tile properties."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Media key"), // desktop/app/src/bridge/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Page not found."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "This page already has the maximum number of tiles (24)."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Tile not found."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Use a single key (a-z, 0-9, f1-f12, enter, tab, space, escape, arrows, etc.)."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Deck", "Web address must start with http:// or https://."), // desktop/app/src/deck.rs
+    QT_TRANSLATE_NOOP("Doctor", "%1 Open NectarLink on the phone and keep both on the same network. If the phone asks to run in the background, allow it."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "%1 days ago"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "%1 hours ago"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "%1 is connected"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "%1 is on this Wi-Fi, but the router blocks direct connections (AP isolation)"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "%1 is set as a public network"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "%1 isn't connected"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "%1 minutes ago"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "%1 · %2 ms"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "A VPN is on"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Connect it to the same Wi-Fi or wired network as your phone."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Connected to %1"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Connected to a network"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Connecting to %1…"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "It hasn't connected yet."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Keep %1 reachable in the background (%2)"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Last seen %1."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "NectarLink isn't allowed through Windows Firewall"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On Huawei / Honor: open Settings → Battery → App launch, turn off Manage automatically for NectarLink, and keep Auto-launch, Secondary launch, and Run in background on."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On OnePlus / OxygenOS: open Settings → Apps → App management → NectarLink → Battery usage and turn on Allow background activity and Allow auto-launch."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On Oppo / Realme: open Settings → Apps → App management → NectarLink → Battery usage and turn on Allow background activity and Allow auto-launch."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On Pixel: open Settings → Apps → See all apps → NectarLink → App battery usage, tap Allow background usage, and choose Unrestricted."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On Samsung: open Settings → Apps → NectarLink → Battery and choose Unrestricted, then in Device care → Battery → Background usage limits make sure NectarLink is never put to sleep."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On USB"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On Vivo / OriginOS / Funtouch: open Settings → Battery → Background power consumption management → NectarLink and choose Unrestricted, and allow Autostart."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On Xiaomi / HyperOS / MIUI: open Settings → Apps → Manage apps → NectarLink, turn on Autostart, and set Battery saver to No restrictions."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On public networks Windows keeps other devices from finding this PC. If it's your home or work network, set it to Private."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On this network"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Someone chose not to allow it when Windows asked. Allow it, and your phone can connect."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "This PC can see %1 announce itself on the network, but the router is blocking devices from talking directly to each other (often called AP Isolation, Client Isolation, or Guest Wi-Fi). Move both devices off any Guest Wi-Fi network, turn off AP / Client Isolation in your router's Wi-Fi settings, or connect with a USB cable."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "This PC isn't on a network"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "This network"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "This usually takes a few seconds."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "VPNs often keep devices on your network from reaching this PC. If your phone can't connect, try turning it off."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "While away"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Windows Firewall blocks NectarLink"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Windows Firewall is off for this network"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Windows Firewall lets your phone connect"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Your phone may not be able to connect. Allow it once here."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "a minute ago"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "an hour ago"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "just now"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Errors", "Something went wrong: %1"), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("Errors", "That device isn't paired anymore."), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("Errors", "The device declined."), // desktop/app/src/bridge/app.rs
@@ -64,23 +245,47 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Media", "Media is turned off for that device."), // desktop/app/src/media.rs
     QT_TRANSLATE_NOOP("Media", "That player can't do that."), // desktop/app/src/media.rs
     QT_TRANSLATE_NOOP("Media", "That player isn't playing anymore."), // desktop/app/src/media.rs
+    QT_TRANSLATE_NOOP("Messages", "Attachment is %1 (MMS supports up to 900 KB)"), // desktop/app/src/messages.rs
     QT_TRANSLATE_NOOP("Messages", "Group texts can't be sent from the PC yet."), // desktop/app/src/messages.rs
+    QT_TRANSLATE_NOOP("Messages", "Only image or voice-note audio files can be attached."), // desktop/app/src/messages.rs
     QT_TRANSLATE_NOOP("Mirror", "Couldn't start recording."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Mirror recording"), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Mirror screenshot"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Mirroring is turned off for this phone."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Recording from %1, saved in Downloads\\Nectarlink"), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Saved %1"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Saved %1 to Downloads\\Nectarlink."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Screenshot copied to clipboard."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Screenshot from %1, saved in Downloads\\Nectarlink"), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Sending %1 files…"), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Sending %1…"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Set up Wireless debugging in NectarLink on the phone to open its apps here."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Show in folder"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "The app didn't open on the phone. Try again, or open NectarLink on the phone to check Wireless debugging."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "The phone isn't connected."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "The screenshot couldn't be copied to the clipboard."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "The screenshot couldn't be saved."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "This PC can't decode the phone's video."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "This phone's app doesn't share its screen yet. Update NectarLink on the phone."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Wait for the screen to appear first."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mp4", "No video frames were recorded yet."), // desktop/app/src/win/mp4.rs
     QT_TRANSLATE_NOOP("Notifications", "Code copied"), // desktop/app/src/notifications.rs
+    QT_TRANSLATE_NOOP("Notifications", "Copy code"), // desktop/app/src/notifications.rs
+    QT_TRANSLATE_NOOP("Notifications", "Dismissed %1 from %2"), // desktop/app/src/bridge/notifications.rs
+    QT_TRANSLATE_NOOP("Notifications", "Dismissed %1 notifications"), // desktop/app/src/bridge/notifications.rs
+    QT_TRANSLATE_NOOP("Notifications", "Dismissed from %1"), // desktop/app/src/bridge/notifications.rs
+    QT_TRANSLATE_NOOP("Notifications", "Notification dismissed"), // desktop/app/src/bridge/notifications.rs
+    QT_TRANSLATE_NOOP("Notifications", "That notification is gone from the phone."), // desktop/app/src/notifications.rs
+    QT_TRANSLATE_NOOP("Obs", "OBS isn't reachable on port %1. Turn on its WebSocket server."), // desktop/app/src/obs.rs
+    QT_TRANSLATE_NOOP("Obs", "OBS: %1"), // desktop/app/src/obs.rs
+    QT_TRANSLATE_NOOP("Obs", "The service on that port isn't OBS."), // desktop/app/src/obs.rs
     QT_TRANSLATE_NOOP("PhoneMic", "Tap Start on %1 to use its microphone."), // desktop/app/src/phone_mic.rs
     QT_TRANSLATE_NOOP("PhoneMic", "The microphone is turned off for this PC on %1."), // desktop/app/src/phone_mic.rs
     QT_TRANSLATE_NOOP("PhoneMic", "Update NectarLink on %1 to use its microphone."), // desktop/app/src/phone_mic.rs
     QT_TRANSLATE_NOOP("Photos", "Copied to clipboard."), // desktop/app/src/photos.rs
+    QT_TRANSLATE_NOOP("Photos", "From %1"), // desktop/app/src/photos.rs
+    QT_TRANSLATE_NOOP("Photos", "New photo"), // desktop/app/src/photos.rs
+    QT_TRANSLATE_NOOP("Photos", "New screenshot"), // desktop/app/src/photos.rs
     QT_TRANSLATE_NOOP("Photos", "No recent photos found on the phone."), // desktop/app/src/photos.rs
     QT_TRANSLATE_NOOP("Photos", "Opening latest photo…"), // desktop/app/src/photos.rs
     QT_TRANSLATE_NOOP("Photos", "Saved %1 items to %2."), // desktop/app/src/photos.rs
@@ -96,8 +301,28 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("PlayOnPhone", "Sent to %1. Tap the notification there."), // desktop/app/src/play_on_phone.rs
     QT_TRANSLATE_NOOP("PlayOnPhone", "Tap the notification on %1 to watch."), // desktop/app/src/play_on_phone.rs
     QT_TRANSLATE_NOOP("PlayOnPhone", "Update NectarLink on %1 to play on it."), // desktop/app/src/play_on_phone.rs
+    QT_TRANSLATE_NOOP("Prefs", "Connected to OBS."), // desktop/app/src/bridge/prefs.rs
+    QT_TRANSLATE_NOOP("Recordings", "Recording from %1 saved"), // desktop/app/src/recordings.rs
+    QT_TRANSLATE_NOOP("SendTo", "Copied to your phone's clipboard."), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("SendTo", "Couldn't reach %1."), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("SendTo", "Couldn't send %1"), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("SendTo", "Couldn't send to %1"), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("SendTo", "Couldn't share with %1"), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("SendTo", "File failed integrity check; partial file kept to resume."), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("SendTo", "Send to %1 with NectarLink"), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("SendTo", "Sending to %1…"), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("SendTo", "Sent to %1"), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("SendTo", "The transfer didn't go through."), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("SendTo", "Waiting for %1…"), // desktop/app/src/send_to.rs
+    QT_TRANSLATE_NOOP("Setup", "Couldn't start setup: %1"), // desktop/app/src/setup.rs
+    QT_TRANSLATE_NOOP("Setup", "Setup is taking too long. Try again after restarting the PC."), // desktop/app/src/setup.rs
+    QT_TRANSLATE_NOOP("Setup", "Setup stopped with code %1."), // desktop/app/src/setup.rs
+    QT_TRANSLATE_NOOP("Setup", "The uninstaller is missing. Reinstall NectarLink, then uninstall it."), // desktop/app/src/setup.rs
+    QT_TRANSLATE_NOOP("Timeline", "Clip (removed from clipboard history)"), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "Copied image"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Copied link to clipboard."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Copied to clipboard."), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "In progress"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "No phone is paired yet."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Phone microphone"), // desktop/app/src/i18n.rs
     QT_TRANSLATE_NOOP("Timeline", "Phone webcam"), // desktop/app/src/i18n.rs
@@ -111,7 +336,30 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Timeline", "That photo was moved or deleted."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "The Timeline couldn't be cleared. Try again."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "The photo couldn't be copied to the clipboard."), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "Voice recording"), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Transfers", "Accept in NectarLink to save to Downloads\\Nectarlink"), // desktop/app/src/transfers.rs
     QT_TRANSLATE_NOOP("Transfers", "Files are turned off for that device."), // desktop/app/src/transfers.rs
+    QT_TRANSLATE_NOOP("Transfers", "From %1, opened from Downloads\\Nectarlink"), // desktop/app/src/transfers.rs
+    QT_TRANSLATE_NOOP("Transfers", "From %1, saved in Downloads\\Nectarlink"), // desktop/app/src/transfers.rs
+    QT_TRANSLATE_NOOP("Transfers", "Nearby device"), // desktop/app/src/transfers.rs
     QT_TRANSLATE_NOOP("Transfers", "That's too many files to send at once."), // desktop/app/src/transfers.rs
     QT_TRANSLATE_NOOP("Transfers", "There's nothing to send in there."), // desktop/app/src/transfers.rs
+    QT_TRANSLATE_NOOP("Updater", "Couldn't check for updates. Check your internet connection."), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "NectarLink %1 is available"), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "NectarLink %1 is available."), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "NectarLink is still on the version you had. Try again from Settings."), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "NectarLink is up to date."), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "NectarLink is updated to %1"), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "The download was damaged, so it wasn't installed. Try again."), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "The update couldn't be downloaded. Check your internet connection and try again."), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "The update couldn't be saved. Check that there's free space and try again."), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "The update couldn't be started. Try again."), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "The update didn't install"), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "Update now, or later from Settings."), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "Your phone reconnects on its own."), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Webcam", "Starting camera on %1…"), // desktop/app/src/bridge/webcam.rs
+    QT_TRANSLATE_NOOP("Webcam", "Streaming %1 × %2 · %3 fps from %4"), // desktop/app/src/bridge/webcam.rs
+    QT_TRANSLATE_NOOP("Widget", "No phone connected"), // desktop/app/src/win/widget.rs
+    QT_TRANSLATE_NOOP("Widget", "No recent clipboard items"), // desktop/app/src/win/widget.rs
+    QT_TRANSLATE_NOOP("Widget", "Not available"), // desktop/app/src/win/widget.rs
 };

@@ -24,6 +24,7 @@
 //! new version once the installer is done, or the old one again if the
 //! update didn't go through.
 
+use crate::i18n::tr;
 use std::{
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
@@ -155,12 +156,12 @@ pub fn check_now(told: bool) -> Option<String> {
             if new {
                 announce(&update);
             }
-            Some(format!("NectarLink {} is available.", update.version))
+            Some(tr!("Updater", "NectarLink %1 is available.", update.version))
         }
-        Ok(None) => told.then(|| "NectarLink is up to date.".to_owned()),
+        Ok(None) => told.then(|| tr!("Updater", "NectarLink is up to date.")),
         Err(e) => {
             tracing::info!(error = %e, "couldn't check for updates");
-            told.then(|| "Couldn't check for updates. Check your internet connection.".to_owned())
+            told.then(|| tr!("Updater", "Couldn't check for updates. Check your internet connection."))
         }
     }
 }
@@ -169,8 +170,8 @@ fn announce(update: &Update) {
     toast::show(toast::Toast {
         device: TOAST_GROUP.into(),
         key: update.version.clone(),
-        title: format!("NectarLink {} is available", update.version),
-        body: "Update now, or later from Settings.".into(),
+        title: tr!("Updater", "NectarLink %1 is available", update.version),
+        body: tr!("Updater", "Update now, or later from Settings."),
         attribution: "NectarLink".into(),
         icon: None,
         image: None,
@@ -347,11 +348,16 @@ impl StageError {
     fn for_user(&self) -> String {
         match self {
             StageError::Network(_) => {
-                "The update couldn't be downloaded. Check your internet connection and try again.".into()
+                tr!(
+                    "Updater",
+                    "The update couldn't be downloaded. Check your internet connection and try again."
+                )
             }
-            StageError::Damaged => "The download was damaged, so it wasn't installed. Try again.".into(),
+            StageError::Damaged => {
+                tr!("Updater", "The download was damaged, so it wasn't installed. Try again.")
+            }
             StageError::Disk(_) => {
-                "The update couldn't be saved. Check that there's free space and try again.".into()
+                tr!("Updater", "The update couldn't be saved. Check that there's free space and try again.")
             }
         }
     }
@@ -633,7 +639,7 @@ fn download_verified(update: &Update, dir: &Path) -> Result<PathBuf, String> {
 fn install_with_prompt(update: &Update, staged: &Path) -> Result<(), String> {
     let failed = |e: String| {
         tracing::warn!(error = e, "update failed");
-        "The update couldn't be started. Try again.".to_owned()
+        tr!("Updater", "The update couldn't be started. Try again.")
     };
     let expected = expected_hash(update).map_err(|e| e.for_user())?;
     let dir = std::env::temp_dir().join("Nectarlink update");
@@ -684,8 +690,8 @@ pub fn announce_update(previous: String, shown: bool) {
     tracing::info!(from = previous, to = current, "updated");
     after_start(
         shown,
-        format!("NectarLink is updated to {current}"),
-        "Your phone reconnects on its own.".into(),
+        tr!("Updater", "NectarLink is updated to %1", current),
+        tr!("Updater", "Your phone reconnects on its own."),
     );
 }
 
@@ -695,8 +701,8 @@ pub fn announce_update_failed(shown: bool) {
     tracing::warn!("the update didn't install");
     after_start(
         shown,
-        "The update didn't install".into(),
-        "NectarLink is still on the version you had. Try again from Settings.".into(),
+        tr!("Updater", "The update didn't install"),
+        tr!("Updater", "NectarLink is still on the version you had. Try again from Settings."),
     );
 }
 

@@ -454,7 +454,7 @@ pub fn screenshot_file(window: Window) {
             window.device,
             true,
             file_name.clone(),
-            "Mirror screenshot".into(),
+            tr!("Mirror", "Mirror screenshot"),
             path.to_string_lossy().into_owned(),
             png.len() as u64,
             0,
@@ -467,7 +467,7 @@ pub fn screenshot_file(window: Window) {
         device: TOAST_GROUP.into(),
         key: path.to_string_lossy().into_owned(),
         title: file_name.clone(),
-        body: format!("Screenshot from {device_name}, saved in Downloads\\Nectarlink"),
+        body: tr!("Mirror", "Screenshot from %1, saved in Downloads\\Nectarlink", device_name),
         attribution: "NectarLink".into(),
         icon: None,
         image: Some(path),
@@ -477,7 +477,7 @@ pub fn screenshot_file(window: Window) {
         progress: None,
         call: false,
     });
-    set_notice(window, format!("Saved {file_name}"));
+    set_notice(window, tr!("Mirror", "Saved %1", file_name));
     show_message(tr!("Mirror", "Saved %1 to Downloads\\Nectarlink.", file_name));
 }
 
@@ -594,7 +594,7 @@ pub fn stop_recording(window: Window) {
                         window.device,
                         true,
                         file_name.clone(),
-                        "Mirror recording".into(),
+                        tr!("Mirror", "Mirror recording"),
                         path.to_string_lossy().into_owned(),
                         size_bytes,
                         duration_secs,
@@ -609,20 +609,20 @@ pub fn stop_recording(window: Window) {
                     device: TOAST_GROUP.into(),
                     key: path.to_string_lossy().into_owned(),
                     title: file_name.clone(),
-                    body: format!("Recording from {device_name}, saved in Downloads\\Nectarlink"),
+                    body: tr!("Mirror", "Recording from %1, saved in Downloads\\Nectarlink", device_name),
                     attribution: "NectarLink".into(),
                     icon: None,
                     image: None,
                     actions: vec![
                         (ACTION_OPEN.into(), "Open".into()),
-                        (ACTION_SHOW.into(), "Show in folder".into()),
+                        (ACTION_SHOW.into(), tr!("Mirror", "Show in folder")),
                     ],
                     reply: None,
                     silent: false,
                     progress: None,
                     call: false,
                 });
-                set_notice(window, format!("Saved {file_name}"));
+                set_notice(window, tr!("Mirror", "Saved %1", file_name));
                 show_message(tr!("Mirror", "Saved %1 to Downloads\\Nectarlink.", file_name));
             }
             Ok(Err(msg)) => {
@@ -1320,9 +1320,9 @@ pub fn drop_files(raw_urls: &[String]) {
     };
     let notice = if paths.len() == 1 {
         let name = paths[0].file_name().and_then(|n| n.to_str()).unwrap_or("file");
-        format!("Sending {name}…")
+        tr!("Mirror", "Sending %1…", name)
     } else {
-        format!("Sending {} files…", paths.len())
+        tr!("Mirror", "Sending %1 files…", paths.len())
     };
     set_notice(window, notice);
     crate::transfers::send(window.device, paths);
@@ -1753,7 +1753,7 @@ fn decode(window: Window, items: &Receiver<Item>, waiting: &AtomicUsize) {
         Ok(decoder) => decoder,
         Err(e) => {
             tracing::error!(error = %e, "no H.264 decoder");
-            set_phase(window, Phase::Ended(Some("This PC can't decode the phone's video.".into())));
+            set_phase(window, Phase::Ended(Some(tr!("Mirror", "This PC can't decode the phone's video."))));
             return;
         }
     };

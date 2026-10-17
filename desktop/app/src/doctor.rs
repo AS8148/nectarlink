@@ -6,6 +6,7 @@
 //! Checks run on a worker thread (they ask Windows a few slow questions)
 //! and come back as a list for the UI.
 
+use crate::i18n::tr;
 use nectarlink_core::{ConnectionPath, LinkState};
 use serde::Serialize;
 
@@ -89,7 +90,7 @@ pub fn gather() -> Facts {
 fn network_name(name: &str) -> String {
     let name = name.trim();
     if name.is_empty() || name.ends_with("...") || name.ends_with('…') {
-        "This network".into()
+        tr!("Doctor", "This network")
     } else {
         name.to_owned()
     }
@@ -105,49 +106,70 @@ fn check(
     Check { id: id.into(), outcome, title: title.into(), detail: detail.into(), fix }
 }
 
-fn match_oem(raw: &str) -> Option<(&'static str, &'static str)> {
+fn match_oem(raw: &str) -> Option<(&'static str, String)> {
     let lower = raw.to_ascii_lowercase();
     if lower.contains("samsung") || lower.contains("galaxy") || lower.contains("sm-") {
         Some((
             "Samsung",
-            "On Samsung: open Settings → Apps → NectarLink → Battery and choose Unrestricted, then in \
-             Device care → Battery → Background usage limits make sure NectarLink is never put to sleep.",
+            tr!(
+                "Doctor",
+                "On Samsung: open Settings → Apps → NectarLink → Battery and choose Unrestricted, then in \
+             Device care → Battery → Background usage limits make sure NectarLink is never put to sleep."
+            ),
         ))
     } else if lower.contains("xiaomi") || lower.contains("redmi") || lower.contains("poco") {
         Some((
             "Xiaomi",
-            "On Xiaomi / HyperOS / MIUI: open Settings → Apps → Manage apps → NectarLink, turn on \
-             Autostart, and set Battery saver to No restrictions.",
+            tr!(
+                "Doctor",
+                "On Xiaomi / HyperOS / MIUI: open Settings → Apps → Manage apps → NectarLink, turn on \
+             Autostart, and set Battery saver to No restrictions."
+            ),
         ))
     } else if lower.contains("oneplus") {
         Some((
             "OnePlus",
-            "On OnePlus / OxygenOS: open Settings → Apps → App management → NectarLink → Battery usage and \
-             turn on Allow background activity and Allow auto-launch.",
+            tr!(
+                "Doctor",
+                "On OnePlus / OxygenOS: open Settings → Apps → App management → NectarLink → Battery usage and \
+             turn on Allow background activity and Allow auto-launch."
+            ),
         ))
     } else if lower.contains("oppo") || lower.contains("realme") || lower.contains("rmx") {
         Some((
             "Oppo / Realme",
-            "On Oppo / Realme: open Settings → Apps → App management → NectarLink → Battery usage and turn \
-             on Allow background activity and Allow auto-launch.",
+            tr!(
+                "Doctor",
+                "On Oppo / Realme: open Settings → Apps → App management → NectarLink → Battery usage and turn \
+             on Allow background activity and Allow auto-launch."
+            ),
         ))
     } else if lower.contains("vivo") || lower.contains("iqoo") {
         Some((
             "Vivo",
-            "On Vivo / OriginOS / Funtouch: open Settings → Battery → Background power consumption \
-             management → NectarLink and choose Unrestricted, and allow Autostart.",
+            tr!(
+                "Doctor",
+                "On Vivo / OriginOS / Funtouch: open Settings → Battery → Background power consumption \
+             management → NectarLink and choose Unrestricted, and allow Autostart."
+            ),
         ))
     } else if lower.contains("huawei") || lower.contains("honor") {
         Some((
             "Huawei",
-            "On Huawei / Honor: open Settings → Battery → App launch, turn off Manage automatically for \
-             NectarLink, and keep Auto-launch, Secondary launch, and Run in background on.",
+            tr!(
+                "Doctor",
+                "On Huawei / Honor: open Settings → Battery → App launch, turn off Manage automatically for \
+             NectarLink, and keep Auto-launch, Secondary launch, and Run in background on."
+            ),
         ))
     } else if lower.contains("pixel") || lower.contains("google") {
         Some((
             "Pixel",
-            "On Pixel: open Settings → Apps → See all apps → NectarLink → App battery usage, tap Allow \
-             background usage, and choose Unrestricted.",
+            tr!(
+                "Doctor",
+                "On Pixel: open Settings → Apps → See all apps → NectarLink → App battery usage, tap Allow \
+             background usage, and choose Unrestricted."
+            ),
         ))
     } else {
         None
@@ -155,7 +177,7 @@ fn match_oem(raw: &str) -> Option<(&'static str, &'static str)> {
 }
 
 /// Returns the `(oem_label, guide_text)` for a phone's manufacturer when recognized.
-pub fn oem_battery_guide(model: Option<&str>, name: &str) -> Option<(&'static str, &'static str)> {
+pub fn oem_battery_guide(model: Option<&str>, name: &str) -> Option<(&'static str, String)> {
     model.and_then(match_oem).or_else(|| match_oem(name))
 }
 
@@ -168,14 +190,16 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         checks.push(check(
             "network",
             Outcome::Fail,
-            "This PC isn't on a network",
-            "Connect it to the same Wi-Fi or wired network as your phone.",
+            tr!("Doctor", "This PC isn't on a network"),
+            tr!("Doctor", "Connect it to the same Wi-Fi or wired network as your phone."),
             None,
         ));
     } else {
         let title = match facts.networks.first() {
-            Some((name, _)) if name != "This network" => format!("Connected to {name}"),
-            _ => "Connected to a network".into(),
+            Some((name, _)) if *name != tr!("Doctor", "This network") => {
+                tr!("Doctor", "Connected to %1", name)
+            }
+            _ => tr!("Doctor", "Connected to a network"),
         };
         checks.push(check("network", Outcome::Ok, title, "", None));
     }
@@ -183,9 +207,9 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         checks.push(check(
             "profile",
             Outcome::Warn,
-            format!("{name} is set as a public network"),
-            "On public networks Windows keeps other devices from finding this PC. If it's your home or work \
-             network, set it to Private.",
+            tr!("Doctor", "%1 is set as a public network", name),
+            tr!("Doctor", "On public networks Windows keeps other devices from finding this PC. If it's your home or work \
+             network, set it to Private."),
             Some("network-settings"),
         ));
     }
@@ -194,34 +218,47 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
     match facts.firewall {
         None => {}
         Some(f) if !f.on => {
-            checks.push(check("firewall", Outcome::Ok, "Windows Firewall is off for this network", "", None));
+            checks.push(check(
+                "firewall",
+                Outcome::Ok,
+                tr!("Doctor", "Windows Firewall is off for this network"),
+                "",
+                None,
+            ));
         }
         Some(f) if f.blocked => checks.push(check(
             "firewall",
             Outcome::Fail,
-            "Windows Firewall blocks NectarLink",
-            "Someone chose not to allow it when Windows asked. Allow it, and your phone can connect.",
+            tr!("Doctor", "Windows Firewall blocks NectarLink"),
+            tr!(
+                "Doctor",
+                "Someone chose not to allow it when Windows asked. Allow it, and your phone can connect."
+            ),
             Some("firewall"),
         )),
         Some(f) if !f.allowed => checks.push(check(
             "firewall",
             Outcome::Warn,
-            "NectarLink isn't allowed through Windows Firewall",
-            "Your phone may not be able to connect. Allow it once here.",
+            tr!("Doctor", "NectarLink isn't allowed through Windows Firewall"),
+            tr!("Doctor", "Your phone may not be able to connect. Allow it once here."),
             Some("firewall"),
         )),
-        Some(_) => {
-            checks.push(check("firewall", Outcome::Ok, "Windows Firewall lets your phone connect", "", None))
-        }
+        Some(_) => checks.push(check(
+            "firewall",
+            Outcome::Ok,
+            tr!("Doctor", "Windows Firewall lets your phone connect"),
+            "",
+            None,
+        )),
     }
 
     if facts.vpn {
         checks.push(check(
             "vpn",
             Outcome::Warn,
-            "A VPN is on",
-            "VPNs often keep devices on your network from reaching this PC. If your phone can't connect, try \
-             turning it off.",
+            tr!("Doctor", "A VPN is on"),
+            tr!("Doctor", "VPNs often keep devices on your network from reaching this PC. If your phone can't connect, try \
+             turning it off."),
             None,
         ));
     }
@@ -240,12 +277,18 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
             checks.push(check(
                 &ap_id,
                 outcome,
-                format!("{name} is on this Wi-Fi, but the router blocks direct connections (AP isolation)"),
-                format!(
-                    "This PC can see {name} announce itself on the network, but the router is blocking \
+                tr!(
+                    "Doctor",
+                    "%1 is on this Wi-Fi, but the router blocks direct connections (AP isolation)",
+                    name
+                ),
+                tr!(
+                    "Doctor",
+                    "This PC can see %1 announce itself on the network, but the router is blocking \
                      devices from talking directly to each other (often called AP Isolation, Client \
                      Isolation, or Guest Wi-Fi). Move both devices off any Guest Wi-Fi network, turn off AP \
-                     / Client Isolation in your router's Wi-Fi settings, or connect with a USB cable."
+                     / Client Isolation in your router's Wi-Fi settings, or connect with a USB cable.",
+                    name
                 ),
                 Some("reconnect"),
             ));
@@ -255,31 +298,39 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         let finding = match &d.link {
             LinkState::Online { path, rtt_ms } => {
                 let how = match path {
-                    ConnectionPath::Lan => "On this network",
-                    ConnectionPath::Usb => "On USB",
-                    ConnectionPath::Relay => "While away",
+                    ConnectionPath::Lan => tr!("Doctor", "On this network"),
+                    ConnectionPath::Usb => tr!("Doctor", "On USB"),
+                    ConnectionPath::Relay => tr!("Doctor", "While away"),
                 };
-                check(&id, Outcome::Ok, format!("{name} is connected"), format!("{how} · {rtt_ms} ms"), None)
+                check(
+                    &id,
+                    Outcome::Ok,
+                    tr!("Doctor", "%1 is connected", name),
+                    tr!("Doctor", "%1 · %2 ms", how, rtt_ms),
+                    None,
+                )
             }
             LinkState::Connecting => check(
                 &id,
                 Outcome::Warn,
-                format!("Connecting to {name}…"),
-                "This usually takes a few seconds.",
+                tr!("Doctor", "Connecting to %1…", name),
+                tr!("Doctor", "This usually takes a few seconds."),
                 None,
             ),
             LinkState::Offline { last_seen } => {
                 let seen = last_seen.map_or_else(
-                    || "It hasn't connected yet.".to_owned(),
-                    |at| format!("Last seen {}.", ago(now_secs - at)),
+                    || tr!("Doctor", "It hasn't connected yet."),
+                    |at| tr!("Doctor", "Last seen %1.", ago(now_secs - at)),
                 );
                 check(
                     &id,
                     Outcome::Warn,
-                    format!("{name} isn't connected"),
-                    format!(
-                        "{seen} Open NectarLink on the phone and keep both on the same network. If the phone \
-                         asks to run in the background, allow it."
+                    tr!("Doctor", "%1 isn't connected", name),
+                    tr!(
+                        "Doctor",
+                        "%1 Open NectarLink on the phone and keep both on the same network. If the phone \
+                         asks to run in the background, allow it.",
+                        seen
                     ),
                     Some("reconnect"),
                 )
@@ -294,7 +345,7 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
             checks.push(check(
                 &format!("oem-battery-{i}"),
                 Outcome::Warn,
-                format!("Keep {name} reachable in the background ({oem})"),
+                tr!("Doctor", "Keep %1 reachable in the background (%2)", name, oem),
                 guide,
                 None,
             ));
@@ -313,12 +364,12 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
 fn ago(seconds: i64) -> String {
     let minutes = seconds / 60;
     match minutes {
-        ..=0 => "just now".into(),
-        1 => "a minute ago".into(),
-        2..=59 => format!("{minutes} minutes ago"),
-        60..=119 => "an hour ago".into(),
-        120..=1439 => format!("{} hours ago", minutes / 60),
-        _ => format!("{} days ago", minutes / 1440),
+        ..=0 => tr!("Doctor", "just now"),
+        1 => tr!("Doctor", "a minute ago"),
+        2..=59 => tr!("Doctor", "%1 minutes ago", minutes),
+        60..=119 => tr!("Doctor", "an hour ago"),
+        120..=1439 => tr!("Doctor", "%1 hours ago", minutes / 60),
+        _ => tr!("Doctor", "%1 days ago", minutes / 1440),
     }
 }
 

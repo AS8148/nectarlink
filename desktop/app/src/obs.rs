@@ -8,6 +8,7 @@
 //! so the password from Settings is needed in most setups. It's stored encrypted with
 //! Windows DPAPI, like the device key.
 
+use crate::i18n::tr;
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
@@ -65,7 +66,7 @@ pub fn run(command: &str, port: u16, password: Option<&str>) -> Result<(), Strin
         Ok(())
     } else {
         let detail = status["comment"].as_str().unwrap_or("the request failed");
-        Err(format!("OBS: {detail}"))
+        Err(tr!("Obs", "OBS: %1", detail))
     }
 }
 
@@ -100,7 +101,7 @@ impl Socket {
     fn connect(port: u16) -> Result<Self, String> {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
         let mut stream = TcpStream::connect_timeout(&addr, TIMEOUT)
-            .map_err(|_| format!("OBS isn't reachable on port {port}. Turn on its WebSocket server."))?;
+            .map_err(|_| tr!("Obs", "OBS isn't reachable on port %1. Turn on its WebSocket server.", port))?;
         let _ = stream.set_read_timeout(Some(TIMEOUT));
         let _ = stream.set_write_timeout(Some(TIMEOUT));
         let _ = stream.set_nodelay(true);
@@ -134,7 +135,7 @@ impl Socket {
             })
         });
         if !accepted {
-            return Err("The service on that port isn't OBS.".into());
+            return Err(tr!("Obs", "The service on that port isn't OBS."));
         }
         Ok(Self { stream })
     }

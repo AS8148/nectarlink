@@ -281,7 +281,7 @@ fn caller(call: &CallState) -> String {
         .clone()
         .filter(|n| !n.trim().is_empty())
         .or_else(|| call.number.clone().filter(|n| !n.trim().is_empty()))
-        .unwrap_or_else(|| "Unknown caller".into())
+        .unwrap_or_else(|| tr!("Calls", "Unknown caller"))
 }
 
 fn phone_name(device: DeviceId) -> String {
@@ -302,7 +302,7 @@ fn show_ringing(device: DeviceId, call: &CallState, silenced: bool) {
         (Some(name), Some(number)) if !name.trim().is_empty() => {
             format!("{number} · on {}", phone_name(device))
         }
-        _ => format!("Calling {}", phone_name(device)),
+        _ => tr!("Calls", "Calling %1", phone_name(device)),
     };
     toast::show(Toast {
         device: TOAST_GROUP.into(),
@@ -341,7 +341,7 @@ fn show_in_progress(device: DeviceId, call: &CallState) {
     toast::show(Toast {
         device: TOAST_GROUP.into(),
         key: format!("{ACTIVE}{}", key(device, &call.id)),
-        title: format!("On a call with {}", caller(call)),
+        title: tr!("Calls", "On a call with %1", caller(call)),
         body: format!("On {}", phone_name(device)),
         attribution: "NectarLink".into(),
         icon: None,
@@ -370,7 +370,7 @@ fn show_missed(device: DeviceId, call: &CallState) {
     toast::show(Toast {
         device: TOAST_GROUP.into(),
         key: format!("missed {}", key(device, &call.id)),
-        title: format!("Missed call from {}", caller(call)),
+        title: tr!("Calls", "Missed call from %1", caller(call)),
         body: format!("On {}", phone_name(device)),
         attribution: "NectarLink".into(),
         icon: None,

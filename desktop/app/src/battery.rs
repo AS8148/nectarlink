@@ -2,6 +2,7 @@
 //! Battery alerts: a Windows notification when a phone's battery runs low,
 //! and when it's fully charged. Once each, until the battery has moved on.
 
+use crate::i18n::tr;
 use std::{
     collections::HashMap,
     sync::{
@@ -82,10 +83,11 @@ pub fn on_event(event: &NodeEvent) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
-    let name = core_host::host().hub.read(|s| s.name_of(device)).unwrap_or_else(|| "Your phone".into());
+    let name =
+        core_host::host().hub.read(|s| s.name_of(device)).unwrap_or_else(|| tr!("Battery", "Your phone"));
     let (title, body) = match alert {
         Alert::Low(level) => (format!("{name}'s battery is low"), format!("{level}% left. Charge it soon.")),
-        Alert::Full => (format!("{name} is fully charged"), "You can unplug it.".to_owned()),
+        Alert::Full => (tr!("Battery", "%1 is fully charged", name), tr!("Battery", "You can unplug it.")),
     };
     toast::show(Toast {
         device: TOAST_GROUP.into(),

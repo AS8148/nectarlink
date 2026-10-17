@@ -3,6 +3,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use crate::i18n::tr;
 use std::pin::Pin;
 
 use cxx_qt::Threading;
@@ -47,16 +48,16 @@ struct UiPage {
 
 fn action_fields(action: &DeckAction) -> (String, bool, bool, bool, bool, String) {
     match action {
-        DeckAction::MediaPlayPause => (String::new(), false, false, false, false, "Media key".into()),
-        DeckAction::MediaNext => (String::new(), false, false, false, false, "Media key".into()),
-        DeckAction::MediaPrevious => (String::new(), false, false, false, false, "Media key".into()),
+        DeckAction::MediaPlayPause => (String::new(), false, false, false, false, tr!("Deck", "Media key")),
+        DeckAction::MediaNext => (String::new(), false, false, false, false, tr!("Deck", "Media key")),
+        DeckAction::MediaPrevious => (String::new(), false, false, false, false, tr!("Deck", "Media key")),
         DeckAction::VolumeUp => (String::new(), false, false, false, false, "+2%".into()),
         DeckAction::VolumeDown => (String::new(), false, false, false, false, "−2%".into()),
         DeckAction::VolumeMute => (String::new(), false, false, false, false, "Speaker".into()),
         DeckAction::MicMute => (String::new(), false, false, false, false, "Microphone".into()),
         DeckAction::LockPc => (String::new(), false, false, false, false, "Win + L".into()),
         DeckAction::ShowDesktop => (String::new(), false, false, false, false, "Win + D".into()),
-        DeckAction::SwitchWindow => (String::new(), false, false, false, false, "Alt + Tab".into()),
+        DeckAction::SwitchWindow => (String::new(), false, false, false, false, tr!("Deck", "Alt + Tab")),
         DeckAction::Screenshot => (String::new(), false, false, false, false, "Win + Shift + S".into()),
         DeckAction::Shortcut { key, mods } => {
             let ctrl = mods.contains(&KeyMod::Ctrl);

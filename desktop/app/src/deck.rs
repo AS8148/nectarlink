@@ -2,6 +2,7 @@
 //! PC-owned Deck configuration, live state syncing, and action execution
 //! (`docs/protocol/deck.md`).
 
+use crate::i18n::tr;
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -453,7 +454,7 @@ pub fn build_action(
         deck_kinds::SHORTCUT => {
             let key = p.to_ascii_lowercase();
             if key.is_empty() {
-                return Err("Choose a key for the shortcut.".into());
+                return Err(tr!("Deck", "Choose a key for the shortcut."));
             }
             let mut mods = Vec::new();
             if ctrl {
@@ -472,7 +473,7 @@ pub fn build_action(
         }
         deck_kinds::OPEN_URL => {
             if p.is_empty() {
-                return Err("Enter an http:// or https:// web address.".into());
+                return Err(tr!("Deck", "Enter an http:// or https:// web address."));
             }
             let url = if p.starts_with("http://") || p.starts_with("https://") {
                 p.to_owned()
@@ -483,20 +484,20 @@ pub fn build_action(
         }
         deck_kinds::TYPE_TEXT => {
             if param.is_empty() {
-                return Err("Enter the text snippet to type.".into());
+                return Err(tr!("Deck", "Enter the text snippet to type."));
             }
             DeckAction::TypeText { text: param.to_owned() }
         }
         deck_kinds::LAUNCH_APP => {
             let unquoted = p.trim_matches('"');
             if unquoted.is_empty() {
-                return Err("Choose an application (.exe or .lnk) on this PC.".into());
+                return Err(tr!("Deck", "Choose an application (.exe or .lnk) on this PC."));
             }
             DeckAction::LaunchApp { path: unquoted.to_owned() }
         }
         deck_kinds::RUN_COMMAND => {
             if p.is_empty() {
-                return Err("Enter a command to run on this PC.".into());
+                return Err(tr!("Deck", "Enter a command to run on this PC."));
             }
             DeckAction::RunCommand { command: p.to_owned() }
         }
@@ -504,12 +505,12 @@ pub fn build_action(
     };
     if !action.is_valid() {
         return Err(match kind {
-            deck_kinds::LAUNCH_APP => "Application path must end with .exe or .lnk.".into(),
-            deck_kinds::OPEN_URL => "Web address must start with http:// or https://.".into(),
+            deck_kinds::LAUNCH_APP => tr!("Deck", "Application path must end with .exe or .lnk."),
+            deck_kinds::OPEN_URL => tr!("Deck", "Web address must start with http:// or https://."),
             deck_kinds::SHORTCUT => {
-                "Use a single key (a-z, 0-9, f1-f12, enter, tab, space, escape, arrows, etc.).".into()
+                tr!("Deck", "Use a single key (a-z, 0-9, f1-f12, enter, tab, space, escape, arrows, etc.).")
             }
-            _ => "Invalid action configuration.".into(),
+            _ => tr!("Deck", "Invalid action configuration."),
         });
     }
     Ok(action)
@@ -547,12 +548,12 @@ pub fn save_tile(
         let all_ids: Vec<String> =
             cfg.pages.iter().flat_map(|p| p.tiles.iter().map(|t| t.id.clone())).collect();
         let Some(page) = cfg.pages.iter_mut().find(|p| p.id == page_id) else {
-            err = Some("Page not found.".into());
+            err = Some(tr!("Deck", "Page not found."));
             return;
         };
         if tile_id.is_empty() {
             if page.tiles.len() >= nectarlink_core::MAX_DECK_TILES_PER_PAGE {
-                err = Some("This page already has the maximum number of tiles (24).".into());
+                err = Some(tr!("Deck", "This page already has the maximum number of tiles (24)."));
                 return;
             }
             let new_id = next_unique_id("tile", &all_ids);
@@ -567,7 +568,7 @@ pub fn save_tile(
                 saved_id = clean.id.clone();
                 page.tiles.push(clean);
             } else {
-                err = Some("Invalid tile properties.".into());
+                err = Some(tr!("Deck", "Invalid tile properties."));
             }
         } else if let Some(existing) = page.tiles.iter_mut().find(|t| t.id == tile_id) {
             let updated = DeckTileConfig {
@@ -581,10 +582,10 @@ pub fn save_tile(
                 saved_id = clean.id.clone();
                 *existing = clean;
             } else {
-                err = Some("Invalid tile properties.".into());
+                err = Some(tr!("Deck", "Invalid tile properties."));
             }
         } else {
-            err = Some("Tile not found.".into());
+            err = Some(tr!("Deck", "Tile not found."));
         }
     });
     if let Some(e) = err { Err(e) } else { Ok(saved_id) }
