@@ -579,17 +579,17 @@ fn describe_entry(
     entry: &TimelineEntry,
     device_name: &str,
 ) -> (String, String, String, String, u32, bool, bool, bool, bool) {
-    let dir_verb = match (entry.kind, entry.incoming) {
-        (TimelineKind::Link, true) => "Opened from",
-        (TimelineKind::Link, false) => "Opened on",
-        (TimelineKind::Photo, _) => "Saved from",
-        (TimelineKind::Recording, _) => "Recorded on",
-        (TimelineKind::Session, _) => "With",
-        (_, true) => "From",
-        (_, false) => "Sent to",
+    let dev = if device_name.is_empty() { tr!("Timeline", "device") } else { device_name.to_owned() };
+    // Whole phrases, so a language can put the name where it goes.
+    let who = match (entry.kind, entry.incoming) {
+        (TimelineKind::Link, true) => tr!("Timeline", "Opened from %1", dev),
+        (TimelineKind::Link, false) => tr!("Timeline", "Opened on %1", dev),
+        (TimelineKind::Photo, _) => tr!("Timeline", "Saved from %1", dev),
+        (TimelineKind::Recording, _) => tr!("Timeline", "Recorded on %1", dev),
+        (TimelineKind::Session, _) => tr!("Timeline", "With %1", dev),
+        (_, true) => tr!("Timeline", "From %1", dev),
+        (_, false) => tr!("Timeline", "Sent to %1", dev),
     };
-    let dev = if device_name.is_empty() { "device" } else { device_name };
-    let who = format!("{dir_verb} {dev}");
 
     match entry.kind {
         TimelineKind::File | TimelineKind::Photo | TimelineKind::Recording => {

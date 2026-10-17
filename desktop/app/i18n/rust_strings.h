@@ -323,13 +323,19 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Timeline", "Copied image"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Copied link to clipboard."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Copied to clipboard."), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "From %1"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "In progress"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "No phone is paired yet."), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "Opened from %1"), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "Opened on %1"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Phone microphone"), // desktop/app/src/i18n.rs
     QT_TRANSLATE_NOOP("Timeline", "Phone webcam"), // desktop/app/src/i18n.rs
+    QT_TRANSLATE_NOOP("Timeline", "Recorded on %1"), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "Saved from %1"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Screen mirroring"), // desktop/app/src/i18n.rs
     QT_TRANSLATE_NOOP("Timeline", "Sending to %1…"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Sent clip to %1."), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "Sent to %1"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "That clip is no longer in clipboard history."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "That entry couldn't be removed. Try again."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "That file was moved or deleted."), // desktop/app/src/bridge/timeline.rs
@@ -338,6 +344,8 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Timeline", "The Timeline couldn't be cleared. Try again."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "The photo couldn't be copied to the clipboard."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Voice recording"), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "With %1"), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "device"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Transfers", "Accept in NectarLink to save to Downloads\\Nectarlink"), // desktop/app/src/transfers.rs
     QT_TRANSLATE_NOOP("Transfers", "Files are turned off for that device."), // desktop/app/src/transfers.rs
     QT_TRANSLATE_NOOP("Transfers", "From %1, opened from Downloads\\Nectarlink"), // desktop/app/src/transfers.rs
