@@ -281,7 +281,8 @@ class AppWindows(
                 @Suppress("DEPRECATION")
                 manager.queryIntentActivities(launcher, 0)
             }
-            return found
+            val used = HashSet<String>()
+            val apps = found
                 .map { it.activityInfo }
                 .filter { it.packageName != context.packageName }
                 .distinctBy { it.packageName }
@@ -289,10 +290,32 @@ class AppWindows(
                     PhoneApp(
                         pkg = info.packageName,
                         label = info.loadLabel(manager).toString().trim().ifEmpty { info.packageName },
-                        icon = runCatching { icon(info.loadIcon(manager)) }.getOrNull(),
+                        icon = cachedIcon(info, manager, used),
                     )
                 }
                 .sortedBy { it.label.lowercase() }
+            // Forget uninstalled and updated apps' icons.
+            icons.keys.retainAll(used)
+            return apps
+        }
+
+        /**
+         * Icons drawn for an earlier list, by package and its installed APK
+         * (a new path after every update) and icon: drawing and compressing
+         * every icon again made every list slow to arrive.
+         */
+        private val icons = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+        private val NO_ICON = ByteArray(0)
+
+        private fun cachedIcon(
+            info: android.content.pm.ActivityInfo,
+            manager: PackageManager,
+            used: MutableSet<String>,
+        ): ByteArray? {
+            val key = "${info.packageName}|${info.applicationInfo?.sourceDir}|${info.iconResource}"
+            used += key
+            val png = icons.getOrPut(key) { runCatching { icon(info.loadIcon(manager)) }.getOrNull() ?: NO_ICON }
+            return png.takeIf { it.isNotEmpty() }
         }
 
         /** A PNG of the icon: 64 pixels, or 48 when that's too big. */

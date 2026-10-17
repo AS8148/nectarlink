@@ -1070,36 +1070,101 @@ pub fn apps(device: &DeviceId) -> Option<Apps> {
     state(|s| s.apps.get(device).cloned())
 }
 
-/// Loads (or reloads) a phone's apps, with their icons.
+/// Loads (or reloads) a phone's apps, with their icons. A list already
+/// loaded (this run, or saved by an earlier one) shows at once and stays up
+/// while the phone sends a fresh one: only the first load ever waits.
 pub fn load_apps(device: DeviceId) {
-    state(|s| s.apps.insert(device, Apps::Loading));
+    let data_dir = core_host::host().data_dir.clone();
+    let shown = state(|s| match s.apps.get(&device) {
+        Some(Apps::Ready(_)) => true,
+        _ => match saved_apps(&data_dir, &device) {
+            Some(saved) => {
+                s.apps.insert(device, Apps::Ready(saved));
+                true
+            }
+            None => {
+                s.apps.insert(device, Apps::Loading);
+                false
+            }
+        },
+    });
     core_host::host().hub.changed(Changes::MIRROR);
     let Some(node) = core_host::node() else { return };
     core_host::spawn(async move {
+        let started = Instant::now();
         let loaded = match node.mirror_apps(device).await {
             Ok(apps) => {
-                let data_dir = core_host::host().data_dir.clone();
                 let apps = tokio::task::spawn_blocking(move || {
-                    apps.into_iter()
+                    let apps: Vec<App> = apps
+                        .into_iter()
                         .map(|a| App {
                             icon: a.icon.and_then(|png| crate::icons::save(&data_dir, &a.pkg, &png).ok()),
                             pkg: a.pkg,
                             label: a.label,
                         })
-                        .collect()
+                        .collect();
+                    save_apps(&data_dir, &device, &apps);
+                    apps
                 })
                 .await
                 .unwrap_or_default();
+                tracing::info!(
+                    apps = apps.len(),
+                    ms = started.elapsed().as_millis() as u64,
+                    "loaded a phone's apps"
+                );
                 Apps::Ready(apps)
             }
-            Err(Error::Unsupported) => Apps::Failed(
-                "Set up Wireless debugging in NectarLink on the phone to open its apps here.".into(),
-            ),
+            // A list on screen stays: it is a moment old, not wrong.
+            Err(e) if shown => {
+                tracing::info!(error = %e, "can't refresh a phone's apps; keeping the last list");
+                return;
+            }
+            Err(Error::Unsupported) => Apps::Failed(tr!(
+                "Mirror",
+                "Set up Wireless debugging in NectarLink on the phone to open its apps here."
+            )),
             Err(e) => Apps::Failed(describe(&e)),
         };
         state(|s| s.apps.insert(device, loaded));
         core_host::host().hub.changed(Changes::MIRROR);
     });
+}
+
+fn saved_apps_path(data_dir: &Path, device: &DeviceId) -> PathBuf {
+    data_dir.join("cache").join("apps").join(format!("{device}.json"))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedApp {
+    pkg: String,
+    label: String,
+}
+
+/// The phone's apps as an earlier run saved them, with the icons it kept.
+fn saved_apps(data_dir: &Path, device: &DeviceId) -> Option<Vec<App>> {
+    let bytes = std::fs::read(saved_apps_path(data_dir, device)).ok()?;
+    let saved: Vec<SavedApp> = serde_json::from_slice(&bytes).ok()?;
+    let apps: Vec<App> = saved
+        .into_iter()
+        .filter(|a| nectarlink_core::is_package_name(&a.pkg))
+        .map(|a| App { icon: crate::icons::existing(data_dir, &a.pkg), pkg: a.pkg, label: a.label })
+        .collect();
+    (!apps.is_empty()).then_some(apps)
+}
+
+fn save_apps(data_dir: &Path, device: &DeviceId, apps: &[App]) {
+    let path = saved_apps_path(data_dir, device);
+    let saved: Vec<SavedApp> =
+        apps.iter().map(|a| SavedApp { pkg: a.pkg.clone(), label: a.label.clone() }).collect();
+    let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| {
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec(&saved).map_err(std::io::Error::other)?)?;
+        std::fs::rename(&tmp, &path)
+    });
+    if let Err(e) = written {
+        tracing::warn!(error = %e, "can't save a phone's apps");
+    }
 }
 
 /// Returns cached `(pkg, label)` pairs for `device` synchronously (0 ms) for
@@ -1832,8 +1897,8 @@ impl Stats {
 #[cfg(test)]
 mod tests {
     use super::{
-        GamepadState, LEFT_THUMB_DEADZONE, RIGHT_THUMB_DEADZONE, TRIGGER_THRESHOLD, merge_recent_apps,
-        normalize_gamepad_state, parse_dropped_file_urls,
+        App, GamepadState, LEFT_THUMB_DEADZONE, RIGHT_THUMB_DEADZONE, TRIGGER_THRESHOLD, merge_recent_apps,
+        normalize_gamepad_state, parse_dropped_file_urls, save_apps, saved_apps, saved_apps_path,
     };
 
     #[test]
@@ -1904,5 +1969,26 @@ mod tests {
         let (win, paths) = parse_dropped_file_urls(&[key, file_url]);
         assert_eq!(win.map(|w| w.device), Some(dev));
         assert_eq!(paths, vec![file_a]);
+    }
+
+    #[test]
+    fn a_phones_apps_are_kept_for_the_next_run_with_their_icons() {
+        let dir = tempfile::tempdir().unwrap();
+        let phone = nectarlink_core::DeviceId([0x22; 32]);
+        assert!(saved_apps(dir.path(), &phone).is_none(), "nothing saved yet");
+
+        let png = b"\x89PNG\r\n\x1a\nicon";
+        let icon = crate::icons::save(dir.path(), "org.example.maps", png).unwrap();
+        let apps = vec![
+            App { pkg: "org.example.maps".into(), label: "Maps".into(), icon: Some(icon.clone()) },
+            App { pkg: "org.example.notes".into(), label: "Notes".into(), icon: None },
+        ];
+        save_apps(dir.path(), &phone, &apps);
+        assert_eq!(saved_apps(dir.path(), &phone), Some(apps));
+
+        // Another phone has its own list; a damaged file is no list.
+        assert!(saved_apps(dir.path(), &nectarlink_core::DeviceId([0x33; 32])).is_none());
+        std::fs::write(saved_apps_path(dir.path(), &phone), b"{not json").unwrap();
+        assert!(saved_apps(dir.path(), &phone).is_none());
     }
 }
