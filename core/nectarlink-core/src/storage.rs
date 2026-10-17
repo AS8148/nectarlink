@@ -150,10 +150,13 @@ fn we_offer(shared: &Shared, cap: &str) -> bool {
     shared.local_capabilities().iter().any(|c| c == cap)
 }
 
-/// Checks if the client user explicitly turned `storage` (or `remote_files` when on Relay) off for `peer`.
+/// Checks if the client user explicitly turned `storage` (a PC browsing a
+/// phone) or `remote_files` (over Relay) off for `peer`.
 fn pc_allows(shared: &Shared, peer: &DeviceId) -> Result<bool> {
     let toggles = shared.store.toggles(peer)?;
-    if toggles.get(TOGGLE).copied() == Some(false) {
+    // A PC's `storage` toggle is "browse that phone here"; a phone's is "let
+    // that PC browse me", which says nothing about browsing the PC.
+    if !serves_phone_storage(shared) && toggles.get(TOGGLE).copied() == Some(false) {
         return Ok(false);
     }
     if shared.session(peer).is_some_and(|s| s.path() == crate::ConnectionPath::Relay)
@@ -172,7 +175,11 @@ fn check_phone_allowed(
     if !we_offer(shared, cap) {
         return Err((ErrorCode::Unsupported, format!("{cap} is not offered by this device")));
     }
-    if !shared.toggle_on(peer, TOGGLE) {
+    // The `storage` toggle is a phone's "let this PC browse my storage". On a
+    // PC the same toggle means the opposite way (browse that phone here), so
+    // it doesn't gate the PC's own folders: the app's "share this PC's
+    // folders" setting does (`Platform::storage_list` and friends refuse).
+    if serves_phone_storage(shared) && !shared.toggle_on(peer, TOGGLE) {
         let first_time = shared.storage.lock().unwrap_or_else(|e| e.into_inner()).mark_prompted(*peer);
         if first_time {
             shared.emit(NodeEvent::StorageRequested { device: *peer });
@@ -188,6 +195,14 @@ fn check_phone_allowed(
         ));
     }
     Ok(())
+}
+
+/// Whether this device is a phone or tablet, sharing its own storage.
+fn serves_phone_storage(shared: &Shared) -> bool {
+    matches!(
+        shared.local.read().unwrap_or_else(|e| e.into_inner()).device.kind,
+        nectarlink_protocol::messages::DeviceKind::Phone | nectarlink_protocol::messages::DeviceKind::Tablet
+    )
 }
 
 fn parent_dir_of(path: &str) -> &str {

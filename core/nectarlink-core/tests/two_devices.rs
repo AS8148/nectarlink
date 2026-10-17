@@ -3044,6 +3044,42 @@ async fn deck_layout_and_state_arrive_press_runs_action_and_respects_toggles_and
     assert!(matches!(phone.node.deck_press(pc_id, "run_build".into()).await, Err(Error::NotFound)));
 }
 
+/// A phone browses a PC's shared folders: the toggles named `storage` (on
+/// the PC: browse that phone; on the phone: let that PC browse it) don't
+/// stand in the way, whichever way they are set.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_browses_a_pcs_shared_folders() {
+    use nectarlink_core::{FolderStorage, STORAGE_MOUNT, STORAGE_READ, STORAGE_WRITE};
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[STORAGE_MOUNT, STORAGE_READ]).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &[STORAGE_READ, STORAGE_WRITE]).await;
+    let shared = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(shared.path().join("Downloads")).unwrap();
+    std::fs::write(shared.path().join("Downloads/report.pdf"), b"pdf").unwrap();
+    *pc.platform.storage.lock().unwrap() = Some(FolderStorage::new(shared.path()));
+
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+
+    for (pc_toggle, phone_toggle) in [(None, None), (Some(false), Some(false)), (Some(true), Some(true))] {
+        if let Some(on) = pc_toggle {
+            pc.node.set_device_toggle(phone_id, "storage", on).unwrap();
+        }
+        if let Some(on) = phone_toggle {
+            phone.node.set_device_toggle(pc_id, "storage", on).unwrap();
+        }
+        let root = with_timeout("list the PC", phone.node.storage_list(pc_id, "")).await.unwrap();
+        assert_eq!(root.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["Downloads"], "{pc_toggle:?}");
+        let files =
+            with_timeout("list Downloads", phone.node.storage_list(pc_id, "Downloads")).await.unwrap();
+        assert_eq!(files.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["report.pdf"]);
+    }
+
+    // A PC that doesn't share its folders says no.
+    *pc.platform.storage.lock().unwrap() = None;
+    assert!(phone.node.storage_list(pc_id, "").await.is_err());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn phone_storage_lists_reads_ranges_writes_resumes_mutates_and_enforces_security() {
     use nectarlink_core::{FolderStorage, STORAGE_MOUNT, STORAGE_READ, STORAGE_WRITE};
