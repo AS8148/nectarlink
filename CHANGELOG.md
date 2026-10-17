@@ -17,6 +17,14 @@ change things that need a step from you, and its notes say so.
   windows over it on the PC. Tap the notification on the phone to watch.
   Scripts can do the same through the local API
   (`POST /v1/play-on-phone`).
+- **Phone as microphone.** In **Settings › Camera & Audio**, Start asks
+  your phone for its microphone; tap Start there and the PC plays it into
+  an output of your choice. With a virtual audio cable such as VB-CABLE
+  installed, NectarLink plays into it by itself, and its other end is a
+  microphone Discord, Zoom, OBS or Teams can pick
+  ([#7](https://github.com/thtbee/nectarlink/issues/7)). A microphone of
+  NectarLink's own, without the cable, needs an audio driver and comes
+  later.
 - **The Windows app follows the system language**, and speaks Simplified
   Chinese, by [@zzz1465720680](https://github.com/zzz1465720680)
   ([#16](https://github.com/thtbee/nectarlink/pull/16),
