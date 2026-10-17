@@ -116,7 +116,7 @@ jobs:
     needs: [windows, android]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: files
           merge-multiple: true
