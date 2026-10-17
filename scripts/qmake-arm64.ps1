@@ -29,10 +29,28 @@ foreach ($kit in $hostKit, $targetKit) {
 }
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
-# qmake links Qt6Core dynamically and is run with an empty PATH, so its DLL
-# must sit next to it.
-foreach ($file in "qmake6.exe", "Qt6Core.dll") {
-    Copy-Item (Join-Path $hostKit "bin\$file") (Join-Path $OutDir $file) -Force
+# Copy host (x64) tools and runtime DLLs into the cache folder next to qt.conf.
+# qmake/qtpaths link Qt dynamically and may run with an isolated PATH, so their
+# DLLs must sit next to them.
+$toolsToCopy = @(
+    "qmake6.exe", "qmake.exe",
+    "qtpaths6.exe", "qtpaths.exe",
+    "qmlimportscanner.exe", "windeployqt.exe",
+    "Qt6Core.dll", "Qt6Qml.dll"
+)
+foreach ($file in $toolsToCopy) {
+    $src = Join-Path $hostKit "bin\$file"
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $OutDir $file) -Force
+    }
+}
+if ((Test-Path (Join-Path $OutDir "qmake6.exe")) -and (-not (Test-Path (Join-Path $OutDir "qmake.exe")))) {
+    Copy-Item (Join-Path $OutDir "qmake6.exe") (Join-Path $OutDir "qmake.exe") -Force
+}
+if ((Test-Path (Join-Path $OutDir "qtpaths6.exe")) -and (-not (Test-Path (Join-Path $OutDir "qtpaths.exe")))) {
+    Copy-Item (Join-Path $OutDir "qtpaths6.exe") (Join-Path $OutDir "qtpaths.exe") -Force
+} elseif ((Test-Path (Join-Path $OutDir "qtpaths.exe")) -and (-not (Test-Path (Join-Path $OutDir "qtpaths6.exe")))) {
+    Copy-Item (Join-Path $OutDir "qtpaths.exe") (Join-Path $OutDir "qtpaths6.exe") -Force
 }
 
 # Same layout as the kit's target_qt.conf, with absolute paths.
@@ -65,4 +83,8 @@ TargetSpec=win32-arm64-msvc
 HostSpec=win32-msvc
 "@ | Set-Content -Encoding ascii (Join-Path $OutDir "qt.conf")
 
-Join-Path $OutDir "qmake6.exe"
+if (Test-Path (Join-Path $OutDir "qmake6.exe")) {
+    Join-Path $OutDir "qmake6.exe"
+} else {
+    Join-Path $OutDir "qmake.exe"
+}

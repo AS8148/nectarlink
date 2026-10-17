@@ -7,9 +7,9 @@ This document covers the pinned toolchain versions, environment variables, build
 | Component | Required Version | Configuration File / Default Path |
 |---|---|---|
 | **Rust Toolchain** | `stable` (pinned in [`rust-toolchain.toml`](../../rust-toolchain.toml)) | [`rust-toolchain.toml`](../../rust-toolchain.toml) |
-| **Rust Targets** | `x86_64-pc-windows-msvc`, `aarch64-linux-android`, `x86_64-linux-android` | Installed via `rustup target add` |
-| **MSVC Build Tools** | Visual Studio 2022 Build Tools (C++, `x64`) | Windows 11 SDK |
-| **Qt 6** | `Qt 6.12` (`msvc2022_64`, QtQuick, QtQuickControls2, QtShaderTools, QtMultimedia) | `C:\Qt\6.12.0\msvc2022_64` |
+| **Rust Targets** | `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`, `aarch64-linux-android`, `x86_64-linux-android` | Installed via `rustup target add` |
+| **MSVC Build Tools** | Visual Studio 2022 Build Tools (C++, `x64` and `ARM64/ARM64EC`) | Windows 11 SDK |
+| **Qt 6** | `Qt 6.12` (`msvc2022_64` and `msvc2022_arm64`, QtQuick, QtQuickControls2, QtShaderTools, QtMultimedia) | `C:\Qt\6.12.0\msvc2022_64` / `msvc2022_arm64` |
 | **JDK** | JDK `17` or newer (`21` supported) | `JAVA_HOME` |
 | **Android SDK** | Platform `37` (`compileSdk = 37`, `targetSdk = 37`, `minSdk = 26` / Android 8.0) | `%LOCALAPPDATA%\Android\Sdk` |
 | **Android NDK** | `30.0.16248370` (or side-by-side NDK configured in `android/app/build.gradle.kts`) | `%LOCALAPPDATA%\Android\Sdk\ndk` |
@@ -110,16 +110,19 @@ Pop-Location
 To stage the release desktop binary, `nectarlink_vcam.dll`, `windeployqt` Qt runtime DLLs and QML modules, `THIRD-PARTY-NOTICES.txt`, and Sparse Package manifest (`AppxManifest.xml`), and build the NSIS setup installer (`desktop/installer/nectarlink.nsi`):
 
 ```powershell
-# Full release build + staging + NSIS installer
+# Full release build + staging + NSIS installer (default x64):
 powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 
-# Stage files into target\package\Nectarlink\ without running makensis
+# Full release build + staging + NSIS installer for Windows 11 ARM64:
+powershell -ExecutionPolicy Bypass -File scripts\package.ps1 -Arch arm64
+
+# Stage files into target\package\Nectarlink\ without running makensis:
 powershell -ExecutionPolicy Bypass -File scripts\package.ps1 -StageOnly
 ```
 
 Artifacts are written to `target/package/`:
 - `target/package/Nectarlink/` (staged portable directory)
-- `target/package/Nectarlink-<version>-x64-setup.exe` (NSIS installer when `makensis.exe` is installed)
+- `target/package/Nectarlink-<version>-x64-setup.exe` or `Nectarlink-<version>-arm64-setup.exe` (NSIS installer when `makensis.exe` is installed)
 
 ## Running the Test Suites
 

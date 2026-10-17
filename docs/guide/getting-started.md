@@ -14,7 +14,7 @@ This guide walks you through installing NectarLink on Windows 11 and Android, co
 
 ### On Windows 11
 
-1. Download the latest Windows installer (`Nectarlink-<version>-x64-setup.exe`) from the project's GitHub Releases page.
+1. Download the latest Windows installer (`Nectarlink-<version>-x64-setup.exe` for Intel/AMD PCs or `Nectarlink-<version>-arm64-setup.exe` for Snapdragon/ARM64 PCs) from the project's GitHub Releases page.
 2. Run the installer. The installer isn't code-signed yet, so Windows SmartScreen may show **Windows protected your PC**: choose **More info**, then **Run anyway**.
 3. Click **Install** and allow the administrator prompt. Setup installs NectarLink, registers the required Windows Firewall rule for local QUIC discovery and connections, adds Start Menu and desktop shortcuts, and sets NectarLink to start in the system tray when you sign in (turn this off with **Start with Windows** in **Settings › General**). **What this installs** on the first screen lists everything it adds.
 4. The last screen shows a QR code for the Android app's download page. Scan it with your phone's camera, then click **Open NectarLink**.

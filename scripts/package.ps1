@@ -19,6 +19,8 @@
 #>
 param(
     [string]$QtRoot,
+    [ValidateSet('x64', 'arm64')]
+    [string]$Arch = 'x64',
     [switch]$SkipBuild,
     [switch]$StageOnly
 )
@@ -45,25 +47,66 @@ if (-not $version) { throw "can't read the version from Cargo.toml" }
 # Windows file versions are numbers only: 0.0.1-beta.2 -> 0.0.1.
 $numeric = ($version -split '[-+]')[0]
 
+# ---- Target Architecture & Build Paths ----
+$isArm64 = $Arch -eq 'arm64'
+$targetDir = if ($isArm64) {
+    Join-Path $root 'target\aarch64-pc-windows-msvc\release'
+} else {
+    Join-Path $root 'target\release'
+}
+
 # ---- Qt ----
 if (-not $QtRoot) { $QtRoot = $env:QT_ROOT_DIR }
 if (-not $QtRoot) {
     $qmake = Get-Command qmake6, qmake -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($qmake) { $QtRoot = Split-Path -Parent (Split-Path -Parent $qmake.Source) }
 }
-if (-not $QtRoot) { $QtRoot = 'C:\Qt\6.12.0\msvc2022_64' }
-$windeployqt = Join-Path $QtRoot 'bin\windeployqt.exe'
-if (-not (Test-Path $windeployqt)) { throw "windeployqt not found under $QtRoot; pass -QtRoot" }
+if (-not $QtRoot) {
+    $QtRoot = if ($isArm64) { 'C:\Qt\6.12.0\msvc2022_arm64' } else { 'C:\Qt\6.12.0\msvc2022_64' }
+}
+
+# Normalize Qt base folder and kits
+$qtBase = if ($QtRoot -match 'msvc2022_(64|arm64)') { Split-Path -Parent $QtRoot } else { $QtRoot }
+$hostKit = Join-Path $qtBase 'msvc2022_64'
+$targetKit = if ($isArm64) { Join-Path $qtBase 'msvc2022_arm64' } else { $hostKit }
+
+# windeployqt always runs as host (x64)
+$windeployqt = Join-Path $hostKit 'bin\windeployqt.exe'
+if (-not (Test-Path $windeployqt)) {
+    # Fallback to QtRoot bin
+    $windeployqt = Join-Path $QtRoot 'bin\windeployqt.exe'
+}
+if (-not (Test-Path $windeployqt)) { throw "windeployqt not found under $hostKit or $QtRoot; pass -QtRoot" }
+
+$arm64ToolDir = Join-Path $env:LOCALAPPDATA "Nectarlink\dev\qmake-arm64"
+if ($isArm64) {
+    & (Join-Path $PSScriptRoot "qmake-arm64.ps1") -QtRoot $qtBase -OutDir $arm64ToolDir | Out-Null
+    $qtpaths = Join-Path $arm64ToolDir 'qtpaths.exe'
+    if (-not (Test-Path $qtpaths)) {
+        $qtpaths = Join-Path $arm64ToolDir 'qtpaths6.exe'
+    }
+} else {
+    $qtpaths = Join-Path $targetKit 'bin\qtpaths.exe'
+    if (-not (Test-Path $qtpaths)) {
+        $qtpaths = Join-Path $targetKit 'bin\qtpaths6.exe'
+    }
+}
 
 # ---- Build ----
 if (-not $SkipBuild) {
-    Step "Build"
-    $env:PATH = "$(Join-Path $QtRoot 'bin');$env:PATH"
-    Invoke-Native "the build" { cargo build --locked --release -p nectarlink-desktop -p nectarlink-vcam }
+    Step "Build ($Arch)"
+    if ($isArm64) {
+        $env:QMAKE = Join-Path $arm64ToolDir "qmake6.exe"
+        if (-not (Test-Path $env:QMAKE)) { $env:QMAKE = Join-Path $arm64ToolDir "qmake.exe" }
+        Invoke-Native "the build" { cargo build --locked --release --target aarch64-pc-windows-msvc -p nectarlink-desktop -p nectarlink-vcam }
+    } else {
+        $env:PATH = "$(Join-Path $targetKit 'bin');$env:PATH"
+        Invoke-Native "the build" { cargo build --locked --release -p nectarlink-desktop -p nectarlink-vcam }
+    }
 }
-$exe = Join-Path $root 'target\release\nectarlink-desktop.exe'
+$exe = Join-Path $targetDir 'nectarlink-desktop.exe'
 if (-not (Test-Path $exe)) { throw "no release build at $exe" }
-$vcamDll = Join-Path $root 'target\release\nectarlink_vcam.dll'
+$vcamDll = Join-Path $targetDir 'nectarlink_vcam.dll'
 if (-not (Test-Path $vcamDll)) { throw "no release build at $vcamDll" }
 
 # ---- Stage ----
@@ -91,8 +134,22 @@ Copy-Item $exe $stage
 Copy-Item $vcamDll $stage
 
 Invoke-Native "windeployqt" {
-    & $windeployqt --verbose 0 --release --qmldir (Join-Path $root 'desktop\app\qml') `
-        --no-system-d3d-compiler --no-opengl-sw --no-compiler-runtime --dir $stage (Join-Path $stage 'nectarlink-desktop.exe')
+    $deployArgs = @(
+        '--verbose', '0',
+        '--release',
+        '--qmldir', (Join-Path $root 'desktop\app\qml'),
+        '--no-system-d3d-compiler',
+        '--no-opengl-sw',
+        '--no-compiler-runtime',
+        '--dir', $stage
+    )
+    if ($isArm64) {
+        if (Test-Path $qtpaths) {
+            $deployArgs = @('--qtpaths', $qtpaths) + $deployArgs
+        }
+        $env:PATH = "$arm64ToolDir;$(Join-Path $hostKit 'bin');$env:PATH"
+    }
+    & $windeployqt @deployArgs (Join-Path $stage 'nectarlink-desktop.exe')
 }
 
 # Translations. windeployqt stages Qt's own .qm files (in translations/, so its
@@ -104,8 +161,10 @@ if (Test-Path (Join-Path $root 'desktop\app\i18n')) {
     $translationSources = @(Get-ChildItem (Join-Path $root 'desktop\app\i18n') -Filter '*.ts')
 }
 if ($translationSources.Count -gt 0) {
-    $lrelease = Join-Path $QtRoot 'bin\lrelease.exe'
-    if (-not (Test-Path $lrelease)) { throw "lrelease not found under $QtRoot; pass -QtRoot" }
+    # A host tool: the x64 kit's, as an ARM64 kit's own can't run here.
+    $lrelease = Join-Path $hostKit 'bin\lrelease.exe'
+    if (-not (Test-Path $lrelease)) { $lrelease = Join-Path $QtRoot 'bin\lrelease.exe' }
+    if (-not (Test-Path $lrelease)) { throw "lrelease not found under $hostKit or $QtRoot; pass -QtRoot" }
     foreach ($source in $translationSources) {
         $ts = $source.FullName
         $qm = Join-Path $stage "$($source.BaseName).qm"
@@ -124,12 +183,28 @@ foreach ($style in 'Fusion', 'Imagine', 'Material', 'Universal') {
 # The C++ runtime, next to the app (Microsoft allows this app-local copy),
 # so it runs on PCs without the Visual C++ Redistributable.
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-$vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-$crt = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory |
-    Where-Object { $_.Name -match '^\d' } | Sort-Object { [version]$_.Name } -Descending |
-    ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue } |
-    Select-Object -First 1
-if (-not $crt) { throw "can't find the Visual C++ runtime to ship" }
+$vs = if (Test-Path $vswhere) {
+    $component = if ($isArm64) { 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }
+    & $vswhere -latest -products * -requires $component -property installationPath
+} else { $null }
+$crtArch = if ($isArm64) { 'arm64' } else { 'x64' }
+$redistDirs = @()
+if ($vs) { $redistDirs += (Join-Path $vs 'VC\Redist\MSVC') }
+if ($env:VCToolsRedistDir -and (Test-Path $env:VCToolsRedistDir)) { $redistDirs += $env:VCToolsRedistDir }
+$crt = $null
+foreach ($dir in $redistDirs) {
+    if (Test-Path $dir) {
+        $crt = Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d' } | Sort-Object { [version]$_.Name } -Descending |
+            ForEach-Object { Get-ChildItem (Join-Path $_.FullName $crtArch) -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue } |
+            Select-Object -First 1
+        if (-not $crt) {
+            $crt = Get-ChildItem (Join-Path $dir $crtArch) -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+        if ($crt) { break }
+    }
+}
+if (-not $crt) { throw "can't find the Visual C++ runtime ($crtArch) to ship" }
 Copy-Item (Join-Path $crt.FullName '*.dll') $stage
 
 # Licenses.
@@ -137,7 +212,7 @@ Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'LICENSE.txt')
 Invoke-Native "writing the notices" { cargo xtask notices (Join-Path $stage 'THIRD-PARTY-NOTICES.txt') }
 
 # The icon build.rs drew for the .exe, and Sparse Package assets for Windows Share sheet.
-$icon = Get-ChildItem (Join-Path $root 'target\release\build') -Recurse -Filter 'nectarlink.ico' |
+$icon = Get-ChildItem (Join-Path $targetDir 'build') -Recurse -Filter 'nectarlink.ico' |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $icon) { throw "the app icon isn't built" }
 $assetsDir = Join-Path $stage 'Assets'
@@ -156,6 +231,7 @@ foreach ($spec in @(@{ Name = 'Square44x44Logo.png'; Size = 44 }, @{ Name = 'Squ
 }
 $manifest = Get-Content (Join-Path $root 'desktop\installer\AppxManifest.xml') -Raw
 $manifest = $manifest -replace 'Version="\d+\.\d+\.\d+\.\d+"', "Version=`"$numeric.0`""
+$manifest = $manifest -replace 'ProcessorArchitecture="x64"', "ProcessorArchitecture=`"$Arch`""
 Set-Content -Path (Join-Path $stage 'AppxManifest.xml') -Value $manifest -Encoding UTF8 -NoNewline
 
 $size = (Get-ChildItem $stage -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
@@ -163,13 +239,13 @@ Write-Host ("Staged {0:N1} MB in {1}" -f $size, $stage)
 if ($StageOnly) { return }
 
 # ---- Installer ----
-Step "Installer"
+Step "Installer ($Arch)"
 $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
 if (-not $makensis) { $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe' }
 if (-not (Test-Path $makensis)) { throw "NSIS (makensis) not found" }
-$out = Join-Path $package "Nectarlink-$version-x64-setup.exe"
+$out = Join-Path $package "Nectarlink-$version-$Arch-setup.exe"
 Invoke-Native "makensis" {
-    & $makensis /V2 "/DVERSION=$numeric" "/DDISPLAY_VERSION=$version" /DARCH=x64 "/DSTAGE=$stage" `
+    & $makensis /V2 "/DVERSION=$numeric" "/DDISPLAY_VERSION=$version" "/DARCH=$Arch" "/DSTAGE=$stage" `
         "/DICON=$($icon.FullName)" "/DOUTFILE=$out" (Join-Path $root 'desktop\installer\nectarlink.nsi')
 }
 Write-Host ("Installer: {0} ({1:N1} MB)" -f $out, ((Get-Item $out).Length / 1MB))

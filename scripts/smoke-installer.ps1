@@ -4,9 +4,22 @@
   Installs, starts, quits and uninstalls the packaged app silently, checking
   each step. For CI (needs admin; changes this PC), not for everyday use.
 #>
-param([string]$Setup = (Get-ChildItem (Join-Path $PSScriptRoot '..\target\package\*-setup.exe') | Select-Object -First 1).FullName)
+param(
+    [string]$Setup
+)
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $Setup) {
+    $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) { 'arm64' } else { 'x64' }
+    $pkgDir = Join-Path $PSScriptRoot '..\target\package'
+    $match = Get-ChildItem (Join-Path $pkgDir "*-$arch-setup.exe") -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $match) {
+        $match = Get-ChildItem (Join-Path $pkgDir '*-setup.exe') -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if ($match) { $Setup = $match.FullName }
+}
+if (-not $Setup -or -not (Test-Path $Setup)) { throw "no setup installer found to test under target\package" }
 $dir = Join-Path $env:ProgramFiles 'Nectarlink'
 $exe = Join-Path $dir 'nectarlink-desktop.exe'
 $uninstallKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Nectarlink'
