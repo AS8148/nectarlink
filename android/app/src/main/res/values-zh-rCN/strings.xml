@@ -632,6 +632,11 @@
     <string name="pc_files_downloading">正在下载 %1$s…</string>
     <string name="pc_files_saved">已将 %1$s 保存到“下载”</string>
     <string name="pc_files_failed">无法下载 %1$s</string>
+    <string name="pc_files_not_shared">在 %1$s 上的 NectarLink 设置中打开“口袋里的电脑”。</string>
+    <string name="pc_files_offline">%1$s 未连接。</string>
+    <string name="pc_files_update">请更新 %1$s 上的 NectarLink 以浏览其文件。</string>
+    <string name="pc_files_not_found">此文件夹已不在 %1$s 上。</string>
+    <string name="pc_files_error">无法列出 %1$s 上的此文件夹，请重试。</string>
     <string name="pc_files_folder_downloads">下载</string>
     <string name="pc_files_folder_documents">文档</string>
     <string name="pc_files_folder_desktop">桌面</string>
@@ -950,9 +955,9 @@
     <string name="guide_pc_files_summary">在手机上浏览电脑共享的文件夹，并将文件下载到下载文件夹。</string>
     <string name="guide_pc_files_where">首页 › 已配对电脑卡片 › 浏览电脑文件</string>
     <string name="guide_pc_files_needs">已配对且在线的电脑，并已启用存储共享</string>
-    <string name="guide_pc_files_need_1">已配对且在线的电脑，并已为此手机启用存储访问。</string>
+    <string name="guide_pc_files_need_1">已配对且在线、并共享其文件夹（口袋里的电脑）的电脑。</string>
     <string name="guide_pc_files_phone_1">在首页的已配对电脑卡片上点按浏览电脑文件，点按任意文件即可下载。</string>
-    <string name="guide_pc_files_pc_1">在电脑上的 NectarLink 中允许此手机访问存储。</string>
+    <string name="guide_pc_files_pc_1">在电脑上的 NectarLink 设置中打开“口袋里的电脑”。</string>
     <string name="guide_pc_files_opt_1">浏览电脑文件面板：浏览电脑文件夹并将文件下载到下载文件夹。</string>
     <string name="guide_pc_files_privacy">下载的文件保存在手机本地的下载文件夹中。</string>
     <string name="guide_pc_files_limits">需要已配对电脑在线。</string>

@@ -105,6 +105,7 @@ import app.nectarlink.android.contacts.PhoneContacts
 import app.nectarlink.android.core.BackgroundAccess
 import app.nectarlink.android.core.CoreState
 import app.nectarlink.android.core.Device
+import app.nectarlink.android.core.PcFolder
 import app.nectarlink.android.core.LocalNetwork
 import app.nectarlink.android.core.WakeState
 import app.nectarlink.android.core.isFinished
@@ -211,8 +212,8 @@ fun HomeScreen(
     onResendTimelineEntry: (entry: TimelineEntry) -> Unit = {},
     onSetPcAudio: (pcId: String, volume: Int?, muted: Boolean?) -> Unit = { _, _, _ -> },
     onStopKeyboardFromPc: (pcId: String) -> Unit = {},
-    onListPcFiles: (pcId: String, path: String, onResult: (List<RemoteStorageEntry>) -> Unit) -> Unit = { _, _, onResult ->
-        onResult(emptyList())
+    onListPcFiles: (pcId: String, path: String, onResult: (PcFolder) -> Unit) -> Unit = { _, _, onResult ->
+        onResult(PcFolder(emptyList()))
     },
     onDownloadPcFile: (pcId: String, remotePath: String, fileName: String, onSaved: (Uri?) -> Unit) -> Unit = { _, _, _, onSaved ->
         onSaved(null)
@@ -3246,7 +3247,7 @@ private fun parentRemotePath(path: String): String {
 @Composable
 private fun PcFilesSheet(
     device: Device,
-    onListFiles: (path: String, onResult: (List<RemoteStorageEntry>) -> Unit) -> Unit,
+    onListFiles: (path: String, onResult: (PcFolder) -> Unit) -> Unit,
     onDownloadFile: (remotePath: String, fileName: String, onSaved: (Uri?) -> Unit) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -3260,11 +3261,13 @@ private fun PcFilesSheet(
     var loading by remember(device.id) { mutableStateOf(false) }
     var downloadingPath by remember(device.id) { mutableStateOf<String?>(null) }
     var refreshTick by remember(device.id) { mutableStateOf(0) }
+    var problem by remember(device.id) { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(device.id, currentPath, refreshTick) {
         loading = true
-        onListFiles(currentPath) { fetched ->
-            entries = fetched.sortedWith(
+        onListFiles(currentPath) { folder ->
+            problem = folder.problem
+            entries = folder.entries.sortedWith(
                 compareBy<RemoteStorageEntry> { !it.isDirectoryEntry() }
                     .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name },
             )
@@ -3353,6 +3356,14 @@ private fun PcFilesSheet(
             }
 
             when {
+                problem != null && !loading -> {
+                    Text(
+                        stringResource(problem ?: R.string.pc_files_error, device.name),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp),
+                    )
+                }
                 loading && entries.isEmpty() -> {
                     Text(
                         stringResource(R.string.pc_files_loading),

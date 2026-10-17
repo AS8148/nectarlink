@@ -2125,14 +2125,27 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     fun listPcFiles(
         deviceId: String,
         path: String,
-        onResult: (List<RemoteStorageEntry>) -> Unit,
+        onResult: (PcFolder) -> Unit,
     ) {
         scope.launch(Dispatchers.IO) {
             startJob?.join()
-            val entries = runCatching { node?.listRemoteStorage(deviceId, path).orEmpty() }
-                .getOrDefault(emptyList())
+            val folder = try {
+                PcFolder(node?.listRemoteStorage(deviceId, path).orEmpty())
+            } catch (e: NectarlinkException) {
+                Log.i(TAG, "can't list a PC's folder: $e")
+                PcFolder(
+                    emptyList(),
+                    when (e) {
+                        is NectarlinkException.Denied -> R.string.pc_files_not_shared
+                        is NectarlinkException.Offline, is NectarlinkException.NotPaired -> R.string.pc_files_offline
+                        is NectarlinkException.Unsupported -> R.string.pc_files_update
+                        is NectarlinkException.NotFound -> R.string.pc_files_not_found
+                        else -> R.string.pc_files_error
+                    },
+                )
+            }
             withContext(Dispatchers.Main) {
-                onResult(entries)
+                onResult(folder)
             }
         }
     }
@@ -2240,3 +2253,9 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         val PHOTO_CAPABILITIES = listOf("photos.read")
     }
 }
+
+/** A folder on a PC: its files, or why they can't be listed (a string resource). */
+data class PcFolder(
+    val entries: List<RemoteStorageEntry>,
+    @androidx.annotation.StringRes val problem: Int? = null,
+)

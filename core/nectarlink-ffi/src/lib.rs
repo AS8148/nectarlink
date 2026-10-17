@@ -4163,16 +4163,18 @@ impl NectarlinkNode {
     }
 
     /// Lists entries in a directory on a connected paired device (`storage.list`).
-    pub fn list_remote_storage(&self, peer: String, path: String) -> Vec<RemoteStorageEntry> {
-        let Ok(peer_id) = parse_id(&peer) else {
-            return Vec::new();
-        };
+    /// `Denied` from a PC: it doesn't share its folders.
+    pub fn list_remote_storage(
+        &self,
+        peer: String,
+        path: String,
+    ) -> Result<Vec<RemoteStorageEntry>, NectarlinkError> {
+        let peer_id = parse_id(&peer)?;
         let node = self.node.clone();
         let req_path = path.clone();
-        let entries =
-            self.block_on_rt(async move { node.list_storage(&peer_id, &req_path).await }).unwrap_or_default();
+        let entries = self.block_on_rt(async move { node.list_storage(&peer_id, &req_path).await })?;
         let prefix = path.trim_matches('/');
-        entries
+        Ok(entries
             .into_iter()
             .map(|e| RemoteStorageEntry {
                 path: if prefix.is_empty() { e.name.clone() } else { format!("{prefix}/{}", e.name) },
@@ -4181,7 +4183,7 @@ impl NectarlinkNode {
                 size: e.size,
                 modified: e.modified,
             })
-            .collect()
+            .collect())
     }
 
     /// Downloads a remote file from a connected paired device (`storage.read`) in
