@@ -139,6 +139,10 @@ QtObject {
     readonly property color warning: status.warning
     readonly property color error: status.error
     readonly property color errorContent: status.onError
+    // A quiet error surface (the "sharing your screen" pill): the error hue
+    // over the surface, with the surface's own ink so text stays readable.
+    readonly property color errorContainer: Qt.tint(surfaceContainerHigh, Qt.rgba(error.r, error.g, error.b, dark ? 0.22 : 0.14))
+    readonly property color errorContainerContent: surfaceContent
 
     // ---- Component colors (docs/design/assets/nl.css) ----
     // Hive: nearly opaque, so the comb shows through as texture without
