@@ -935,14 +935,18 @@ fn request(window: Window, options: MirrorStart) {
     core_host::spawn(async move {
         if let Err(e) = node.mirror_start(window.device, options).await {
             let reason = match e {
-                Error::Denied => "Mirroring is turned off for this phone.".to_owned(),
-                Error::Unsupported if app => {
-                    "Set up Wireless debugging in NectarLink on the phone to open its apps here.".into()
-                }
+                Error::Denied => tr!("Mirror", "Mirroring is turned off for this phone."),
+                Error::Unsupported if app => tr!(
+                    "Mirror",
+                    "Set up Wireless debugging in NectarLink on the phone to open its apps here."
+                ),
                 Error::Unsupported => {
-                    "This phone's app doesn't share its screen yet. Update NectarLink on the phone.".into()
+                    tr!(
+                        "Mirror",
+                        "This phone's app doesn't share its screen yet. Update NectarLink on the phone."
+                    )
                 }
-                Error::Offline | Error::NotPaired => "The phone isn't connected.".into(),
+                Error::Offline | Error::NotPaired => tr!("Mirror", "The phone isn't connected."),
                 e => describe(&e),
             };
             set_phase(window, Phase::Ended(Some(reason)));
@@ -958,10 +962,10 @@ fn request(window: Window, options: MirrorStart) {
                 node.mirror_stop(window.device, window.session).await;
                 set_phase(
                     window,
-                    Phase::Ended(Some(
-                        "The app didn't open on the phone. Try again, or open NectarLink on the phone to check                          Wireless debugging."
-                            .into(),
-                    )),
+                    Phase::Ended(Some(tr!(
+                        "Mirror",
+                        "The app didn't open on the phone. Try again, or open NectarLink on the phone to check Wireless debugging."
+                    ))),
                 );
             }
         }

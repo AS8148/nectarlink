@@ -66,11 +66,15 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Media", "That player isn't playing anymore."), // desktop/app/src/media.rs
     QT_TRANSLATE_NOOP("Messages", "Group texts can't be sent from the PC yet."), // desktop/app/src/messages.rs
     QT_TRANSLATE_NOOP("Mirror", "Couldn't start recording."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Mirroring is turned off for this phone."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Saved %1 to Downloads\\Nectarlink."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Screenshot copied to clipboard."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Set up Wireless debugging in NectarLink on the phone to open its apps here."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "The app didn't open on the phone. Try again, or open NectarLink on the phone to check Wireless debugging."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "The phone isn't connected."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "The screenshot couldn't be copied to the clipboard."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "The screenshot couldn't be saved."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "This phone's app doesn't share its screen yet. Update NectarLink on the phone."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Wait for the screen to appear first."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Notifications", "Code copied"), // desktop/app/src/notifications.rs
     QT_TRANSLATE_NOOP("PhoneMic", "Tap Start on %1 to use its microphone."), // desktop/app/src/phone_mic.rs
