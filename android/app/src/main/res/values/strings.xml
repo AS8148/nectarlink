@@ -270,6 +270,12 @@
     <string name="pc_sleeping">%1$s is going to sleep.</string>
     <string name="pc_actions_off">Locking and sleep are turned off for this phone on %1$s.</string>
     <string name="channel_links">Links from your PC</string>
+    <!-- Play on phone: what a PC plays, streamed to the phone. -->
+    <string name="watch_offer_title">Watch from %1$s</string>
+    <string name="watch_offer_untitled">What\'s playing on your PC</string>
+    <string name="watch_offer_action">Watch</string>
+    <string name="watch_from">From %1$s</string>
+    <string name="watch_close">Close</string>
     <string name="link_from">Link from %1$s</string>
     <string name="link_opened_on">Opened on %1$s</string>
     <string name="link_pick_pc">Open on which PC?</string>

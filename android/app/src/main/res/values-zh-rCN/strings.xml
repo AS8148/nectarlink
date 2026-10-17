@@ -262,6 +262,11 @@
     <string name="pc_sleeping">%1$s 正在进入睡眠。</string>
     <string name="pc_actions_off">%1$s 上已对本手机关闭锁定与睡眠功能。</string>
     <string name="channel_links">来自电脑的链接</string>
+    <string name="watch_offer_title">观看 %1$s 上的播放</string>
+    <string name="watch_offer_untitled">电脑上正在播放的内容</string>
+    <string name="watch_offer_action">观看</string>
+    <string name="watch_from">来自 %1$s</string>
+    <string name="watch_close">关闭</string>
     <string name="link_from">来自 %1$s 的链接</string>
     <string name="link_opened_on">已在 %1$s 上打开</string>
     <string name="link_pick_pc">在哪台电脑上打开？</string>

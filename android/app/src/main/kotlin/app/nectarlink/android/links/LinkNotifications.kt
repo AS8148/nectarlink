@@ -25,7 +25,8 @@ import app.nectarlink.core.trackingSearchUrl
  * in a notification on the same channel.
  */
 object LinkNotifications {
-    private const val CHANNEL = "links"
+    /** Also Play on phone's offers ([app.nectarlink.android.media.WatchOffers]). */
+    internal const val CHANNEL = "links"
     private const val TAG = "link"
     private const val CLIP_TAG = "clip_suggestion"
     private const val CLIP_NOTIFICATION_ID = 0x434C4950 // "CLIP"

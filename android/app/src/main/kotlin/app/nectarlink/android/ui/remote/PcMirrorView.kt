@@ -29,6 +29,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -299,6 +300,9 @@ private fun isSystemAutoRotateOn(context: Context): Boolean =
  * Decodes the PC's low-latency H.264/H.265/AV1 stream onto a single persistent [TextureView]
  * across portrait and immersive landscape full-screen modes, mapping touch, drag,
  * two-finger scroll, right-click, and keyboard input back to the PC.
+ *
+ * With [watch] (Play on phone), it shows what that PC player plays instead, full screen,
+ * and sends the PC nothing: a tap calls [onTap].
  */
 @Composable
 fun PcMirrorView(
@@ -308,6 +312,8 @@ fun PcMirrorView(
     modifier: Modifier = Modifier,
     isFullScreen: Boolean = false,
     onFullScreenChange: (Boolean) -> Unit = {},
+    watch: String? = null,
+    onTap: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -320,7 +326,8 @@ fun PcMirrorView(
     val activeConfig = mirrorConfig?.takeIf { it.pcId == pcId }
     val effectiveCodec = activeConfig?.codec ?: "h264"
 
-    var highQuality by rememberSaveable { mutableStateOf(false) }
+    // Video looks its best at 1080p; the PC's desktop starts at 720p.
+    var highQuality by rememberSaveable { mutableStateOf(watch != null) }
     var showKeyboardBar by rememberSaveable { mutableStateOf(false) }
     var typedText by rememberSaveable { mutableStateOf("") }
     var surface by remember { mutableStateOf<Surface?>(null) }
@@ -430,7 +437,8 @@ fun PcMirrorView(
                 }
             }
         }
-        if (listener.canDetectOrientation()) {
+        // Watching stays full screen, however the phone is held.
+        if (watch == null && listener.canDetectOrientation()) {
             listener.enable()
         }
         onDispose {
@@ -441,7 +449,7 @@ fun PcMirrorView(
     // Also follow configuration orientation changes when system auto-rotate is enabled
     // (for example, emulator window rotation).
     LaunchedEffect(configuration.orientation, autoRotateEnabled) {
-        if (!autoRotateEnabled) return@LaunchedEffect
+        if (!autoRotateEnabled || watch != null) return@LaunchedEffect
         if (
             configuration.orientation == Configuration.ORIENTATION_LANDSCAPE &&
             !isFullScreen &&
@@ -523,7 +531,7 @@ fun PcMirrorView(
             "PcMirrorView",
             "startPcMirror maxSize=$maxSize fps=30 bitrate=$bitrate",
         )
-        core.startPcMirror(pcId, maxSize = maxSize, fps = 30, bitrate = bitrate)
+        core.startPcMirror(pcId, maxSize = maxSize, fps = 30, bitrate = bitrate, watch = watch)
     }
 
     DisposableEffect(pcId) {
@@ -744,7 +752,12 @@ fun PcMirrorView(
                 .clip(outerShape)
                 .background(Color.Black)
                 .semantics { contentDescription = viewportDescription }
-                .pointerInput(pcId) {
+                .pointerInput(pcId, watch) {
+                    if (watch != null) {
+                        // Watching: nothing goes to the PC.
+                        detectTapGestures(onTap = { onTap() })
+                        return@pointerInput
+                    }
                     val tapSlop = viewConfiguration.touchSlop
                     val scrollStepPx = 16.dp.toPx().coerceAtLeast(1f)
                     val tapTimeoutMs = 280L
@@ -972,7 +985,7 @@ fun PcMirrorView(
             }
 
             // Expand button in the corner of the portrait viewer
-            if (!isFullScreen) {
+            if (!isFullScreen && watch == null) {
                 IconButton(
                     onClick = { enterFullScreen(fromButton = true) },
                     colors = IconButtonDefaults.iconButtonColors(
@@ -990,7 +1003,7 @@ fun PcMirrorView(
             }
 
             // Slim overlay row in full screen: appears on tap and fades out after 3 s
-            if (isFullScreen) {
+            if (isFullScreen && watch == null) {
                 androidx.compose.animation.AnimatedVisibility(
                     visible = overlayVisible,
                     enter = if (reducedMotion) EnterTransition.None else fadeIn(tween(180)),
@@ -1174,7 +1187,7 @@ fun PcMirrorView(
         }
 
         // Portrait action bar
-        if (!isFullScreen) {
+        if (!isFullScreen && watch == null) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),

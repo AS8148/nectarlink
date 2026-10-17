@@ -63,6 +63,11 @@ class PcMedia(
     var activeSeedColor: UInt? = null
         private set
 
+    private val _playing = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Boolean>>(emptyMap())
+
+    /** Whether each PC player plays, by "pc/player" (for Play on phone's controls). */
+    val playing: kotlinx.coroutines.flow.StateFlow<Map<String, Boolean>> = _playing
+
     private val _summaryFlow = kotlinx.coroutines.flow.MutableStateFlow<Summary?>(null)
     val summaryFlow: kotlinx.coroutines.flow.StateFlow<Summary?> = _summaryFlow
 
@@ -100,9 +105,13 @@ class PcMedia(
                 art[cacheKey] = entry
             }
             if (list.isEmpty()) players.remove(pc) else players[pc] = list
+            _playing.value = players.flatMap { (id, all) -> all.map { "$id/${it.id}" to it.playing } }.toMap()
             render()
         }
     }
+
+    /** Asks the PC [pc]'s [player] to [action] (Play on phone's controls). */
+    fun command(pc: String, player: String, action: MediaAction) = send(pc, player, action, null)
 
     private fun command(action: MediaAction, position: ULong? = null) {
         val (pc, player) = shown ?: return

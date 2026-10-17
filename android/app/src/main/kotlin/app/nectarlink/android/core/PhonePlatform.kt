@@ -61,6 +61,8 @@ internal class PhonePlatform(
     private val media: PhoneMedia,
     /** Shows a link a PC sent: (PC's ID, link) → shown. */
     private val onLink: (String, String) -> Boolean,
+    /** Shows a PC's Play on phone offer: (PC's ID, player, title) → shown. */
+    private val onWatch: (String, String, String?) -> Boolean,
     /** Shows or updates a watched task from a PC: (PC's ID, task) → shown. */
     private val onTask: (String, TaskNotify) -> Boolean,
     /** The phone's calls (created after this). */
@@ -102,6 +104,9 @@ internal class PhonePlatform(
         media.command(player, action, position)
 
     override fun openLink(fromId: String, url: String): Boolean = onLink(fromId, url)
+
+    override fun watchOffered(fromId: String, player: String, title: String?): Boolean =
+        onWatch(fromId, player, title)
 
     override fun taskNotify(fromId: String, task: TaskNotify): Boolean = onTask(fromId, task)
 

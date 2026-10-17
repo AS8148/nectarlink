@@ -2581,6 +2581,10 @@ pub trait Platform: Send + Sync {
     /// A paired PC sent a web link (http or https, checked) to open.
     /// False if it couldn't be shown.
     fn open_link(&self, from_id: String, url: String) -> bool;
+    /// Play on phone: a paired PC offers to stream what its `player` plays
+    /// (`title`). Show the offer; taking it starts PC mirroring with
+    /// `watch` set to `player`. False if it couldn't be shown.
+    fn watch_offered(&self, from_id: String, player: String, title: Option<String>) -> bool;
     /// A paired PC sent an ongoing or completed task notification (`task.notify`).
     /// False if it couldn't be shown.
     fn task_notify(&self, from_id: String, task: TaskNotify) -> bool;
@@ -2781,6 +2785,13 @@ impl core::Platform for PlatformAdapter {
     }
     fn open_link(&self, from: &DeviceId, url: &str) -> Result<(), String> {
         if self.0.open_link(from.to_string(), url.to_owned()) { Ok(()) } else { Err("not shown".into()) }
+    }
+    fn watch_offered(&self, from: &DeviceId, player: &str, title: Option<&str>) -> Result<(), String> {
+        if self.0.watch_offered(from.to_string(), player.to_owned(), title.map(str::to_owned)) {
+            Ok(())
+        } else {
+            Err("not shown".into())
+        }
     }
     fn task_notify(&self, from: &DeviceId, task: &core::TaskNotify) -> Result<(), String> {
         if self.0.task_notify(from.to_string(), task.clone().into()) {

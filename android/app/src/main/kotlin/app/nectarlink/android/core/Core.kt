@@ -97,6 +97,15 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         ringer,
         phoneMedia,
         onLink = { pc, url -> LinkNotifications.show(this.context, _state.value.nameOf(pc).orEmpty(), url) },
+        onWatch = { pc, player, title ->
+            app.nectarlink.android.media.WatchOffers.show(
+                this.context,
+                pc,
+                _state.value.nameOf(pc).orEmpty(),
+                player,
+                title,
+            )
+        },
         onTask = { pc, task ->
             app.nectarlink.android.notifications.TaskNotifications.show(
                 this.context,
@@ -1592,6 +1601,8 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     /** What this phone offers PCs (docs/protocol/capabilities.md). */
     private fun capabilities(notificationAccess: Boolean): List<String> =
         CLIPBOARD_CAPABILITIES +
+            // Play on phone: shows a PC's playback, streamed from the PC.
+            listOf("media.watch") +
             toggles.capabilities() +
             (if (notificationAccess) NOTIFICATION_CAPABILITIES + MEDIA_CAPABILITIES else emptyList()) +
             (if (notificationAccess && NotificationListener.canReadSensitive(context)) listOf("notify.sensitive") else emptyList()) +

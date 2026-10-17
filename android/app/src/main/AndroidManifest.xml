@@ -325,6 +325,14 @@
             android:foregroundServiceType="camera" />
 
         <!-- Continuity Camera: takes a photo or scans a document for a paired PC. -->
+        <!-- Play on phone: a PC player's picture and sound, full screen. -->
+        <activity
+            android:name=".ui.watch.WatchActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Nectarlink" />
+
         <activity
             android:name=".camera.ContinuityCameraActivity"
             android:exported="false"
