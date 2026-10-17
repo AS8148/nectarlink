@@ -13,7 +13,9 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 const FILE_NAME: &str = "nectarlink.log";
 const PREVIOUS_FILE_NAME: &str = "nectarlink.1.log";
 const ROTATE_AT_BYTES: u64 = 4 * 1024 * 1024;
-const DEFAULT_FILTER: &str = "info,iroh=warn,iroh_quinn=warn,iroh_quinn_proto=warn,swarm_discovery=warn";
+/// mDNS warns several times a second for every network adapter it can't
+/// reach (a disconnected VPN, Hyper-V's), which buried everything else.
+const DEFAULT_FILTER: &str = "info,iroh=warn,iroh_quinn=warn,iroh_quinn_proto=warn,swarm_discovery=error";
 
 pub fn logs_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("logs")
