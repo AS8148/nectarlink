@@ -270,8 +270,83 @@ pub fn format_clip_display(raw_text: &str) -> (String, Option<String>) {
     (collapsed, None)
 }
 
+/// What a [`TimelineKind::Session`] entry was. Its `title` is English for
+/// whoever reads the store directly; an app shows its own words for these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionKind {
+    /// A phone's screen, mirrored on this device.
+    PhoneScreen,
+    /// One of a phone's apps in a window of its own (its mirroring session).
+    AppWindow(u32),
+    /// This device's screen, shared with a phone.
+    PcScreen,
+    /// A phone's camera used as a webcam.
+    Webcam,
+    /// A phone's microphone used on this device.
+    Microphone,
+}
+
+/// The title the core gives an app window's session entry.
+const APP_WINDOW_TITLE: &str = "App window #";
+
+impl TimelineEntry {
+    /// What this entry was, if it is a session; from what the core recorded
+    /// (`target` and the direction), so it holds for entries made before
+    /// this existed too.
+    #[must_use]
+    pub fn session_kind(&self) -> Option<SessionKind> {
+        if self.kind != TimelineKind::Session {
+            return None;
+        }
+        match self.target.as_str() {
+            "webcam" => Some(SessionKind::Webcam),
+            "mic" => Some(SessionKind::Microphone),
+            "mirror" if !self.incoming => Some(SessionKind::PcScreen),
+            "mirror" => Some(
+                self.title
+                    .strip_prefix(APP_WINDOW_TITLE)
+                    .and_then(|n| n.parse().ok())
+                    .map_or(SessionKind::PhoneScreen, SessionKind::AppWindow),
+            ),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sessions_say_what_they_were_whatever_their_title() {
+        use super::{SessionKind, TimelineEntry, TimelineKind};
+        let entry = |kind, incoming, title: &str, target: &str| TimelineEntry {
+            id: 1,
+            kind,
+            device_id: nectarlink_protocol::DeviceId([1; 32]),
+            device_name: "Pixel".into(),
+            incoming,
+            timestamp: 0,
+            title: title.into(),
+            detail: String::new(),
+            target: target.into(),
+            size_bytes: 0,
+            duration_secs: 0,
+            ref_id: None,
+            clip_available: false,
+            image_data_url: None,
+        };
+        let session =
+            |incoming, title, target| entry(TimelineKind::Session, incoming, title, target).session_kind();
+        assert_eq!(session(true, "Phone webcam", "webcam"), Some(SessionKind::Webcam));
+        assert_eq!(session(false, "Phone microphone", "mic"), Some(SessionKind::Microphone));
+        assert_eq!(session(true, "Screen mirroring", "mirror"), Some(SessionKind::PhoneScreen));
+        assert_eq!(session(false, "Screen mirroring", "mirror"), Some(SessionKind::PcScreen));
+        assert_eq!(session(true, "App window #3", "mirror"), Some(SessionKind::AppWindow(3)));
+        // The title isn't what decides.
+        assert_eq!(session(true, "Bildschirm", "webcam"), Some(SessionKind::Webcam));
+        assert_eq!(session(true, "Something", "other"), None);
+        assert_eq!(entry(TimelineKind::File, true, "Phone webcam", "webcam").session_kind(), None);
+    }
+
     use super::*;
 
     #[test]

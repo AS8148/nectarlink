@@ -156,8 +156,8 @@ pub use store::{
 };
 pub use timeline::{
     DEFAULT_TIMELINE_MAX_DAYS, DEFAULT_TIMELINE_MAX_ENTRIES, DEFAULT_TIMELINE_PAGE_LIMIT,
-    MAX_TIMELINE_PAGE_LIMIT, TimelineEntry, TimelineKind, TimelinePage, TimelineQuery, TimelineRetention,
-    format_clip_display,
+    MAX_TIMELINE_PAGE_LIMIT, SessionKind, TimelineEntry, TimelineKind, TimelinePage, TimelineQuery,
+    TimelineRetention, format_clip_display,
 };
 pub use transfer::{
     Direction, FileSource, OutgoingFile, RECORDER, RecordingMarker, Transfer, TransferFailure, TransferState,

@@ -195,7 +195,7 @@ fn role_value(row: &Row, role: &str) -> QVariant {
         "deviceName" => text(&row.device_name),
         "timestamp" => QVariant::from(&(e.timestamp as f64)),
         "prevTimestamp" => QVariant::from(&(row.prev_timestamp as f64)),
-        "title" => text(&crate::i18n::timeline_title(&row.title)),
+        "title" => text(&row.title),
         "subtitle" => text(&row.subtitle),
         "sizeBytes" => QVariant::from(&(e.size_bytes as f64)),
         "durationSecs" => QVariant::from(&(e.duration_secs as i32)),
@@ -694,7 +694,11 @@ fn describe_entry(
             (title, parts.join(" · "), String::new(), String::new(), 1, valid, false, !url.is_empty(), valid)
         }
         TimelineKind::Session => {
-            let title = if entry.title.is_empty() { "Session".into() } else { entry.title.clone() };
+            let title = match entry.session_kind() {
+                Some(kind) => crate::i18n::session_title(kind),
+                None if entry.title.is_empty() => tr!("Timeline", "Session"),
+                None => entry.title.clone(),
+            };
             let mut parts = vec![who];
             if !entry.detail.is_empty() {
                 parts.push(entry.detail.clone());
@@ -756,7 +760,7 @@ pub fn preview_json() -> String {
                 "incoming": r.entry.incoming,
                 "deviceName": r.device_name,
                 "timestamp": r.entry.timestamp,
-                "title": crate::i18n::timeline_title(&r.title),
+                "title": r.title,
                 "subtitle": r.subtitle,
                 "thumbUrl": r.thumb_url,
             })

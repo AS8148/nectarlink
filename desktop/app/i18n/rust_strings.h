@@ -319,6 +319,7 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Setup", "Setup is taking too long. Try again after restarting the PC."), // desktop/app/src/setup.rs
     QT_TRANSLATE_NOOP("Setup", "Setup stopped with code %1."), // desktop/app/src/setup.rs
     QT_TRANSLATE_NOOP("Setup", "The uninstaller is missing. Reinstall NectarLink, then uninstall it."), // desktop/app/src/setup.rs
+    QT_TRANSLATE_NOOP("Timeline", "App window #%1"), // desktop/app/src/i18n.rs
     QT_TRANSLATE_NOOP("Timeline", "Clip (removed from clipboard history)"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Copied image"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Copied link to clipboard."), // desktop/app/src/bridge/timeline.rs
@@ -336,6 +337,7 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Timeline", "Sending to %1…"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Sent clip to %1."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Sent to %1"), // desktop/app/src/bridge/timeline.rs
+    QT_TRANSLATE_NOOP("Timeline", "Session"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "That clip is no longer in clipboard history."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "That entry couldn't be removed. Try again."), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "That file was moved or deleted."), // desktop/app/src/bridge/timeline.rs

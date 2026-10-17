@@ -79,15 +79,15 @@ macro_rules! tr {
 }
 pub(crate) use tr;
 
-/// A timeline entry's title in the app's language: the core names its
-/// sessions in English ("Phone webcam"); anything else (a file's or a
-/// person's name) stays as it is.
-pub fn timeline_title(title: &str) -> String {
-    match title {
-        "Phone webcam" => tr!("Timeline", "Phone webcam"),
-        "Screen mirroring" => tr!("Timeline", "Screen mirroring"),
-        "Phone microphone" => tr!("Timeline", "Phone microphone"),
-        other => other.to_owned(),
+/// A session's title in the app's language, by what it was (the core's own
+/// title is English).
+pub fn session_title(kind: nectarlink_core::SessionKind) -> String {
+    use nectarlink_core::SessionKind;
+    match kind {
+        SessionKind::PhoneScreen | SessionKind::PcScreen => tr!("Timeline", "Screen mirroring"),
+        SessionKind::AppWindow(n) => tr!("Timeline", "App window #%1", n),
+        SessionKind::Webcam => tr!("Timeline", "Phone webcam"),
+        SessionKind::Microphone => tr!("Timeline", "Phone microphone"),
     }
 }
 
