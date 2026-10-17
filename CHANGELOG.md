@@ -4,6 +4,23 @@ All notable changes to NectarLink. Versions follow
 [semantic versioning](https://semver.org); before 1.0, a minor version may
 change things that need a step from you, and its notes say so.
 
+## Unreleased
+
+### New
+
+- **The Windows app follows the system language**, and speaks Simplified
+  Chinese, by [@zzz1465720680](https://github.com/zzz1465720680)
+  ([#16](https://github.com/thtbee/nectarlink/pull/16),
+  [#17](https://github.com/thtbee/nectarlink/pull/17)).
+
+### Changed
+
+- **4K for Phone as webcam shows on the PC only when the phone can stream
+  it.** The PC offered 4K for every phone and camera; picked for one that
+  can't, the stream stayed at 1080p and the choice moved back. The phone
+  now says what the camera in use can do, and the PC's choices follow it,
+  also when you switch cameras.
+
 ## 0.1.4 (2026-10-17)
 
 Steadier connections, Pause for banking apps, Simplified Chinese on Android,
