@@ -46,6 +46,8 @@
     <string name="settings_appearance">外观</string>
     <string name="settings_theme">主题</string>
     <string name="settings_mode">模式</string>
+    <string name="settings_language">语言</string>
+    <string name="settings_language_more">更多</string>
     <string name="settings_dynamic_color">壁纸取色</string>
     <string name="settings_dynamic_color_hint">使用壁纸的颜色。</string>
     <string name="settings_devices">电脑</string>

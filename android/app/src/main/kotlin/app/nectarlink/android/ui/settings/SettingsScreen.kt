@@ -52,6 +52,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import app.nectarlink.android.ui.AppLanguage
+import androidx.compose.material3.RadioButton
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -127,6 +130,7 @@ fun SettingsScreen(
 ) {
     var confirmUnpair by remember { mutableStateOf<Device?>(null) }
     var confirmClearEverything by remember { mutableStateOf(false) }
+    var pickLanguage by remember { mutableStateOf(false) }
     var activeCategory by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("all") }
     var pulsingSectionKey by remember { mutableStateOf<String?>(null) }
     val isGlass = LocalGlassTheme.current
@@ -251,6 +255,23 @@ fun SettingsScreen(
                         ),
                         appearance.mode,
                     ) { value -> onAppearance { it.copy(mode = value) } }
+                    if (AppLanguage.supported) {
+                        // System and English, plus the language picked from the list (or More).
+                        val context = LocalContext.current
+                        val language = remember { AppLanguage.current(context) }
+                        val other = AppLanguage.languages.firstOrNull { it.first == language && it.first != "en" }
+                        Label(stringResource(R.string.settings_language))
+                        Choice(
+                            listOf(
+                                "" to stringResource(R.string.mode_system),
+                                "en" to "English",
+                                (other ?: (MORE_LANGUAGES to stringResource(R.string.settings_language_more))),
+                            ),
+                            language,
+                        ) { value ->
+                            if (value == "" || value == "en") AppLanguage.set(context, value) else pickLanguage = true
+                        }
+                    }
                     if (appearance.theme == "hive") {
                         SettingRowDivider()
                         val combTitle = stringResource(R.string.settings_comb_motion)
@@ -943,6 +964,39 @@ fun SettingsScreen(
         )
     }
 
+    if (pickLanguage && AppLanguage.supported) {
+        val context = LocalContext.current
+        val language = remember { AppLanguage.current(context) }
+        AlertDialog(
+            onDismissRequest = { pickLanguage = false },
+            containerColor = glassModalContainerColor(),
+            title = { Text(stringResource(R.string.settings_language)) },
+            text = {
+                Column {
+                    AppLanguage.languages.forEach { (tag, name) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(selected = tag == language, role = Role.RadioButton) {
+                                    pickLanguage = false
+                                    AppLanguage.set(context, tag)
+                                }
+                                .padding(vertical = 12.dp),
+                        ) {
+                            RadioButton(selected = tag == language, onClick = null)
+                            Spacer(Modifier.width(12.dp))
+                            Text(name, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { pickLanguage = false }) { Text(stringResource(R.string.action_cancel)) }
+            },
+        )
+    }
+
     if (confirmClearEverything) {
         AlertDialog(
             onDismissRequest = { confirmClearEverything = false },
@@ -1482,6 +1536,9 @@ private fun Section(
 private fun Label(text: String) {
     Text(text, style = MaterialTheme.typography.titleSmall)
 }
+
+/** The third language choice when it isn't a picked language: opens the list. */
+private const val MORE_LANGUAGES = "more"
 
 @Composable
 private fun Choice(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {

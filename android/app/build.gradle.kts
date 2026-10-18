@@ -53,6 +53,12 @@ android {
         }
     }
 
+    // Lists the languages in res/ for Android 13's per-app language (App languages in
+    // the system's settings, and Settings › Appearance › Language in the app).
+    androidResources {
+        generateLocaleConfig = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
