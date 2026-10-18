@@ -103,6 +103,11 @@ fn write_atomically(path: &Path, data: &[u8]) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
     {
         let mut file = fs::File::create(&tmp)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
         file.write_all(data)?;
         file.sync_all()?;
     }
@@ -261,5 +266,17 @@ mod tests {
         assert!(nectarlink_protocol::messages::is_valid_install_id(&a));
         assert!(!a.contains("9774d56d682e549c"), "the raw ID never appears");
         assert_eq!(install_id_from("  "), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn key_file_has_0600_permissions_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let protector = default_protector();
+        load_or_create(dir.path(), protector.as_ref()).unwrap();
+        let meta = fs::metadata(dir.path().join(FILE_NAME)).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
     }
 }

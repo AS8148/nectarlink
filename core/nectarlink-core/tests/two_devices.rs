@@ -6081,3 +6081,88 @@ async fn a_phone_keeps_its_notifications_from_a_phone_that_doesnt_show_them() {
     other.node.shutdown().await;
     phone.node.shutdown().await;
 }
+
+#[tokio::test]
+async fn usb_upgrade_reconnect_and_realtime_pcm_do_not_starve_control_rpcs() {
+    use nectarlink_core::ConnectionPath;
+
+    let mut phone = start_usb_device("Pixel", DeviceKind::Phone, Some(0), &["find.ring"]).await;
+    let mut pc = start_usb_device("Desktop", DeviceKind::Desktop, None, &["find.ring"]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+    assert!(matches!(
+        pc.node.paired_devices().unwrap()[0].link,
+        LinkState::Online { path: ConnectionPath::Lan, .. }
+    ));
+
+    // Attach USB tunnel while a LAN session is already live: both sides upgrade to ConnectionPath::Usb.
+    let usb_port = phone.node.usb_port().expect("phone USB TCP listener");
+    let tunnel_addr: SocketAddr = ("127.0.0.1".parse::<std::net::IpAddr>().unwrap(), usb_port).into();
+    pc.node.connect_usb_tunnel(tunnel_addr).await.expect("connect USB tunnel");
+
+    wait_for(&mut pc, "pc upgrades to usb", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Online { path: ConnectionPath::Usb, .. } }
+            if *device == phone_id =>
+        {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+    wait_for(&mut phone, "phone upgrades to usb", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Online { path: ConnectionPath::Usb, .. } }
+            if *device == pc_id =>
+        {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+
+    // Enqueue a burst of 512 >960-byte PCM frames (2x OUTBOX_CAPACITY, going through
+    // try_send_realtime) before the writer task runs and verify that excess frames past
+    // half outbox capacity are dropped while control RPCs (ring) still complete promptly.
+    const BURST_FRAMES: usize = 512;
+    let payload = vec![0u8; 1_000];
+    for _ in 0..BURST_FRAMES {
+        pc.node
+            .send_pc_audio_pcm(&phone_id, 48_000, 2, payload.clone())
+            .await
+            .expect("realtime PCM enqueue returns Ok even when dropping frames");
+    }
+    with_timeout("ring during realtime pcm burst", pc.node.ring(phone_id, true))
+        .await
+        .expect("control RPC succeeds during realtime burst");
+    assert_eq!(*phone.platform.rings.lock().unwrap(), [true]);
+
+    let mut received_pcm = 0usize;
+    while let Ok(ev) = phone.events.try_recv() {
+        if matches!(ev, NodeEvent::PcAudioFrame { .. }) {
+            received_pcm += 1;
+        }
+    }
+    assert!(
+        (1..=128).contains(&received_pcm),
+        "expected excess realtime frames to be dropped past half outbox capacity (128), got {received_pcm}"
+    );
+
+    // Shut down the phone (which closes the USB TCP tunnel) and restart it over LAN.
+    phone.node.shutdown().await;
+    wait_for(&mut pc, "phone offline before restart", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == phone_id => Some(()),
+        _ => None,
+    })
+    .await;
+
+    let TestDevice { node: old_phone, dir, .. } = phone;
+    drop(old_phone);
+    let mut phone = start_in(dir, "Pixel", DeviceKind::Phone).await;
+    wait_online(&mut phone, pc_id).await;
+    wait_online(&mut pc, phone_id).await;
+    with_timeout("ring after restart", pc.node.ring(phone_id, false))
+        .await
+        .expect("ring works after restart");
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}

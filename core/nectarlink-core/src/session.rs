@@ -300,20 +300,36 @@ impl Session {
         self.outbox.send(env).await.map_err(|_| Error::Offline)
     }
 
+    /// Best-effort non-blocking enqueue for loss-tolerant real-time media frames
+    /// (such as live PCM audio fallback).
+    ///
+    /// Returns `Ok(())` even when a frame is dropped because the outbox is past half
+    /// capacity or full, so real-time media never fills the control stream outbox and
+    /// starves heartbeats or RPCs. Do not use this for messages that must arrive.
+    pub fn try_send_realtime(&self, env: Envelope) -> Result<()> {
+        if self.outbox.capacity() <= OUTBOX_CAPACITY / 2 {
+            return Ok(());
+        }
+        match self.outbox.try_send(env) {
+            Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(Error::Offline),
+        }
+    }
+
     /// Sends a request and waits for the reply with the matching `re`.
     pub async fn request(&self, env: Envelope, timeout: Duration) -> Result<Envelope> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
-        let result = async {
+        let result = match tokio::time::timeout(timeout, async {
             self.send(env.with_id(id)).await?;
-            match tokio::time::timeout(timeout, rx).await {
-                Ok(Ok(reply)) => Ok(reply),
-                Ok(Err(_)) => Err(Error::Offline),
-                Err(_) => Err(Error::Timeout),
-            }
-        }
-        .await;
+            rx.await.map_err(|_| Error::Offline)
+        })
+        .await
+        {
+            Ok(inner) => inner,
+            Err(_) => Err(Error::Timeout),
+        };
         self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         result
     }

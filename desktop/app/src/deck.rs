@@ -333,7 +333,14 @@ fn execute_action(action: &DeckAction) -> Result<(), String> {
             win::input::type_text(text);
             Ok(())
         }
-        DeckAction::LaunchApp { path } => win::shell::launch_app(Path::new(path)),
+        DeckAction::LaunchApp { path } => {
+            let expanded = path
+                .trim()
+                .strip_prefix("~/")
+                .and_then(|rest| dirs::home_dir().map(|home| home.join(rest)))
+                .unwrap_or_else(|| PathBuf::from(path.trim()));
+            win::shell::launch_app(&expanded)
+        }
         DeckAction::RunCommand { command } => {
             if let Some(obs_cmd) = command.trim().strip_prefix("obs:") {
                 send_obs_command(obs_cmd.trim())

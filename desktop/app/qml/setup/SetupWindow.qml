@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import QtQuick
+import QtQuick.Shapes
 import app.nectarlink
 
 // The installer's and the uninstaller's window (src/setup.rs). One window,
 // three moments: welcome, working, done. Its own fixed colors (honey on warm
-// paper, or on charcoal), following Windows' light or dark mode.
+// paper, or on charcoal), following the system's light or dark mode.
 NativeWindow {
     id: window
 
@@ -112,10 +113,26 @@ NativeWindow {
             }
             Text {
                 anchors.centerIn: parent
-                text: ""
+                visible: Qt.platform.os === "windows"
+                text: "\ue8bb"
                 font.family: "Segoe Fluent Icons"
                 font.pixelSize: 10
                 color: closeArea.containsMouse ? "#FFFFFF" : window.ink
+            }
+            Shape {
+                anchors.centerIn: parent
+                visible: Qt.platform.os !== "windows"
+                width: 10
+                height: 10
+                preferredRendererType: Shape.CurveRenderer
+                ShapePath {
+                    strokeColor: closeArea.containsMouse ? "#FFFFFF" : window.ink
+                    strokeWidth: 1.25
+                    fillColor: "transparent"
+                    capStyle: ShapePath.RoundCap
+                    joinStyle: ShapePath.RoundJoin
+                    PathSvg { path: "M 1 1 L 9 9 M 9 1 L 1 9" }
+                }
             }
             MouseArea {
                 id: closeArea

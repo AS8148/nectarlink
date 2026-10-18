@@ -225,14 +225,54 @@ pub fn is_valid_snippet(text: &str) -> bool {
         && !text.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
 }
 
-/// Validates that `path` is a non-empty `.exe` or `.lnk` file path on the PC.
+/// Validates that `path` is a non-empty `.exe`, `.lnk`, `.desktop`, or `.appimage`
+/// file path, or an absolute (or `~/`) Unix executable path excluding shells,
+/// `.sh` scripts, and non-application system/temp directories.
 pub fn is_valid_app_path(path: &str) -> bool {
     let trimmed = path.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_PATH_BYTES || trimmed.chars().any(char::is_control) {
         return false;
     }
+    if trimmed.split(['/', '\\']).any(|seg| seg == "..") {
+        return false;
+    }
     let lower = trimmed.to_ascii_lowercase();
-    (lower.ends_with(".exe") || lower.ends_with(".lnk")) && trimmed.len() > 4
+    for ext in [".exe", ".lnk", ".desktop", ".appimage"] {
+        if let Some(stem) = lower.strip_suffix(ext) {
+            let file_stem = stem.rsplit(['/', '\\']).next().unwrap_or(stem);
+            return !file_stem.is_empty();
+        }
+    }
+    if !trimmed.starts_with('/') && !trimmed.starts_with("~/") {
+        return false;
+    }
+    let Some((parent, name)) = trimmed.rsplit_once('/') else {
+        return false;
+    };
+    let lower_name = name.to_ascii_lowercase();
+    let is_shell =
+        matches!(lower_name.as_str(), "sh" | "bash" | "dash" | "zsh" | "fish" | "csh" | "tcsh" | "ksh");
+    if parent.is_empty()
+        || parent == "~"
+        || name.is_empty()
+        || name == "."
+        || name.contains('\\')
+        || lower_name.ends_with(".sh")
+        || is_shell
+    {
+        return false;
+    }
+    let parent_segments = parent.strip_prefix("~/").unwrap_or_else(|| &parent[1..]);
+    if parent_segments.split('/').any(|seg| seg.is_empty() || seg == ".") {
+        return false;
+    }
+    !matches!(parent, "/etc" | "/tmp" | "/var/tmp" | "/dev" | "/proc" | "/sys")
+        && !parent.starts_with("/etc/")
+        && !parent.starts_with("/tmp/")
+        && !parent.starts_with("/var/tmp/")
+        && !parent.starts_with("/dev/")
+        && !parent.starts_with("/proc/")
+        && !parent.starts_with("/sys/")
 }
 
 /// Validates a command string for `RunCommand`.
@@ -753,7 +793,36 @@ mod tests {
         assert!(DeckAction::LaunchApp { path: r"C:\Users\me\Desktop\OBS Studio.LNK".into() }.is_valid());
         assert!(!DeckAction::LaunchApp { path: r"C:\scripts\evil.bat".into() }.is_valid());
         assert!(!DeckAction::LaunchApp { path: r"C:\scripts\evil.ps1".into() }.is_valid());
+
+        assert!(DeckAction::LaunchApp { path: "/usr/bin/firefox".into() }.is_valid());
+        assert!(DeckAction::LaunchApp { path: "org.mozilla.firefox.desktop".into() }.is_valid());
+        assert!(DeckAction::LaunchApp { path: "/opt/app/MyApp.AppImage".into() }.is_valid());
+        assert!(DeckAction::LaunchApp { path: "/home/alice/.local/bin/obsidian".into() }.is_valid());
+        assert!(DeckAction::LaunchApp { path: "~/.local/bin/firefox".into() }.is_valid());
+        assert!(DeckAction::LaunchApp { path: "/run/current-system/sw/bin/alacritty".into() }.is_valid());
+        assert!(DeckAction::LaunchApp { path: "/usr/games/steam".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/usr/local/bin/start.sh".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/usr/bin/sh".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/usr/bin/bash".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/home/alice/.local/bin/zsh".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "~/.local/bin/zsh".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/home/alice/.local/bin/deploy.sh".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "~/.local/bin/deploy.sh".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/etc/passwd".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/tmp/payload".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/var/tmp/sub/payload".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/dev/shm/payload".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "./payload".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/payload".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "~/payload".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "~/".into() }.is_valid());
         assert!(!DeckAction::LaunchApp { path: ".exe".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: ".desktop".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "../bin/sh".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/usr/../etc/passwd".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "~/.local/../bin/firefox".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "relative/bin/firefox".into() }.is_valid());
+        assert!(!DeckAction::LaunchApp { path: "/".into() }.is_valid());
 
         assert!(DeckAction::Shortcut { key: "m".into(), mods: vec![KeyMod::Ctrl, KeyMod::Shift] }.is_valid());
         assert!(DeckAction::Shortcut { key: remote_keys::F5.into(), mods: vec![] }.is_valid());
