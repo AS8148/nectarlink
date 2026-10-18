@@ -80,6 +80,11 @@ has a Stop button. Choosing another
   drops a moment of sound under load rather than holding up everything
   else. Thanks to Jochen Kirstätter
   ([#23](https://github.com/thtbee/nectarlink/pull/23)).
+- The Timeline showed thumbnails only for photos saved from the phone,
+  and some of those came out empty. Images you send or receive now get
+  one too, files without one get an icon for their type, and Copy works
+  for them. Thanks to Jochen Kirstätter
+  ([#28](https://github.com/thtbee/nectarlink/issues/28)).
 - Turning on LocalSend closed the Windows app.
 - Play on phone froze on the phone when the player's window was
   minimized, and showed the whole screen when it couldn't find the
