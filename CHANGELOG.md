@@ -61,6 +61,11 @@ change things that need a step from you, and its notes say so.
 
 ### Fixed
 
+- With NectarLink in two profiles on one phone (a work profile, or a
+  cloned app), only one of them could connect over USB, and the PC kept
+  offering to pair the other. Each profile now connects over USB, and the
+  phone's name says which one it is, such as "Pixel 9a (Work)"
+  ([#25](https://github.com/thtbee/nectarlink/issues/25)).
 - Turning on LocalSend closed the Windows app.
 - Play on phone froze on the phone when the player's window was
   minimized, and showed the whole screen when it couldn't find the
