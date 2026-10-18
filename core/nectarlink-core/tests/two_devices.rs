@@ -5957,6 +5957,35 @@ async fn a_phone_streams_its_microphone_when_its_user_agrees() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_phone_can_start_its_microphone_for_a_pc_itself() {
+    use nectarlink_core::{MIC_LISTEN, MIC_STREAM, MirrorAudioConfig, MirrorSend, PacketKind};
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[MIC_LISTEN]).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &[MIC_STREAM]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+
+    // Started on the phone, as the webcam can be: the PC never asked.
+    let stream = Arc::new(with_timeout("mic_open", phone.node.mic_open(pc_id)).await.unwrap());
+    let config = MirrorAudioConfig { codec: nectarlink_core::MIRROR_PCM.into(), rate: 48_000, channels: 1 };
+    let sender = stream.clone();
+    let sent = tokio::task::spawn_blocking(move || sender.send(PacketKind::Config, 0, config.to_cbor()))
+        .await
+        .unwrap();
+    assert_eq!(sent, MirrorSend::Queued);
+    let device = wait_for(&mut pc, "mic on", |e| match e {
+        NodeEvent::Mic { device, on: true } => Some(*device),
+        _ => None,
+    })
+    .await;
+    assert_eq!(device, phone_id);
+    assert!(phone.platform.mic_asks.lock().unwrap().is_empty(), "nobody was asked");
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_pc_hears_when_the_phone_declines_its_microphone_request() {
     use nectarlink_core::{MIC_LISTEN, MIC_STREAM};
 

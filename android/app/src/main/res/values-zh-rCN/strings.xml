@@ -420,6 +420,9 @@
     <string name="pc_audio_use_phone_speaker">将手机用作扬声器</string>
     <string name="pc_audio_use_phone_speaker_sub">在此手机上播放电脑音频</string>
     <string name="pc_audio_use_phone_speaker_on">正在将电脑音频传输到此手机</string>
+    <string name="pc_audio_use_phone_mic">将手机用作麦克风</string>
+    <string name="pc_audio_use_phone_mic_sub">将此手机的麦克风发送到电脑</string>
+    <string name="pc_audio_use_phone_mic_on">电脑正在接收此手机的麦克风</string>
     <string name="settings_storage">文件资源管理器中的存储</string>
     <string name="storage_all_files_title">所有文件访问权限</string>
     <string name="storage_all_files_on">已开启。你允许的电脑可在文件资源管理器中浏览、打开和复制此手机的文件。</string>

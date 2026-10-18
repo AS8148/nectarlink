@@ -885,6 +885,13 @@ private fun App(
                                     recorderSession = recorderSession,
                                     micStreamingTo = micStreamingTo,
                                     onDeclineMicRequest = core::declineMicRequest,
+                                    onStartMic = { pcId ->
+                                        // Asks for the microphone permission if needed, then starts.
+                                        context.startActivity(
+                                            android.content.Intent(context, app.nectarlink.android.mic.MicStartActivity::class.java)
+                                                .putExtra(app.nectarlink.android.mic.MicStartActivity.EXTRA_PC, pcId),
+                                        )
+                                    },
                                     onStopMic = { app.nectarlink.android.mic.MicService.stopFromUser(context) },
                                     onStopMirror = { MirrorService.stopCurrent() },
                                     onOpenWebcam = { pcId ->

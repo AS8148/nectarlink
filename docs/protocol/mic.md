@@ -24,8 +24,10 @@ for a peer, `mic.start` is refused with `DENIED`, incoming `mic` streams are
 reset with code `13`, and a running stream with that peer stops.
 
 A phone **never** turns its microphone on silently: it streams only after
-its user taps Start on the PC's request, and shows an ongoing notification
-with a **Stop** button the whole time. Android only lets the microphone
+its user taps Start on the PC's request, or turns it on for a PC on the
+phone itself (as with the [webcam](webcam.md) §2), and shows an ongoing
+notification with a **Stop** button the whole time. A PC takes a stream
+it didn't ask for the same way, while `mic` is on for that phone. Android only lets the microphone
 start from the foreground, which the tap provides.
 
 ## 2. Starting and stopping

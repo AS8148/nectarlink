@@ -202,6 +202,7 @@ fun HomeScreen(
     onAcceptWebcamRequest: (app.nectarlink.android.webcam.WebcamRequest) -> Unit = {},
     onDismissWebcamRequest: () -> Unit = {},
     onDeclineMicRequest: (pcId: String) -> Unit = {},
+    onStartMic: (pcId: String) -> Unit = {},
     onStopMic: () -> Unit = {},
     onCopyClipboardHistory: (id: String) -> Unit = {},
     onPinClipboardHistory: (id: String, pinned: Boolean) -> Unit = { _, _ -> },
@@ -618,6 +619,8 @@ fun HomeScreen(
                     onWebcam = onWebcam,
                     onSetPcAudio = onSetPcAudio,
                     onBrowsePcFiles = { browseFilesPcId = it },
+                    micOn = micStreamingTo == device.id,
+                    onToggleMic = { on -> if (on) onStartMic(device.id) else onStopMic() },
                 )
             }
         }
@@ -1347,6 +1350,9 @@ private fun PcCard(
     onSetPcAudio: (String, Int?, Boolean?) -> Unit,
     onBrowsePcFiles: (String) -> Unit = {},
     onDesk: (String) -> Unit = {},
+    /** Whether this phone's microphone streams to this PC now. */
+    micOn: Boolean = false,
+    onToggleMic: (Boolean) -> Unit = {},
 ) {
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) onSendFiles(device.id, uris)
@@ -1630,6 +1636,9 @@ private fun PcCard(
                         deckState = deckState,
                         ink = ink,
                         onSetPcAudio = { vol, muted -> onSetPcAudio(device.id, vol, muted) },
+                        micAvailable = micOn || device.has("media.phone_mic"),
+                        micOn = micOn,
+                        onToggleMic = onToggleMic,
                     )
                 }
 
@@ -1748,6 +1757,9 @@ private fun PcAudioCardSection(
     deckState: DeckState,
     ink: Color,
     onSetPcAudio: (volume: Int?, muted: Boolean?) -> Unit,
+    micAvailable: Boolean = false,
+    micOn: Boolean = false,
+    onToggleMic: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val pcMedia = remember(context) {
@@ -1892,6 +1904,49 @@ private fun PcAudioCardSection(
                 checked = streamingToPhone,
                 onCheckedChange = null,
             )
+        }
+        if (micAvailable) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bentoWell(
+                        cornerRadius = 16.dp,
+                        fillColor = ink.copy(alpha = if (micOn) 0.14f else 0.06f),
+                    )
+                    .clickable(role = Role.Switch) { onToggleMic(!micOn) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(
+                    imageVector = MicIcon,
+                    contentDescription = null,
+                    tint = ink.copy(alpha = 0.9f),
+                    modifier = Modifier.size(20.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.pc_audio_use_phone_mic),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = ink,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = stringResource(
+                            if (micOn) R.string.pc_audio_use_phone_mic_on else R.string.pc_audio_use_phone_mic_sub,
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ink.copy(alpha = 0.78f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Switch(
+                    checked = micOn,
+                    onCheckedChange = null,
+                )
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth(),

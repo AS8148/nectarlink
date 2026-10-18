@@ -438,6 +438,9 @@
     <string name="pc_audio_use_phone_speaker">Use phone as speaker</string>
     <string name="pc_audio_use_phone_speaker_sub">Play PC audio on this phone</string>
     <string name="pc_audio_use_phone_speaker_on">Streaming PC audio to this phone</string>
+    <string name="pc_audio_use_phone_mic">Use phone as microphone</string>
+    <string name="pc_audio_use_phone_mic_sub">Send this phone\'s microphone to the PC</string>
+    <string name="pc_audio_use_phone_mic_on">The PC hears this phone\'s microphone</string>
 
     <!-- Phone storage in File Explorer -->
     <string name="settings_storage">Storage in File Explorer</string>
