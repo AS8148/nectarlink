@@ -32,7 +32,13 @@ change things that need a step from you, and its notes say so.
   ([#7](https://github.com/thtbee/nectarlink/issues/7)). A microphone of
   NectarLink's own, without the cable, needs an audio driver and comes
   later. A volume slider sets how loud it plays, and the phone evens out a
-  quiet voice where it can.
+  quiet voice where it can. The request also shows on the phone's Home,
+  with Start and Not now, so it's seen with notifications off; Not now
+  tells the PC, which stops waiting, and so does a request left unanswered
+  for two minutes. While it's on, Home has a Stop button. Choosing another
+  output on the PC moves the sound there right away, and **Use this phone
+  as a microphone** in the phone's Settings, for each PC, turns asking off
+  for that PC. Thanks to Jochen Kirstätter for finding the gaps.
 - **Pair a phone with a tablet (or another phone).** In NectarLink's
   pairing screen, **Pair a phone or tablet instead** shows a code to scan
   from the other device. Once paired, each shows the other on Home with its

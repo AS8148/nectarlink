@@ -770,6 +770,7 @@ private fun App(
                     val context = LocalContext.current
                     val mirrorSession by MirrorService.session.collectAsStateWithLifecycle()
                     val webcamSession by WebcamService.session.collectAsStateWithLifecycle()
+                    val micStreamingTo by app.nectarlink.android.mic.MicService.streaming.collectAsStateWithLifecycle()
                     val recorderFlow = remember {
                         RecorderService.session.distinctUntilChanged { a, b ->
                             a.active == b.active &&
@@ -882,6 +883,9 @@ private fun App(
                                     mirrorSession = mirrorSession,
                                     webcamSession = webcamSession,
                                     recorderSession = recorderSession,
+                                    micStreamingTo = micStreamingTo,
+                                    onDeclineMicRequest = core::declineMicRequest,
+                                    onStopMic = { app.nectarlink.android.mic.MicService.stopFromUser(context) },
                                     onStopMirror = { MirrorService.stopCurrent() },
                                     onOpenWebcam = { pcId ->
                                         webcamAutoStart = false
@@ -925,6 +929,7 @@ private fun App(
                                     onAccessChanged = core::refreshNotificationAccess,
                                     updater = (context.applicationContext as NectarlinkApplication).updater,
                                     onSetStorageEnabled = core::setStorageEnabled,
+                                    onSetMicEnabled = core::setMicEnabled,
                                     onAddSafFolder = core::addSafFolder,
                                     onRemoveSafFolder = core::removeSafFolder,
                                     onSetClipboardHistoryEnabled = core::setClipboardHistoryEnabled,

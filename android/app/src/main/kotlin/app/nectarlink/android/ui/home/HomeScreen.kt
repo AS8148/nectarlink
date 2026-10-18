@@ -201,6 +201,8 @@ fun HomeScreen(
     onDismissStorageRequest: () -> Unit = {},
     onAcceptWebcamRequest: (app.nectarlink.android.webcam.WebcamRequest) -> Unit = {},
     onDismissWebcamRequest: () -> Unit = {},
+    onDeclineMicRequest: (pcId: String) -> Unit = {},
+    onStopMic: () -> Unit = {},
     onCopyClipboardHistory: (id: String) -> Unit = {},
     onPinClipboardHistory: (id: String, pinned: Boolean) -> Unit = { _, _ -> },
     onDeleteClipboardHistory: (id: String) -> Unit = {},
@@ -221,6 +223,8 @@ fun HomeScreen(
     mirrorSession: MirrorSession = MirrorSession(),
     webcamSession: WebcamSession = WebcamSession(),
     recorderSession: RecorderSession = RecorderSession(),
+    /** The PC this phone's microphone streams to, if any. */
+    micStreamingTo: String? = null,
     onStopMirror: () -> Unit = {},
     onOpenWebcam: (pcId: String) -> Unit = {},
     onStopWebcam: () -> Unit = {},
@@ -431,6 +435,17 @@ fun HomeScreen(
                 )
             }
         }
+        micStreamingTo?.let { pcId ->
+            item(key = "mic_active_banner", contentType = "banner") {
+                val pcName = state.nameOf(pcId) ?: stringResource(R.string.your_pc)
+                LiveStreamingBanner(
+                    title = stringResource(R.string.mic_notification_title, pcName),
+                    subtitle = stringResource(R.string.mic_notification_text),
+                    primaryActionLabel = stringResource(R.string.action_stop),
+                    onPrimaryAction = onStopMic,
+                )
+            }
+        }
         state.keyboardFromPc.forEach { pcId ->
             item(key = "keyboard_$pcId", contentType = "banner") {
                 val pcName = state.nameOf(pcId) ?: stringResource(R.string.your_pc)
@@ -462,6 +477,43 @@ fun HomeScreen(
                                 Text(stringResource(R.string.webcam_start))
                             }
                             OutlinedButton(onClick = onDismissWebcamRequest) {
+                                Text(stringResource(R.string.action_not_now))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        state.micRequestFrom?.takeIf { it != micStreamingTo }?.let { pcId ->
+            item(key = "mic_request", contentType = "request") {
+                val pcName = state.nameOf(pcId) ?: stringResource(R.string.your_pc)
+                val context = LocalContext.current
+                Surface(
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                        Text(
+                            stringResource(R.string.mic_request_title, pcName),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            stringResource(R.string.mic_request_card_text),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                // Asks for the microphone permission if needed, then starts.
+                                context.startActivity(
+                                    android.content.Intent(context, app.nectarlink.android.mic.MicStartActivity::class.java)
+                                        .putExtra(app.nectarlink.android.mic.MicStartActivity.EXTRA_PC, pcId),
+                                )
+                            }) { Text(stringResource(R.string.mic_request_start)) }
+                            OutlinedButton(onClick = { onDeclineMicRequest(pcId) }) {
                                 Text(stringResource(R.string.action_not_now))
                             }
                         }

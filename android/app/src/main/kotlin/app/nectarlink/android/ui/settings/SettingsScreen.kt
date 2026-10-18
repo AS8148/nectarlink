@@ -104,6 +104,7 @@ fun SettingsScreen(
     onAccessChanged: () -> Unit,
     updater: AppUpdater,
     onSetStorageEnabled: (pcId: String, enabled: Boolean) -> Unit = { _, _ -> },
+    onSetMicEnabled: (pcId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onAddSafFolder: (Uri) -> Unit = {},
     onRemoveSafFolder: (String) -> Unit = {},
     onSetClipboardHistoryEnabled: (Boolean) -> Unit = {},
@@ -499,6 +500,25 @@ fun SettingsScreen(
                                     colors = app.nectarlink.android.ui.theme.nectarSwitchColors(),
                                     modifier = Modifier.semantics { contentDescription = storageToggleTitle },
                                 )
+                            }
+                            if (!device.isAndroid) {
+                                val micToggleTitle = stringResource(R.string.mic_pc_toggle)
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                                        Text(micToggleTitle, style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            stringResource(R.string.mic_pc_toggle_hint),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Switch(
+                                        checked = device.micEnabled,
+                                        onCheckedChange = { enabled -> onSetMicEnabled(device.id, enabled) },
+                                        colors = app.nectarlink.android.ui.theme.nectarSwitchColors(),
+                                        modifier = Modifier.semantics { contentDescription = micToggleTitle },
+                                    )
+                                }
                             }
                         }
                     }

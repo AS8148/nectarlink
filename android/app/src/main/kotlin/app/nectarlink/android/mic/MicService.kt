@@ -212,10 +212,21 @@ class MicService : Service() {
             ContextCompat.startForegroundService(context, intent)
         }
 
+        /** The per-device toggle that lets a PC ask for the microphone (docs/protocol/mic.md). */
+        const val TOGGLE_NAME = "mic"
+
         /** The PC stopped listening. */
         fun stop(context: Context) {
             if (_streaming.value == null) return
             context.startService(Intent(context, MicService::class.java).setAction(ACTION_STOP))
+        }
+
+        /** The phone's user stopped it in the app: the PC is told. */
+        fun stopFromUser(context: Context) {
+            if (_streaming.value == null) return
+            context.startService(
+                Intent(context, MicService::class.java).setAction(ACTION_STOP).putExtra(EXTRA_FROM_USER, true),
+            )
         }
 
         private fun createChannel(context: Context) {

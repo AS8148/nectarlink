@@ -65,6 +65,8 @@ internal class PhonePlatform(
     private val onWatch: (String, String, String?, app.nectarlink.core.WatchFileOffer?) -> Boolean,
     /** Asks the user to start the microphone for a PC: PC's ID → asked. */
     private val onMic: (String) -> Boolean,
+    /** The PC stopped asking for (or listening to) the microphone: PC's ID. */
+    private val onMicStop: (String) -> Unit,
     /** Shows or updates a watched task from a PC: (PC's ID, task) → shown. */
     private val onTask: (String, TaskNotify) -> Boolean,
     /** The phone's calls (created after this). */
@@ -211,7 +213,7 @@ internal class PhonePlatform(
     override fun micRequested(pcId: String): Boolean = onMic(pcId)
 
     override fun micStopRequested(pcId: String) {
-        app.nectarlink.android.mic.MicRequests.dismiss(context, pcId)
+        onMicStop(pcId)
         app.nectarlink.android.mic.MicService.stop(context)
     }
 

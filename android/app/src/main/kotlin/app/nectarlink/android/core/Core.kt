@@ -98,8 +98,12 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         phoneMedia,
         onLink = { pc, url -> LinkNotifications.show(this.context, _state.value.nameOf(pc).orEmpty(), url) },
         onMic = { pc ->
+            // Asked on Home too, so it's seen with notifications off or while the app is open.
+            _state.update { it.copy(micRequestFrom = pc) }
             app.nectarlink.android.mic.MicRequests.show(this.context, pc, _state.value.nameOf(pc).orEmpty())
+            true
         },
+        onMicStop = { pc -> clearMicRequest(pc) },
         onWatch = { pc, player, title, file ->
             app.nectarlink.android.media.WatchOffers.show(
                 this.context,
@@ -360,10 +364,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             }
             node = started
             val devices = runCatching { started.pairedDevices() }.getOrDefault(emptyList())
-            val storageAllowed = devices.mapNotNull { dev ->
-                val toggles = runCatching { started.deviceToggles(dev.id) }.getOrDefault(emptyList())
-                if (toggles.any { it.name == PhoneStorage.TOGGLE_NAME && it.enabled }) dev.id else null
-            }.toSet()
+            val pcToggles = perPcToggles(started, devices.map { it.id })
             val clipHistEnabled = runCatching { started.clipboardHistoryEnabled() }.getOrDefault(true)
             val clipHist = if (clipHistEnabled) {
                 runCatching { started.clipboardHistory(null) }.getOrDefault(emptyList())
@@ -382,7 +383,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             localsendMulticast?.runCatching { if (lsEnabled) acquire() else release() }
             pruneOldTempCaches()
             _state.update {
-                it.withDevices(devices, storageAllowed).copy(
+                it.withDevices(devices, pcToggles.storageAllowed, pcToggles.micOff).copy(
                     status = CoreStatus.Ready(started.deviceId()),
                     sendQueue = initialQueue,
                     clipboardHistoryEnabled = clipHistEnabled,
@@ -561,14 +562,7 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                     }
                     val prevPhotos = _state.value.photoAccess
                     val currentNode = node
-                    val storageAllowed = if (currentNode != null) {
-                        _state.value.devices.mapNotNull { dev ->
-                            val devToggles = runCatching { currentNode.deviceToggles(dev.id) }.getOrDefault(emptyList())
-                            if (devToggles.any { it.name == PhoneStorage.TOGGLE_NAME && it.enabled }) dev.id else null
-                        }.toSet()
-                    } else {
-                        emptySet()
-                    }
+                    val pcToggles = currentNode?.let { perPcToggles(it, _state.value.devices.map { d -> d.id }) }
                     _state.update {
                         it.copy(
                             notificationAccess = granted,
@@ -587,8 +581,10 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                             storageAllFilesAccess = storageAllFilesAccess,
                             storageSafFolders = storageSafFolders,
                             localNetwork = localNetwork,
-                            devices = if (currentNode != null) {
-                                it.devices.map { d -> d.copy(storageEnabled = d.id in storageAllowed) }
+                            devices = if (pcToggles != null) {
+                                it.devices.map { d ->
+                                    d.copy(storageEnabled = d.id in pcToggles.storageAllowed, micEnabled = d.id !in pcToggles.micOff)
+                                }
                             } else {
                                 it.devices
                             },
@@ -965,6 +961,47 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     /** Stops this phone's microphone stream to [pcId] and tells the PC. */
     fun micStop(pcId: String) {
         command { it.micStop(pcId) }
+    }
+
+    /** The PC's request for the microphone is answered or withdrawn: take it off Home and the shade. */
+    fun clearMicRequest(pcId: String) {
+        app.nectarlink.android.mic.MicRequests.dismiss(context, pcId)
+        _state.update { if (it.micRequestFrom == pcId) it.copy(micRequestFrom = null) else it }
+    }
+
+    /** Not now: the PC stops waiting. */
+    fun declineMicRequest(pcId: String) {
+        clearMicRequest(pcId)
+        micStop(pcId)
+    }
+
+    /**
+     * Lets [pcId] ask for this phone's microphone, or not (on by default). Turning it off
+     * also ends a stream to that PC, and the core tells the PC.
+     */
+    fun setMicEnabled(pcId: String, enabled: Boolean) {
+        _state.update { it.withMicEnabled(pcId, enabled) }
+        if (!enabled) app.nectarlink.android.mic.MicRequests.dismiss(context, pcId)
+        scope.launch(Dispatchers.IO) {
+            startJob?.join()
+            val currentNode = node ?: return@launch
+            runCatching { currentNode.setDeviceToggle(pcId, app.nectarlink.android.mic.MicService.TOGGLE_NAME, enabled) }
+                .onFailure { Log.w(TAG, "can't change the microphone toggle", it) }
+        }
+    }
+
+    /** Which PCs may browse this phone's storage, and which may not ask for its microphone. */
+    private class PerPcToggles(val storageAllowed: Set<String>, val micOff: Set<String>)
+
+    private fun perPcToggles(node: NectarlinkNode, ids: List<String>): PerPcToggles {
+        val storage = mutableSetOf<String>()
+        val micOff = mutableSetOf<String>()
+        for (id in ids) {
+            val toggles = runCatching { node.deviceToggles(id) }.getOrNull() ?: continue
+            if (toggles.any { it.name == PhoneStorage.TOGGLE_NAME && it.enabled }) storage += id
+            if (toggles.any { it.name == app.nectarlink.android.mic.MicService.TOGGLE_NAME && !it.enabled }) micOff += id
+        }
+        return PerPcToggles(storage, micOff)
     }
 
     fun clearWebcamRequest(pcId: String? = null) {

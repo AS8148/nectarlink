@@ -5,6 +5,7 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,12 +15,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import app.nectarlink.android.NectarlinkApplication
 import app.nectarlink.android.R
 
 /**
  * A PC asking for this phone's microphone (`mic.start`). The microphone only turns on when
- * the user taps: the notification opens [MicStartActivity], which asks for the microphone
- * permission if needed and starts [MicService] from the foreground, as Android requires.
+ * the user taps: the notification (or the card on Home) opens [MicStartActivity], which asks
+ * for the microphone permission if needed and starts [MicService] from the foreground, as
+ * Android requires. Not now, or swiping the notification away, tells the PC ([MicDeclineReceiver]).
  */
 object MicRequests {
     private const val CHANNEL = "mic_requests"
@@ -44,6 +47,12 @@ object MicRequests {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val decline = PendingIntent.getBroadcast(
+            context,
+            pcId.hashCode(),
+            Intent(context, MicDeclineReceiver::class.java).putExtra(MicStartActivity.EXTRA_PC, pcId),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
         val from = pcName.ifEmpty { context.getString(R.string.your_pc) }
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
@@ -51,6 +60,8 @@ object MicRequests {
             .setContentText(context.getString(R.string.mic_request_text))
             .setContentIntent(start)
             .addAction(0, context.getString(R.string.mic_request_start), start)
+            .addAction(0, context.getString(R.string.action_not_now), decline)
+            .setDeleteIntent(decline)
             .setAutoCancel(true)
             .setTimeoutAfter(REQUEST_TIMEOUT_MS)
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -81,7 +92,7 @@ class MicStartActivity : ComponentActivity() {
             return
         }
         pcId = pc
-        MicRequests.dismiss(this, pc)
+        (application as NectarlinkApplication).core.clearMicRequest(pc)
         if (MicService.hasPermission(this)) {
             MicService.start(this, pc)
             finish()
@@ -92,5 +103,13 @@ class MicStartActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_PC = "mic_pc"
+    }
+}
+
+/** Not now on a PC's microphone request, or the request swiped away: the PC stops waiting. */
+class MicDeclineReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val pc = intent.getStringExtra(MicStartActivity.EXTRA_PC) ?: return
+        (context.applicationContext as NectarlinkApplication).core.declineMicRequest(pc)
     }
 }

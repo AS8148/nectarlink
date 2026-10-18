@@ -337,6 +337,10 @@
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <receiver
+            android:name=".mic.MicDeclineReceiver"
+            android:exported="false" />
+
         <service
             android:name=".webcam.WebcamService"
             android:exported="false"

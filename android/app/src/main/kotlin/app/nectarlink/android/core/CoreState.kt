@@ -143,6 +143,8 @@ data class Device(
     val deckState: app.nectarlink.core.DeckState? = null,
     /** Whether this PC is allowed to browse this phone's storage in File Explorer (off by default). */
     val storageEnabled: Boolean = false,
+    /** Whether this PC may ask for this phone's microphone (on by default). */
+    val micEnabled: Boolean = true,
 ) {
     /** A paired phone or tablet rather than a PC. */
     val isAndroid: Boolean
@@ -211,6 +213,8 @@ data class CoreState(
     val storageRequestedFrom: String? = null,
     /** Pending request from a paired PC asking to use this phone's camera as a webcam. */
     val webcamRequest: WebcamRequest? = null,
+    /** ID of a paired PC asking for this phone's microphone, until the user answers. */
+    val micRequestFrom: String? = null,
     /** File transfers, newest first (running ones and the latest finished). */
     val transfers: List<Transfer> = emptyList(),
     /** Persistent outbound send queue items waiting to send, sending, failed, or expired. */
@@ -251,7 +255,11 @@ data class CoreState(
             ?: discovered.firstOrNull { it.id == id }?.name
             ?: localsendPeers.firstOrNull { it.id == id }?.alias
 
-    fun withDevices(paired: List<PairedDevice>, storageAllowed: Set<String> = emptySet()): CoreState {
+    fun withDevices(
+        paired: List<PairedDevice>,
+        storageAllowed: Set<String> = emptySet(),
+        micOff: Set<String> = emptySet(),
+    ): CoreState {
         val prevById = devices.associateBy { it.id }
         return copy(
             devices = paired.map { p ->
@@ -260,6 +268,7 @@ data class CoreState(
                     deckLayout = prev?.deckLayout,
                     deckState = prev?.deckState,
                     storageEnabled = if (p.id in storageAllowed) true else prev?.storageEnabled ?: false,
+                    micEnabled = p.id !in micOff,
                 )
             }.sortedWith(deviceOrder),
         )
@@ -267,6 +276,11 @@ data class CoreState(
 
     fun withWakeState(id: String, state: WakeState): CoreState =
         update(id) { it.copy(wakeState = state) }
+
+    fun withMicEnabled(id: String, enabled: Boolean): CoreState =
+        update(id) { it.copy(micEnabled = enabled) }.copy(
+            micRequestFrom = if (!enabled && micRequestFrom == id) null else micRequestFrom,
+        )
 
     fun withStorageEnabled(id: String, enabled: Boolean): CoreState =
         update(id) { it.copy(storageEnabled = enabled) }.copy(
@@ -285,6 +299,7 @@ data class CoreState(
             ringingFrom = if (ringingFrom == nameOf(event.id)) null else ringingFrom,
             storageRequestedFrom = if (storageRequestedFrom == event.id) null else storageRequestedFrom,
             webcamRequest = if (webcamRequest?.pcId == event.id) null else webcamRequest,
+            micRequestFrom = if (micRequestFrom == event.id) null else micRequestFrom,
             keyboardFromPc = keyboardFromPc - event.id,
         )
         is Event.LinkChanged -> {
@@ -313,6 +328,8 @@ data class CoreState(
                         updated.copy(
                             devices = if (onlineChanged) updated.devices.sortedWith(deviceOrder) else updated.devices,
                             keyboardFromPc = if (newLink is Link.Offline) updated.keyboardFromPc - event.id else updated.keyboardFromPc,
+                            // A PC that went away can't take the microphone it asked for.
+                            micRequestFrom = updated.micRequestFrom.takeUnless { newLink is Link.Offline && it == event.id },
                         )
                     }
                 }

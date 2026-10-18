@@ -382,6 +382,9 @@
     <string name="mic_request_title">%1$s wants this phone\'s microphone</string>
     <string name="mic_request_text">Tap to start. It stays on until you or the PC stop it.</string>
     <string name="mic_request_start">Start</string>
+    <string name="mic_request_card_text">It stays on until you or the PC stop it.</string>
+    <string name="mic_pc_toggle">Use this phone as a microphone</string>
+    <string name="mic_pc_toggle_hint">On by default. This PC can ask for the microphone. It only turns on when you tap Start.</string>
     <string name="recorder_notification_recording">Recording for %1$s</string>
     <string name="recorder_notification_paused">Recording paused (%1$s)</string>
     <string name="recorder_permission_title">Allow microphone access</string>
