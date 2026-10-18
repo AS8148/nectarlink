@@ -27,6 +27,8 @@ Item {
         { id: "connection", title: qsTr("Connection & About"), icon: Icons.wifi, subtitle: qsTr("Doctor, Wake-on-LAN, API & version") }
     ]
 
+    // The languages the app speaks besides the system's ({ code, name }).
+    readonly property var languages: { try { return JSON.parse(Preferences.languages()) } catch (e) { return [] } }
     readonly property var activeCategoryObj: {
         for (let i = 0; i < categories.length; i++) {
             if (categories[i].id === page.currentSection)
@@ -882,21 +884,29 @@ Item {
                     Column {
                         width: parent.width
 
-                        // Language: the system's, or one of those the app speaks
-                        // (each named in its own language).
+                        // Language: the system's, English, or another one the app
+                        // speaks, picked from a list (each named in its own language).
                         ListRow {
                             width: parent.width
                             iconPath: Icons.globe
                             title: qsTr("Language")
                             description: qsTr("NectarLink follows Windows unless you pick one.")
                             Segmented {
+                                readonly property var other: page.languages.find(
+                                    (l) => l.code === Preferences.language && l.code !== "en")
                                 options: [
                                     { value: "", label: qsTr("System") },
                                     { value: "en", label: "English" },
-                                    { value: "zh_CN", label: "简体中文" }
+                                    other ? { value: other.code, label: other.name }
+                                          : { value: "more", label: qsTr("More") }
                                 ]
                                 value: Preferences.language
-                                onPicked: (v) => Preferences.language = v
+                                onPicked: (v) => {
+                                    if (v === "" || v === "en")
+                                        Preferences.language = v
+                                    else
+                                        languageSheet.open()
+                                }
                             }
                         }
 
@@ -3212,6 +3222,34 @@ Item {
         visible: opacity > 0
         opacity: AppController.highlightTarget.startsWith("settings:") ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
+    }
+
+    Sheet {
+        id: languageSheet
+        cardWidth: 400
+        Column {
+            width: parent.width
+            spacing: 12
+            Txt { width: parent.width; text: qsTr("Language"); role: "headline"; wrapMode: Text.WordWrap }
+            Repeater {
+                model: page.languages
+                delegate: Button {
+                    required property var modelData
+                    width: parent.width
+                    variant: modelData.code === Preferences.language ? "tonal" : "text"
+                    iconPath: modelData.code === Preferences.language ? Icons.check : Icons.globe
+                    text: modelData.name
+                    onClicked: {
+                        Preferences.language = modelData.code
+                        languageSheet.close()
+                    }
+                }
+            }
+            Row {
+                anchors.right: parent.right
+                Button { variant: "text"; text: qsTr("Close"); onClicked: languageSheet.close() }
+            }
+        }
     }
 
     Sheet {

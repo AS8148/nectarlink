@@ -11,6 +11,16 @@ use std::path::{Path, PathBuf};
 /// the system's) and how the language calls itself.
 pub const LANGUAGES: &[(&str, &str)] = &[("", ""), ("en", "English"), ("zh_CN", "简体中文")];
 
+/// [`LANGUAGES`] without the system's, as JSON for Settings: `[{ code, name }]`.
+pub fn languages_json() -> String {
+    let list: Vec<_> = LANGUAGES
+        .iter()
+        .filter(|(code, _)| !code.is_empty())
+        .map(|(code, name)| serde_json::json!({ "code": code, "name": name }))
+        .collect();
+    serde_json::Value::Array(list).to_string()
+}
+
 /// Whether `language` is one [`LANGUAGES`] offers.
 pub fn is_known(language: &str) -> bool {
     LANGUAGES.iter().any(|(code, _)| *code == language)
@@ -115,6 +125,9 @@ mod tests {
     #[test]
     fn only_offered_languages_are_kept() {
         assert!(is_known("") && is_known("zh_CN") && is_known("en"));
+        let listed: Vec<serde_json::Value> = serde_json::from_str(&languages_json()).unwrap();
+        assert_eq!(listed[0], serde_json::json!({ "code": "en", "name": "English" }));
+        assert!(listed.iter().all(|l| l["code"] != ""), "the system's isn't a choice in the list");
         assert!(!is_known("xx"));
     }
 }

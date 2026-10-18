@@ -140,6 +140,10 @@ pub mod qobject {
         /// Resets the setup walkthrough to step 0 and opens it again.
         #[qinvokable]
         fn restart_walkthrough(self: Pin<&mut Preferences>);
+        /// The languages the app speaks besides the system's, as a JSON array of
+        /// `{ code, name }`, each named in its own language.
+        #[qinvokable]
+        fn languages(self: &Preferences) -> QString;
         /// OBS Studio's WebSocket port, for `obs:` Deck commands.
         #[qinvokable]
         fn obs_port(self: &Preferences) -> i32;
@@ -691,6 +695,10 @@ impl qobject::Preferences {
         self.as_mut().set_walkthrough_step(0);
         self.as_mut().set_walkthrough_completed(false);
         self.save();
+    }
+
+    pub fn languages(&self) -> QString {
+        QString::from(&crate::i18n::languages_json())
     }
 
     pub fn obs_port(&self) -> i32 {
