@@ -5957,6 +5957,29 @@ async fn a_phone_streams_its_microphone_when_its_user_agrees() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_pc_hears_when_the_phone_declines_its_microphone_request() {
+    use nectarlink_core::{MIC_LISTEN, MIC_STREAM};
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[MIC_LISTEN]).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &[MIC_STREAM]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+
+    with_timeout("mic_start", pc.node.mic_start(phone_id)).await.unwrap();
+    // The user taps Not now: no sound ever came, and the PC stops waiting.
+    phone.node.mic_stop(pc_id).await;
+    let device = wait_for(&mut pc, "mic off", |e| match e {
+        NodeEvent::Mic { device, on: false } => Some(*device),
+        _ => None,
+    })
+    .await;
+    assert_eq!(device, phone_id);
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_pc_without_mic_listen_refuses_a_phones_microphone() {
     use nectarlink_core::{MIC_STREAM, MirrorAudioConfig, PacketKind};
 

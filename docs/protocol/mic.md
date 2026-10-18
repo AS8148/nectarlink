@@ -44,7 +44,9 @@ taps Start. Errors: `DENIED` when the microphone is off for the PC,
 
 **`mic.stop`** ends it: from the PC, the phone stops recording; from the
 phone (its user tapped Stop), the PC stops listening. Ending the stream
-itself (either side) means the same.
+itself (either side) means the same. A phone whose user declines the
+request (Not now, or dismissing it) sends `mic.stop` too, before any
+sound, so the PC stops waiting.
 
 ## 3. The sound stream
 

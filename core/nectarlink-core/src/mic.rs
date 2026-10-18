@@ -134,8 +134,12 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
             session.send(reply.reply_to(env.id)).await?;
         }
         types::MIC_STOP => {
-            // The PC's side: stop listening; the phone's: stop recording.
-            shared.stop_mic(&peer);
+            // The PC's side: stop listening; the phone's: stop recording. A phone that
+            // declines before any sound came has no stream to stop, but the PC still
+            // hears that the microphone is off, so it stops waiting.
+            if !shared.stop_mic(&peer) {
+                shared.emit(NodeEvent::Mic { device: peer, on: false });
+            }
             tokio::task::spawn_blocking(move || platform.mic_stop_requested(&peer));
             if env.id.is_some() {
                 session.send(Envelope::empty(types::OK).reply_to(env.id)).await?;
@@ -194,10 +198,13 @@ impl Shared {
         }
     }
 
-    pub(crate) fn stop_mic(&self, peer: &DeviceId) {
-        if let Some(signal) = self.mic_stops.lock().unwrap_or_else(|e| e.into_inner()).remove(peer) {
-            signal.notify_one();
-            self.emit(NodeEvent::Mic { device: *peer, on: false });
-        }
+    /// Stops the stream from `peer`, if one is open; whether one was.
+    pub(crate) fn stop_mic(&self, peer: &DeviceId) -> bool {
+        let Some(signal) = self.mic_stops.lock().unwrap_or_else(|e| e.into_inner()).remove(peer) else {
+            return false;
+        };
+        signal.notify_one();
+        self.emit(NodeEvent::Mic { device: *peer, on: false });
+        true
     }
 }
