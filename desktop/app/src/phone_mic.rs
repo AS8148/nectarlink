@@ -7,9 +7,12 @@
 //! driver and is a later, separate step (GitHub #7).
 
 use crate::i18n::tr;
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicU32, Ordering},
+use std::{
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicU32, AtomicU64, Ordering},
+    },
+    time::Duration,
 };
 
 use nectarlink_core::{AudioOutputDevice, DeviceId, Error, LinkState, MicSink, MirrorAudioConfig, NodeEvent};
@@ -42,6 +45,12 @@ pub const MIN_GAIN: u32 = 50;
 pub const MAX_GAIN: u32 = 400;
 /// The output device chosen in Settings (an endpoint ID), if any.
 static OUTPUT: Mutex<Option<String>> = Mutex::new(None);
+/// The sink the microphone plays through now, to move it when the output changes.
+static ACTIVE: Mutex<Weak<Sink>> = Mutex::new(Weak::new());
+/// Counts asks, so a timeout only ends the ask it was set for.
+static ASKS: AtomicU64 = AtomicU64::new(0);
+/// How long the phone's request stays up (its notification times out then too).
+const ASK_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 fn set_phase(phase: Phase) {
     let mut current = PHASE.lock().unwrap_or_else(|e| e.into_inner());
@@ -147,6 +156,10 @@ pub fn outputs() -> (Vec<AudioOutputDevice>, Option<String>) {
 pub fn set_output(id: String) {
     *OUTPUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
     save(|s| s.phone_mic_output = Some(id));
+    // Already playing: move there now rather than on the next start.
+    if let Some(sink) = ACTIVE.lock().unwrap_or_else(|e| e.into_inner()).upgrade() {
+        sink.restart();
+    }
     core_host::host().hub.changed(Changes::MIC);
 }
 
@@ -177,6 +190,14 @@ pub fn start(phone: DeviceId) {
     let Some(node) = core_host::node() else { return };
     let name = core_host::host().hub.read(|s| s.name_of(&phone)).unwrap_or_else(|| "your phone".into());
     set_phase(Phase::Asking(phone));
+    let ask = ASKS.fetch_add(1, Ordering::Relaxed) + 1;
+    // Nobody tapped Start or Not now on the phone: stop waiting when its request goes.
+    core_host::spawn(async move {
+        tokio::time::sleep(ASK_TIMEOUT).await;
+        if ASKS.load(Ordering::Relaxed) == ask && phase() == Phase::Asking(phone) {
+            stop();
+        }
+    });
     core_host::spawn(async move {
         match node.mic_start(phone).await {
             Ok(()) => show_message(tr!("PhoneMic", "Tap Start on %1 to use its microphone.", name)),
@@ -204,35 +225,55 @@ pub fn stop() {
 }
 
 pub fn on_event(event: &NodeEvent) {
+    set_phase(after(phase(), event));
+}
+
+/// Where the microphone is after `event`.
+fn after(phase: Phase, event: &NodeEvent) -> Phase {
+    let ours = |device: &DeviceId| matches!(phase, Phase::Asking(d) | Phase::Live(d) if d == *device);
     match event {
-        NodeEvent::Mic { device, on: true } => set_phase(Phase::Live(*device)),
-        NodeEvent::Mic { device, on: false } if phase() == Phase::Live(*device) => set_phase(Phase::Off),
+        NodeEvent::Mic { device, on: true } => Phase::Live(*device),
+        // Stopped on the phone, or declined there before any sound came.
+        NodeEvent::Mic { device, on: false } if ours(device) => Phase::Off,
         NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } }
         | NodeEvent::DeviceRemoved(device)
-            if matches!(phase(), Phase::Asking(d) | Phase::Live(d) if d == *device) =>
+            if ours(device) =>
         {
-            set_phase(Phase::Off)
+            Phase::Off
         }
-        _ => {}
+        _ => phase,
     }
 }
 
 /// Where a phone's microphone goes: [`Platform::mic_sink`](nectarlink_core::Platform::mic_sink).
 pub fn sink(_peer: &DeviceId) -> Option<Arc<dyn MicSink>> {
-    Some(Arc::new(Sink { player: Mutex::new(None) }))
+    let sink = Arc::new(Sink { player: Mutex::new(None), config: Mutex::new(None) });
+    *ACTIVE.lock().unwrap_or_else(|e| e.into_inner()) = Arc::downgrade(&sink);
+    Some(sink)
 }
 
 struct Sink {
     player: Mutex<Option<Player>>,
+    /// The stream's format, to start again on another output.
+    config: Mutex<Option<MirrorAudioConfig>>,
 }
 
-impl MicSink for Sink {
-    fn config(&self, config: MirrorAudioConfig) {
+impl Sink {
+    /// Plays into the output chosen now.
+    fn restart(&self) {
+        let Some(config) = self.config.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
         let (_, output) = outputs();
         match Player::start_on(output, config.rate, u16::from(config.channels)) {
             Ok(player) => *self.player.lock().unwrap_or_else(|e| e.into_inner()) = Some(player),
             Err(e) => tracing::warn!(error = %e, "can't play the phone's microphone"),
         }
+    }
+}
+
+impl MicSink for Sink {
+    fn config(&self, config: MirrorAudioConfig) {
+        *self.config.lock().unwrap_or_else(|e| e.into_inner()) = Some(config);
+        self.restart();
     }
 
     fn audio(&self, _time_us: u64, mut data: Vec<u8>) {
@@ -293,6 +334,20 @@ mod tests {
         let mut same = samples(&[123, -4567]);
         amplify(&mut same, 100);
         assert_eq!(read(&same), [123, -4567]);
+    }
+
+    #[test]
+    fn the_phone_declining_or_stopping_ends_the_ask_and_the_sound() {
+        let phone = DeviceId([1; 32]);
+        let other = DeviceId([2; 32]);
+        let mic = |device, on| NodeEvent::Mic { device, on };
+        assert_eq!(after(Phase::Off, &mic(phone, true)), Phase::Live(phone));
+        // Not now on the phone: the PC stops waiting.
+        assert_eq!(after(Phase::Asking(phone), &mic(phone, false)), Phase::Off);
+        assert_eq!(after(Phase::Live(phone), &mic(phone, false)), Phase::Off);
+        // Another phone stopping changes nothing here.
+        assert_eq!(after(Phase::Asking(phone), &mic(other, false)), Phase::Asking(phone));
+        assert_eq!(after(Phase::Live(phone), &NodeEvent::DeviceRemoved(phone)), Phase::Off);
     }
 
     #[test]
