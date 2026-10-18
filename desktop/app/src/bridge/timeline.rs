@@ -395,7 +395,7 @@ impl qobject::TimelineModel {
                     Err(e) => show_message(e),
                 }
             }
-            TimelineKind::Photo => {
+            TimelineKind::Photo | TimelineKind::File => {
                 let path = Path::new(&row.primary_path);
                 if !path.exists() {
                     return show_message(tr!("Timeline", "That photo was moved or deleted."));
@@ -620,26 +620,23 @@ fn describe_entry(
             if !entry.detail.is_empty() {
                 parts.push(entry.detail.clone());
             }
+            let is_image_ext = exists
+                && Path::new(&primary_path).extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                    matches!(
+                        e.to_ascii_lowercase().as_str(),
+                        "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "svg"
+                    )
+                });
             let thumb = entry.image_data_url.clone().unwrap_or_else(|| {
-                if entry.kind == TimelineKind::Photo && exists {
-                    let p = Path::new(&primary_path);
-                    let ext = p
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(str::to_ascii_lowercase)
-                        .unwrap_or_default();
-                    if matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp") {
-                        return crate::icons::file_url(p);
-                    }
+                if is_image_ext {
+                    return crate::icons::file_url(Path::new(&primary_path));
                 }
                 String::new()
             });
-            let is_image_photo = entry.kind == TimelineKind::Photo
-                && exists
-                && Path::new(&primary_path)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "png"));
+            let is_image_photo = is_image_ext
+                && Path::new(&primary_path).extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                    matches!(e.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "png" | "webp" | "bmp")
+                });
             (
                 title,
                 parts.join(" · "),
@@ -767,4 +764,91 @@ pub fn preview_json() -> String {
         })
         .collect();
     serde_json::Value::Array(items).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_entry(kind: TimelineKind, target: String) -> TimelineEntry {
+        TimelineEntry {
+            id: 1,
+            kind,
+            device_id: DeviceId([1; 32]),
+            device_name: "Pixel".into(),
+            incoming: true,
+            timestamp: 1_700_000_000,
+            title: "sample".into(),
+            detail: String::new(),
+            target,
+            size_bytes: 1024,
+            duration_secs: 0,
+            ref_id: None,
+            clip_available: false,
+            image_data_url: None,
+        }
+    }
+
+    #[test]
+    fn describe_entry_resolves_thumbnails_and_copyability_for_image_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let png_path = dir.path().join("screenshot.png");
+        let webp_path = dir.path().join("photo.webp");
+        let bmp_path = dir.path().join("bitmap.bmp");
+        let gif_path = dir.path().join("anim.gif");
+        let svg_path = dir.path().join("vector.svg");
+        let pdf_path = dir.path().join("doc.pdf");
+        std::fs::write(&png_path, b"png").unwrap();
+        std::fs::write(&webp_path, b"webp").unwrap();
+        std::fs::write(&bmp_path, b"bmp").unwrap();
+        std::fs::write(&gif_path, b"gif").unwrap();
+        std::fs::write(&svg_path, b"<svg/>").unwrap();
+        std::fs::write(&pdf_path, b"pdf").unwrap();
+
+        // 1. TimelineKind::File with an existing .png, .webp, or .bmp resolves a file:// thumbnail URL and can_copy = true.
+        let (_, _, png_thumb, _, _, can_open, _, can_copy_png, _) = describe_entry(
+            &sample_entry(TimelineKind::File, png_path.to_string_lossy().into_owned()),
+            "Pixel",
+        );
+        assert!(can_open);
+        assert!(png_thumb.starts_with("file:///"), "expected file:// thumb URL, got {png_thumb}");
+        assert!(can_copy_png);
+
+        let (_, _, webp_thumb, _, _, _, _, can_copy_webp, _) = describe_entry(
+            &sample_entry(TimelineKind::File, webp_path.to_string_lossy().into_owned()),
+            "Pixel",
+        );
+        assert!(webp_thumb.starts_with("file:///"), "expected file:// thumb URL for WebP, got {webp_thumb}");
+        assert!(can_copy_webp);
+
+        let (_, _, bmp_thumb, _, _, _, _, can_copy_bmp, _) = describe_entry(
+            &sample_entry(TimelineKind::File, bmp_path.to_string_lossy().into_owned()),
+            "Pixel",
+        );
+        assert!(bmp_thumb.starts_with("file:///"), "expected file:// thumb URL for BMP, got {bmp_thumb}");
+        assert!(can_copy_bmp);
+
+        // 2. TimelineKind::File with an existing .gif or .svg resolves a file:// thumbnail URL, but can_copy = false.
+        let (_, _, gif_thumb, _, _, _, _, can_copy_gif, _) = describe_entry(
+            &sample_entry(TimelineKind::File, gif_path.to_string_lossy().into_owned()),
+            "Pixel",
+        );
+        assert!(gif_thumb.starts_with("file:///"), "expected file:// thumb URL for GIF, got {gif_thumb}");
+        assert!(!can_copy_gif);
+
+        let (_, _, svg_thumb, _, _, _, _, can_copy_svg, _) = describe_entry(
+            &sample_entry(TimelineKind::File, svg_path.to_string_lossy().into_owned()),
+            "Pixel",
+        );
+        assert!(svg_thumb.starts_with("file:///"), "expected file:// thumb URL for SVG, got {svg_thumb}");
+        assert!(!can_copy_svg);
+
+        // 3. Non-image files do not get an image thumbnail URL.
+        let (_, _, pdf_thumb, _, _, _, _, can_copy_pdf, _) = describe_entry(
+            &sample_entry(TimelineKind::File, pdf_path.to_string_lossy().into_owned()),
+            "Pixel",
+        );
+        assert!(pdf_thumb.is_empty());
+        assert!(!can_copy_pdf);
+    }
 }

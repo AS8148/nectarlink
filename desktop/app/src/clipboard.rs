@@ -165,7 +165,7 @@ fn make_thumbs(node: Node, ids: Vec<String>) {
             thumbs(|t| t.insert(id, url));
         }
         MAKING_THUMBS.store(false, Ordering::Release);
-        core_host::host().hub.changed(Changes::CLIPBOARD);
+        core_host::host().hub.changed(Changes::CLIPBOARD | Changes::TIMELINE);
     });
 }
 

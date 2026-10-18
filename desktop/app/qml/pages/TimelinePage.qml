@@ -108,6 +108,16 @@ Item {
         }
     }
 
+    function iconForRow(kind, title) {
+        if (kind === "file") {
+            const t = (title || "").toLowerCase()
+            if (/\.(jpg|jpeg|png|webp|gif|bmp|heic|svg)$/.test(t)) return Icons.photo
+            if (/\.(mp4|mkv|mov|webm|avi)$/.test(t)) return Icons.video
+            if (/\.(mp3|m4a|wav|flac|ogg|opus|aac)$/.test(t)) return Icons.music
+        }
+        return iconForKind(kind)
+    }
+
     Column {
         id: headerCol
         visible: TimelineModel.hasAny
@@ -475,6 +485,7 @@ Item {
                         visible: rowRoot.thumbUrl.length > 0 && status === Image.Ready
                         radius: Theme.radiusSm
                         source: rowRoot.thumbUrl
+                        sourceSize: Qt.size(80, 80)
                         fillMode: Image.PreserveAspectCrop
                     }
 
@@ -488,7 +499,7 @@ Item {
                         Icon {
                             anchors.centerIn: parent
                             width: 18; height: 18
-                            path: page.iconForKind(rowRoot.kind)
+                            path: page.iconForRow(rowRoot.kind, rowRoot.title)
                             color: Theme.primary
                         }
                     }
