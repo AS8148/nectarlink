@@ -56,7 +56,14 @@ mod storage;
 mod transfers;
 mod updater;
 mod webcam;
+#[cfg(windows)]
 mod win;
+
+#[cfg(target_os = "macos")]
+mod mac;
+
+#[cfg(target_os = "macos")]
+use mac as win;
 
 use std::{
     path::{Path, PathBuf},
