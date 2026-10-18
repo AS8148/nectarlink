@@ -1011,6 +1011,50 @@ async fn reconnects_after_a_restart() {
     with_timeout("ring after reconnect", pc.node.ring(phone_id, true)).await.expect("ring works again");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_phone_stopped_and_started_again_in_the_same_process_reconnects() {
+    // With its background connection off, the phone app stops the node when it goes to the
+    // background and starts a new one when it's opened, in the same process, while the old
+    // handle may still be around. Stopping has to let go of everything a new node binds.
+    let usb_base = loop {
+        let base = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        let Some(last) = base.checked_add(nectarlink_core::USB_PORT_COUNT) else { continue };
+        if (base..=last).all(|p| std::net::TcpListener::bind(("127.0.0.1", p)).is_ok()) {
+            break base;
+        }
+    };
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = start_usb_device("Pixel", DeviceKind::Phone, Some(usb_base), &[]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+    let usb_port = phone.node.usb_port().expect("the USB listener is up");
+
+    for round in 0..3 {
+        phone.node.shutdown().await;
+        wait_for(&mut pc, "the phone goes offline", |e| match e {
+            NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == phone_id => {
+                Some(())
+            }
+            _ => None,
+        })
+        .await;
+        assert!(phone.node.paired_devices().is_ok(), "a stopped node still answers what it stores");
+        assert!(matches!(phone.node.ring(pc_id, true).await, Err(Error::Offline)), "and has no connections");
+
+        let TestDevice { node: stopped, dir, .. } = phone;
+        phone = start_usb_device_in(dir, "Pixel", DeviceKind::Phone, Some(usb_base), &[]).await;
+        drop(stopped);
+        assert_eq!(phone.node.device_id(), phone_id, "round {round}: same identity");
+        assert_eq!(phone.node.usb_port(), Some(usb_port), "round {round}: the USB port was let go");
+
+        wait_online(&mut phone, pc_id).await;
+        wait_online(&mut pc, phone_id).await;
+        with_timeout("ring after starting again", pc.node.ring(phone_id, round % 2 == 0))
+            .await
+            .expect("connected again");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn mirror_open_waits_for_a_connection_that_is_coming_back() {
     let pc_offers = [nectarlink_core::MIRROR_VIEW, nectarlink_core::MIRROR_LISTEN];
@@ -4809,8 +4853,17 @@ async fn start_usb_device(
     usb_port: Option<u16>,
     offers: &[&str],
 ) -> TestDevice {
+    start_usb_device_in(tempfile::tempdir().unwrap(), name, kind, usb_port, offers).await
+}
+
+async fn start_usb_device_in(
+    dir: TempDir,
+    name: &'static str,
+    kind: DeviceKind,
+    usb_port: Option<u16>,
+    offers: &[&str],
+) -> TestDevice {
     init_logging();
-    let dir = tempfile::tempdir().unwrap();
     let mut config = NodeConfig::new(dir.path(), info(name, kind), "0.0.1-test");
     config.lan_discovery = false;
     config.away_mode = false;
