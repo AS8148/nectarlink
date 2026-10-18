@@ -23,6 +23,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.UserManager
 import android.provider.Settings
 import android.telephony.CellSignalStrengthCdma
 import android.telephony.CellSignalStrengthGsm
@@ -41,6 +42,7 @@ import android.view.RoundedCorner
 import android.view.Surface
 import android.view.WindowManager
 import androidx.core.content.ContextCompat
+import app.nectarlink.android.R
 import app.nectarlink.core.Battery
 import app.nectarlink.core.DeviceInfo
 import app.nectarlink.core.DeviceKind
@@ -131,6 +133,19 @@ fun materialYouAccent(
     }
 }
 
+/**
+ * The profile NectarLink runs in when it isn't the phone's main one: "Work" for a work
+ * profile, "Second profile" for another user or profile (a cloned app, Samsung's Dual
+ * Messenger). Null in the main profile. Each profile is a device of its own to the PC,
+ * with the same phone name, so this tells them apart.
+ */
+internal fun profileLabel(context: Context): String? {
+    val users = context.getSystemService(UserManager::class.java) ?: return null
+    if (users.isSystemUser) return null
+    val work = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && users.isManagedProfile
+    return context.getString(if (work) R.string.profile_work else R.string.profile_other)
+}
+
 /** "Maker Model", without repeating the maker when the model already starts with it. */
 internal fun modelName(manufacturer: String, model: String): String {
     val maker = manufacturer.trim().replaceFirstChar(Char::uppercase)
@@ -140,8 +155,10 @@ internal fun modelName(manufacturer: String, model: String): String {
 
 /** How this phone presents itself to PCs. */
 fun deviceInfo(context: Context, activeMediaColor: UInt? = null): DeviceInfo {
-    val name = Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+    val phoneName = Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
         ?.takeIf { it.isNotBlank() } ?: Build.MODEL
+    val name = profileLabel(context)?.let { context.getString(R.string.device_name_in_profile, phoneName, it) }
+        ?: phoneName
     val tablet = context.resources.configuration.smallestScreenWidthDp >= 600
     return DeviceInfo(
         name = name,

@@ -1354,6 +1354,10 @@
     <string name="banking_paused_text">Developer options, debugging and NectarLink\'s accessibility service are off until you leave it.</string>
     <string name="banking_turn_back_on">Turn back on</string>
     <string name="action_done">Done</string>
+    <!-- The phone's name as PCs see it when NectarLink runs in another Android profile: "Pixel 9a (Work)". -->
+    <string name="device_name_in_profile">%1$s (%2$s)</string>
+    <string name="profile_work">Work</string>
+    <string name="profile_other">Second profile</string>
 </resources>
 
 

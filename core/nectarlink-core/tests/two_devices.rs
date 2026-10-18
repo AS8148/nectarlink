@@ -4827,6 +4827,45 @@ async fn start_usb_device(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_profiles_on_one_phone_each_get_their_own_usb_port() {
+    // Android profiles (personal, work, a cloned app) share one loopback: both apps ask
+    // for the same port, and the second takes the next one rather than a random port the
+    // PC never tries. Each port then reaches its own profile.
+    let base = loop {
+        let base = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        let Some(last) = base.checked_add(nectarlink_core::USB_PORT_COUNT) else { continue };
+        if (base..=last).all(|p| std::net::TcpListener::bind(("127.0.0.1", p)).is_ok()) {
+            break base;
+        }
+    };
+    let personal = start_usb_device("Pixel", DeviceKind::Phone, Some(base), &[]).await;
+    let work = start_usb_device("Pixel (Work)", DeviceKind::Phone, Some(base), &[]).await;
+    let pc = start_usb_device("Desktop", DeviceKind::Desktop, None, &[]).await;
+
+    // Other tests run alongside and take ports too, so which ones are free can vary; what
+    // matters is that both stay in the range the PC tries, and apart.
+    let range = base..base + nectarlink_core::USB_PORT_COUNT;
+    let personal_port = personal.node.usb_port().expect("personal profile listens");
+    let work_port = work.node.usb_port().expect("work profile listens");
+    assert!(
+        range.contains(&personal_port) && range.contains(&work_port),
+        "{personal_port}, {work_port} in {range:?}"
+    );
+    assert_ne!(personal_port, work_port);
+
+    let at = |port: u16| -> SocketAddr { ("127.0.0.1".parse::<std::net::IpAddr>().unwrap(), port).into() };
+    let reached =
+        pc.node.connect_usb_tunnel(at(personal_port)).await.expect("tunnel to the personal profile");
+    assert_eq!(reached, personal.node.device_id());
+    let reached = pc.node.connect_usb_tunnel(at(work_port)).await.expect("tunnel to the work profile");
+    assert_eq!(reached, work.node.device_id());
+
+    pc.node.shutdown().await;
+    work.node.shutdown().await;
+    personal.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn usb_auto_pair_requires_consent_on_both_sides_and_connects_over_usb() {
     use nectarlink_core::ConnectionPath;
 

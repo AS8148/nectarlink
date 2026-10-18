@@ -2,9 +2,13 @@
 //! USB cable transport and USB auto-pairing via ADB port forwarding.
 //!
 //! When a phone is plugged into a PC over USB with USB debugging enabled:
-//! 1. The phone listens on loopback TCP `127.0.0.1:53319` ([`DEFAULT_USB_PORT`]).
-//! 2. The PC's ADB watcher forwards a local ephemeral TCP port to the phone's
-//!    TCP port (`adb forward tcp:0 tcp:53319`) and opens a TCP connection.
+//! 1. The phone listens on loopback TCP `127.0.0.1:53319` ([`DEFAULT_USB_PORT`]),
+//!    or the next free port of [`USB_PORT_COUNT`] when another Android profile
+//!    with NectarLink (a work profile, a cloned app) already has it: all
+//!    profiles share the phone's loopback.
+//! 2. The PC's ADB watcher forwards a local ephemeral TCP port to each of those
+//!    phone ports (`adb forward tcp:0 tcp:53319`, ...) and opens a TCP
+//!    connection to each one that answers.
 //! 3. Both sides exchange a [`UsbHello`] header (`NLQU` magic + length-prefixed
 //!    JSON) to learn each other's [`DeviceId`] and display name before any QUIC
 //!    packets flow.
@@ -38,6 +42,9 @@ use crate::{Error, Result, node::Shared};
 
 /// Default loopback TCP port the Android app listens on for the USB tunnel.
 pub const DEFAULT_USB_PORT: u16 = 53319;
+/// Loopback ports, from [`DEFAULT_USB_PORT`] on, that a phone may listen on: one per
+/// Android profile running NectarLink, since profiles share the phone's loopback.
+pub const USB_PORT_COUNT: u16 = 4;
 
 pub use nectarlink_adb::DEFAULT_ADB_ADDR;
 
@@ -45,6 +52,8 @@ const MAGIC: &[u8; 4] = b"NLQU";
 const MAX_HELLO_BYTES: usize = 4096;
 const HELLO_TIMEOUT: Duration = Duration::from_secs(3);
 const ADB_RETRY_DELAY: Duration = Duration::from_secs(2);
+/// How often, at most, a profile port nothing answered on is tried again.
+const SPARE_PORT_MAX_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UsbHello {
@@ -104,18 +113,28 @@ async fn exchange_hello(
     .map_err(|_| Error::Timeout)?
 }
 
+/// Binds the phone's USB tunnel listener: `preferred_port`, or the next free one of
+/// [`USB_PORT_COUNT`] (another Android profile with NectarLink holds it; profiles share
+/// the loopback). A port outside that range would never be reached by the PC, so there
+/// is no listener then. `0` binds any free port (tests).
+fn bind_phone_listener(preferred_port: u16) -> Option<std::net::TcpListener> {
+    if preferred_port == 0 {
+        return std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).ok();
+    }
+    let listener = (0..USB_PORT_COUNT).find_map(|offset| {
+        let port = preferred_port.checked_add(offset)?;
+        std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).ok()
+    });
+    if listener.is_none() {
+        tracing::warn!(port = preferred_port, "no free USB tunnel port; USB connections are off");
+    }
+    listener
+}
+
 /// Starts the phone-side loopback TCP listener (`127.0.0.1:<preferred_port>`,
 /// falling back to an ephemeral port if busy). Returns the bound TCP port.
 pub(crate) fn start_phone_listener(shared: &Arc<Shared>, preferred_port: u16) -> Option<u16> {
-    let std_listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, preferred_port))
-        .or_else(|_| {
-            if preferred_port != 0 {
-                std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            } else {
-                Err(std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, "bind failed"))
-            }
-        })
-        .ok()?;
+    let std_listener = bind_phone_listener(preferred_port)?;
     std_listener.set_nonblocking(true).ok()?;
     let port = std_listener.local_addr().ok()?.port();
     let listener = TcpListener::from_std(std_listener).ok()?;
@@ -220,7 +239,8 @@ pub(crate) async fn connect_usb_tunnel(shared: &Arc<Shared>, forwarded_tcp: Sock
 }
 
 /// Starts the PC-side ADB watcher that tracks USB-connected Android devices,
-/// sets up `adb forward tcp:0 tcp:53319`, and maintains the USB tunnel.
+/// sets up `adb forward tcp:0 tcp:53319` (and the other profile ports), and
+/// maintains a USB tunnel to each NectarLink profile that answers.
 pub(crate) fn start_adb_watcher(shared: &Arc<Shared>, adb_addr: SocketAddr) {
     let weak = Arc::downgrade(shared);
     let cancel = shared.cancel.clone();
@@ -302,27 +322,83 @@ fn reconcile_adb_devices(
     }
 }
 
+/// One plugged-in phone: a tunnel per profile port (see [`USB_PORT_COUNT`]).
 async fn run_serial_worker(
     shared: Arc<Shared>,
     adb_addr: SocketAddr,
     serial: String,
     cancel: CancellationToken,
 ) {
+    let profiles = Arc::new(Mutex::new(SerialProfiles::default()));
+    let mut ports = tokio::task::JoinSet::new();
+    for offset in 0..USB_PORT_COUNT {
+        ports.spawn(run_port_worker(
+            shared.clone(),
+            adb_addr,
+            serial.clone(),
+            DEFAULT_USB_PORT + offset,
+            cancel.clone(),
+            profiles.clone(),
+        ));
+    }
+    while ports.join_next().await.is_some() {}
+}
+
+/// What the tunnels to one phone's profiles reached, keyed by phone port.
+#[derive(Default)]
+struct SerialProfiles {
+    paired: HashMap<u16, DeviceId>,
+}
+
+impl SerialProfiles {
+    /// Whether a profile other than the one on `port` is already paired with this PC.
+    /// Then the phone is known here, and a second profile (work, a cloned app) is paired
+    /// only by hand, rather than asking each time it's plugged in.
+    fn another_is_paired(&self, port: u16) -> bool {
+        self.paired.keys().any(|p| *p != port)
+    }
+}
+
+async fn run_port_worker(
+    shared: Arc<Shared>,
+    adb_addr: SocketAddr,
+    serial: String,
+    phone_port: u16,
+    cancel: CancellationToken,
+    profiles: Arc<Mutex<SerialProfiles>>,
+) {
+    let mut delay = ADB_RETRY_DELAY;
     while !cancel.is_cancelled() {
         if !nectarlink_adb::is_serial_allowed(&serial) {
             return;
         }
-        if let Ok(host_port) = nectarlink_adb::forward_tcp(adb_addr, &serial, 0, DEFAULT_USB_PORT).await {
+        let mut answered = false;
+        if let Ok(host_port) = nectarlink_adb::forward_tcp(adb_addr, &serial, 0, phone_port).await {
             let forwarded = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), host_port);
-            run_forwarded_session(&shared, forwarded, &cancel, auto_pairs(&serial)).await;
+            let target = UsbTarget { phone_port, auto_pair: auto_pairs(&serial), profiles: profiles.clone() };
+            answered = run_forwarded_session(&shared, forwarded, &cancel, target).await;
             let _ = nectarlink_adb::kill_forward_tcp(adb_addr, &serial, host_port).await;
         }
+        // The usual port is kept up; the others usually have nobody listening (one
+        // profile), so they're tried less and less often until something answers.
+        delay = if answered || phone_port == DEFAULT_USB_PORT {
+            ADB_RETRY_DELAY
+        } else {
+            (delay * 2).min(SPARE_PORT_MAX_DELAY)
+        };
         tokio::select! {
             _ = cancel.cancelled() => return,
-            _ = shared.usb_poke.notified() => {}
-            _ = tokio::time::sleep(ADB_RETRY_DELAY) => {}
+            _ = shared.usb_poke.notified() => delay = ADB_RETRY_DELAY,
+            _ = tokio::time::sleep(delay) => {}
         }
     }
+}
+
+/// The phone port a tunnel goes to, and what it may do once it knows who answered.
+struct UsbTarget {
+    phone_port: u16,
+    auto_pair: bool,
+    profiles: Arc<Mutex<SerialProfiles>>,
 }
 
 /// Whether plugging in this device should start pairing on its own. Android
@@ -333,28 +409,38 @@ fn auto_pairs(serial: &str) -> bool {
     !serial.trim().starts_with("emulator-")
 }
 
+/// Runs one tunnel until it ends. Returns whether a NectarLink profile answered.
 async fn run_forwarded_session(
     shared: &Arc<Shared>,
     forwarded_tcp: SocketAddr,
     cancel: &CancellationToken,
-    auto_pair: bool,
-) {
+    target: UsbTarget,
+) -> bool {
     let Ok(Ok(mut stream)) = tokio::time::timeout(HELLO_TIMEOUT, TcpStream::connect(forwarded_tcp)).await
     else {
-        return;
+        return false;
     };
     let _ = stream.set_nodelay(true);
     let local_name = shared.local.read().unwrap_or_else(|e| e.into_inner()).device.name.clone();
     let Ok((phone_id, phone_name)) = exchange_hello(&mut stream, &shared.id, &local_name).await else {
-        return;
+        return false;
     };
     if phone_id == shared.id {
-        return;
+        return true;
     }
-    let Some(iroh_port) = shared.bound_v4_port() else { return };
-    let Ok(udp) = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await else { return };
-    let Ok(bridge_addr) = udp.local_addr() else { return };
+    let Some(iroh_port) = shared.bound_v4_port() else { return true };
+    let Ok(udp) = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await else { return true };
+    let Ok(bridge_addr) = udp.local_addr() else { return true };
     let bridge_port = bridge_addr.port();
+
+    let paired = shared.store.is_paired(&phone_id).unwrap_or(false);
+    let auto_pair = {
+        let mut profiles = target.profiles.lock().unwrap_or_else(|e| e.into_inner());
+        if paired {
+            profiles.paired.insert(target.phone_port, phone_id);
+        }
+        target.auto_pair && !profiles.another_is_paired(target.phone_port)
+    };
 
     let tunnel_cancel = cancel.child_token();
     shared.register_usb_bridge_port(bridge_port);
@@ -363,8 +449,10 @@ async fn run_forwarded_session(
     let default_target = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), iroh_port);
     relay_tcp_udp(stream, udp, default_target, tunnel_cancel).await;
 
+    target.profiles.lock().unwrap_or_else(|e| e.into_inner()).paired.remove(&target.phone_port);
     shared.unregister_usb_bridge_port(bridge_port);
     shared.on_usb_tunnel_disconnected(phone_id, bridge_addr).await;
+    true
 }
 
 /// Bridges UDP datagrams on `udp` to length-prefixed frames (`u16` big-endian)
@@ -424,7 +512,66 @@ async fn relay_tcp_udp(
 
 #[cfg(test)]
 mod tests {
-    use super::auto_pairs;
+    use super::*;
+
+    /// Tests that bind real ports run one at a time, or one's probing takes another's port.
+    static PORTS: Mutex<()> = Mutex::new(());
+
+    /// A port with the next `USB_PORT_COUNT` ports after it free on loopback right now.
+    fn free_port_range() -> u16 {
+        loop {
+            let base =
+                std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap().local_addr().unwrap().port();
+            let Some(last) = base.checked_add(USB_PORT_COUNT) else { continue };
+            let all_free =
+                (base..=last).all(|p| std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, p)).is_ok());
+            if all_free {
+                return base;
+            }
+        }
+    }
+
+    fn port_of(listener: &std::net::TcpListener) -> u16 {
+        listener.local_addr().unwrap().port()
+    }
+
+    #[test]
+    fn a_second_profile_takes_the_next_port() {
+        let _ports = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+        let base = free_port_range();
+        let first = bind_phone_listener(base).expect("the usual port");
+        assert_eq!(port_of(&first), base);
+        let second = bind_phone_listener(base).expect("the next one");
+        assert_eq!(port_of(&second), base + 1);
+    }
+
+    #[test]
+    fn no_listener_when_every_profile_port_is_taken() {
+        let _ports = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+        let base = free_port_range();
+        let taken: Vec<_> = (0..USB_PORT_COUNT).map(|_| bind_phone_listener(base).expect("free")).collect();
+        let mut ports: Vec<u16> = taken.iter().map(port_of).collect();
+        ports.sort_unstable();
+        assert_eq!(ports, (base..base + USB_PORT_COUNT).collect::<Vec<_>>());
+        // A port outside the range would never be reached by the PC: none at all instead.
+        assert!(bind_phone_listener(base).is_none());
+    }
+
+    #[test]
+    fn port_zero_binds_any_free_port() {
+        let _ports = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+        let listener = bind_phone_listener(0).expect("any port");
+        assert_ne!(port_of(&listener), 0);
+    }
+
+    #[test]
+    fn a_second_profile_is_paired_by_hand_once_one_is_paired() {
+        let mut profiles = SerialProfiles::default();
+        assert!(!profiles.another_is_paired(DEFAULT_USB_PORT), "nothing paired yet: pairing may start");
+        profiles.paired.insert(DEFAULT_USB_PORT, DeviceId([1; 32]));
+        assert!(!profiles.another_is_paired(DEFAULT_USB_PORT), "the paired profile itself");
+        assert!(profiles.another_is_paired(DEFAULT_USB_PORT + 1), "the work profile next to it");
+    }
 
     #[test]
     fn emulators_are_not_auto_paired() {

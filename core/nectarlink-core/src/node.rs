@@ -2065,8 +2065,9 @@ impl Node {
     }
 
     /// Whether this device's LocalSend HTTP/HTTPS server is actively bound and
-    /// able to receive incoming files (false when turned off or when TCP port
-    /// 53317 is already owned by a standalone LocalSend process on the same host).
+    /// able to receive incoming files (false when turned off, or when TCP port
+    /// 53317 is already owned by a standalone LocalSend process, or by NectarLink
+    /// in another Android profile, on the same device: that one receives).
     pub fn localsend_receiving(&self) -> bool {
         self.shared.localsend.receiving()
     }

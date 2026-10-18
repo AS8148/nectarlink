@@ -163,7 +163,7 @@ pub use transfer::{
     Direction, FileSource, OutgoingFile, RECORDER, RecordingMarker, Transfer, TransferFailure, TransferState,
     outgoing_paths, safe_file_name,
 };
-pub use usb::{DEFAULT_ADB_ADDR, DEFAULT_USB_PORT};
+pub use usb::{DEFAULT_ADB_ADDR, DEFAULT_USB_PORT, USB_PORT_COUNT};
 pub use webcam::{TOGGLE as WEBCAM_TOGGLE, WebcamSink};
 
 pub(crate) fn device_id(key: &iroh::PublicKey) -> DeviceId {

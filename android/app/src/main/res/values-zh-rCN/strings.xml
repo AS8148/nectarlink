@@ -1214,4 +1214,7 @@
     <string name="banking_paused_text">在你离开该应用之前，开发者选项、调试和NectarLink的无障碍服务将保持关闭。</string>
     <string name="banking_turn_back_on">重新开启</string>
     <string name="action_done">完成</string>
+    <string name="device_name_in_profile">%1$s（%2$s）</string>
+    <string name="profile_work">工作</string>
+    <string name="profile_other">第二资料</string>
 </resources>
