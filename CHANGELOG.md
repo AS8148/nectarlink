@@ -74,6 +74,12 @@ has a Stop button. Choosing another
   offering to pair the other. Each profile now connects over USB, and the
   phone's name says which one it is, such as "Pixel 9a (Work)"
   ([#25](https://github.com/thtbee/nectarlink/issues/25)).
+- Plugging the phone in while it's connected over Wi-Fi moves the
+  connection to USB sooner, and reconnecting after the phone restarts no
+  longer tries a stale USB address first. PC audio sent to the phone
+  drops a moment of sound under load rather than holding up everything
+  else. Thanks to Jochen Kirstätter
+  ([#23](https://github.com/thtbee/nectarlink/pull/23)).
 - Turning on LocalSend closed the Windows app.
 - Play on phone froze on the phone when the player's window was
   minimized, and showed the whole screen when it couldn't find the
