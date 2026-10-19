@@ -1374,6 +1374,30 @@ Item {
                                     }
                                 }
                             }
+                            // Instant Hotspot: the saved Wi-Fi network the PC joins
+                            // after this phone turns its hotspot on.
+                            ListRow {
+                                id: hotspotRow
+                                width: parent.width
+                                property string network: AppController.hotspotNetwork(deviceCard.deviceId)
+                                iconPath: Icons.wifi
+                                title: qsTr("Join this phone's hotspot")
+                                description: hotspotRow.network.length > 0
+                                    ? qsTr("When Instant Hotspot turns it on, this PC joins %1.").arg(hotspotRow.network)
+                                    : qsTr("Join the phone's hotspot once from Windows' Wi-Fi list, then choose it here.")
+                                Button {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    variant: "tonal"
+                                    size: "sm"
+                                    text: qsTr("Choose network")
+                                    onClicked: {
+                                        hotspotSheet.deviceId = deviceCard.deviceId
+                                        hotspotSheet.row = hotspotRow
+                                        hotspotSheet.networks = JSON.parse(AppController.wifiNetworks() || "[]")
+                                        hotspotSheet.open()
+                                    }
+                                }
+                            }
                             Repeater {
                                 model: page.toggleGroups
                                 delegate: Column {
@@ -3316,6 +3340,67 @@ Item {
         visible: opacity > 0
         opacity: AppController.highlightTarget.startsWith("settings:") ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: Theme.fadeFast } }
+    }
+
+    Sheet {
+        id: hotspotSheet
+        property string deviceId
+        property var row: null
+        property var networks: []
+        cardWidth: 420
+        Column {
+            width: parent.width
+            spacing: 12
+            Txt { width: parent.width; text: qsTr("Phone's hotspot network"); role: "headline"; wrapMode: Text.WordWrap }
+            Txt {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                role: "body"
+                muted: true
+                text: hotspotSheet.networks.length > 0
+                    ? qsTr("Wi-Fi networks this PC has joined before. Windows keeps their passwords; NectarLink never sees them.")
+                    : qsTr("This PC hasn't saved any Wi-Fi networks yet. Join the phone's hotspot once from Windows' Wi-Fi list first.")
+            }
+            // A PC can have saved dozens of networks: the list scrolls.
+            ListView {
+                width: parent.width
+                height: Math.min(contentHeight, 320)
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                spacing: 4
+                model: hotspotSheet.networks
+                delegate: Button {
+                    required property var modelData
+                    width: ListView.view.width
+                    readonly property bool chosen: hotspotSheet.row !== null && hotspotSheet.row.network === modelData
+                    variant: chosen ? "tonal" : "text"
+                    iconPath: chosen ? Icons.check : Icons.wifi
+                    text: modelData
+                    onClicked: {
+                        AppController.setHotspotNetwork(hotspotSheet.deviceId, modelData)
+                        if (hotspotSheet.row !== null)
+                            hotspotSheet.row.network = modelData
+                        hotspotSheet.close()
+                    }
+                }
+            }
+            Row {
+                anchors.right: parent.right
+                spacing: 10
+                Button {
+                    variant: "text"
+                    text: qsTr("Don't join")
+                    visible: hotspotSheet.row !== null && hotspotSheet.row.network.length > 0
+                    onClicked: {
+                        AppController.setHotspotNetwork(hotspotSheet.deviceId, "")
+                        if (hotspotSheet.row !== null)
+                            hotspotSheet.row.network = ""
+                        hotspotSheet.close()
+                    }
+                }
+                Button { variant: "text"; text: qsTr("Close"); onClicked: hotspotSheet.close() }
+            }
+        }
     }
 
     Sheet {

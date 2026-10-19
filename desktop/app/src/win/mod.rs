@@ -34,6 +34,7 @@ pub mod tray;
 pub mod vcam;
 pub mod wallpaper;
 pub mod widget;
+pub mod wifi;
 pub mod window_capture;
 pub mod wol;
 
