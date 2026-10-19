@@ -41,6 +41,13 @@ has a Stop button. Choosing another
   output on the PC moves the sound there right away, and **Use this phone
   as a microphone** in the phone's Settings, for each PC, turns asking off
   for that PC. Thanks to Jochen Kirstätter for finding the gaps.
+- **Photo backup.** In **Settings › Files & Sync**, turn on Photo backup
+  for a phone and new photos from every album are copied into a folder on
+  the PC (Pictures\NectarLink\<phone> unless you choose another), filed by
+  year and month, with videos if you want them. It only needs the phone's
+  photos permission, copies one item at a time so a lost connection costs
+  at most one file, and never deletes anything, on the PC or the phone.
+  Backed-up items don't fill the Timeline.
 - **Pair a phone with a tablet (or another phone).** In NectarLink's
   pairing screen, **Pair a phone or tablet instead** shows a code to scan
   from the other device. Once paired, each shows the other on Home with its
