@@ -48,6 +48,10 @@ has a Stop button. Choosing another
   photos permission, copies one item at a time so a lost connection costs
   at most one file, and never deletes anything, on the PC or the phone.
   Backed-up items don't fill the Timeline.
+- **Instant Hotspot joins the hotspot too.** In **Settings › Devices**,
+  choose the phone's hotspot from the Wi-Fi networks this PC has saved.
+  When Instant Hotspot on Home turns the phone's hotspot on, the PC joins
+  it by itself. Windows keeps the password; NectarLink never sees it.
 - **Pair a phone with a tablet (or another phone).** In NectarLink's
   pairing screen, **Pair a phone or tablet instead** shows a code to scan
   from the other device. Once paired, each shows the other on Home with its
