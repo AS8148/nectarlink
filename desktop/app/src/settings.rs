@@ -93,9 +93,25 @@ impl RecordingFormat {
 }
 
 pub const DEFAULT_LOCAL_API_PORT: u16 = 53320;
+pub const DEFAULT_WINDOW_WIDTH: u32 = 1120;
+pub const DEFAULT_WINDOW_HEIGHT: u32 = 740;
+/// Broad sanity bounds for persisted window dimensions; the UI minimum size lives in
+/// `Theme.layout.minWindow` (`Tokens.qml`) and adapts to the target screen's viewport.
+pub const MIN_WINDOW_WIDTH: u32 = 320;
+pub const MIN_WINDOW_HEIGHT: u32 = 240;
+pub const MAX_WINDOW_WIDTH: u32 = 7680;
+pub const MAX_WINDOW_HEIGHT: u32 = 4320;
 
 fn default_local_api_port() -> u16 {
     DEFAULT_LOCAL_API_PORT
+}
+
+fn default_window_width() -> u32 {
+    DEFAULT_WINDOW_WIDTH
+}
+
+fn default_window_height() -> u32 {
+    DEFAULT_WINDOW_HEIGHT
 }
 
 fn default_true() -> bool {
@@ -123,6 +139,9 @@ static FOLDER_SYNC_RULES: std::sync::OnceLock<std::sync::Mutex<Vec<crate::folder
     std::sync::OnceLock::new();
 static AUTOMATION_RULES: std::sync::OnceLock<std::sync::Mutex<Vec<crate::automations::AutomationRule>>> =
     std::sync::OnceLock::new();
+type WindowGeometryState = (Option<String>, Option<i32>, Option<i32>, u32, u32, bool);
+static WINDOW_GEOMETRY: std::sync::Mutex<WindowGeometryState> =
+    std::sync::Mutex::new((None, None, None, DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT, false));
 
 pub fn clipboard_auto_copy_received_files() -> bool {
     CLIPBOARD_AUTO_COPY_FILES.load(std::sync::atomic::Ordering::Relaxed)
@@ -251,6 +270,30 @@ pub fn set_automation_rules(rules: Vec<crate::automations::AutomationRule>) {
         .get_or_init(|| std::sync::Mutex::new(Vec::new()))
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = rules;
+}
+
+pub fn window_geometry() -> (Option<String>, Option<i32>, Option<i32>, u32, u32, bool) {
+    WINDOW_GEOMETRY.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+pub fn set_window_geometry(
+    screen: Option<String>,
+    x: Option<i32>,
+    y: Option<i32>,
+    width: u32,
+    height: u32,
+    maximized: bool,
+) {
+    let screen = screen.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+    let (x, y) = if x.is_some() && y.is_some() { (x, y) } else { (None, None) };
+    *WINDOW_GEOMETRY.lock().unwrap_or_else(|e| e.into_inner()) = (
+        screen,
+        x,
+        y,
+        width.clamp(MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH),
+        height.clamp(MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT),
+        maximized,
+    );
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -421,6 +464,24 @@ pub struct Settings {
     pub obs_port: u16,
     /// OBS's WebSocket password, encrypted with Windows DPAPI (base64). Never stored in clear.
     pub obs_password: Option<String>,
+    /// Target monitor/screen name or identifier where the main window was last placed.
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "window_screen")]
+    pub window_screen: Option<String>,
+    /// Last saved main window X offset relative to `window_screen` in logical pixels (`None` = centered default).
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "window_x")]
+    pub window_x: Option<i32>,
+    /// Last saved main window Y offset relative to `window_screen` in logical pixels (`None` = centered default).
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "window_y")]
+    pub window_y: Option<i32>,
+    /// Last saved main window normal width in logical pixels.
+    #[serde(default = "default_window_width", alias = "window_width")]
+    pub window_width: u32,
+    /// Last saved main window normal height in logical pixels.
+    #[serde(default = "default_window_height", alias = "window_height")]
+    pub window_height: u32,
+    /// Whether the main window was maximized when last open.
+    #[serde(default, alias = "window_maximized")]
+    pub window_maximized: bool,
 }
 
 impl Default for Settings {
@@ -481,6 +542,12 @@ impl Default for Settings {
             hive_invite_dismissed: false,
             obs_port: crate::obs::DEFAULT_PORT,
             obs_password: None,
+            window_screen: None,
+            window_x: None,
+            window_y: None,
+            window_width: DEFAULT_WINDOW_WIDTH,
+            window_height: DEFAULT_WINDOW_HEIGHT,
+            window_maximized: false,
         }
     }
 }
@@ -493,6 +560,13 @@ impl Settings {
     pub fn sanitized(mut self) -> Self {
         self.webcam_camera = normalize_webcam_camera(&self.webcam_camera);
         self.walkthrough_step = self.walkthrough_step.min(6);
+        self.window_screen = self.window_screen.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+        self.window_width = self.window_width.clamp(MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH);
+        self.window_height = self.window_height.clamp(MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT);
+        if self.window_x.is_none() || self.window_y.is_none() {
+            self.window_x = None;
+            self.window_y = None;
+        }
         self
     }
 
@@ -523,6 +597,14 @@ impl Settings {
         set_share_pc_storage(self.share_pc_storage);
         set_forward_pc_notifications_to_phone(self.forward_pc_notifications_to_phone);
         set_away_mode(self.away_mode);
+        set_window_geometry(
+            self.window_screen.clone(),
+            self.window_x,
+            self.window_y,
+            self.window_width,
+            self.window_height,
+            self.window_maximized,
+        );
     }
 
     /// Loads the settings, falling back to defaults if the file is missing.
@@ -634,6 +716,12 @@ mod tests {
             hive_invite_dismissed: true,
             obs_port: crate::obs::DEFAULT_PORT,
             obs_password: None,
+            window_screen: Some("DP-1".into()),
+            window_x: Some(180),
+            window_y: Some(120),
+            window_width: 1280,
+            window_height: 820,
+            window_maximized: true,
         };
         settings.save(dir.path()).unwrap();
         assert_eq!(Settings::load(dir.path()), settings);
@@ -905,5 +993,58 @@ mod tests {
         assert_eq!(upgraded.walkthrough_step, 0);
         assert!(upgraded.reconcile_walkthrough_for_paired_devices(2));
         assert!(upgraded.walkthrough_completed);
+    }
+
+    #[test]
+    fn window_geometry_sanitization_and_persistence() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // 1. Out-of-bounds dimensions are clamped to [MIN_WINDOW_*, MAX_WINDOW_*],
+        //    and screen identifiers are trimmed.
+        fs::write(
+            dir.path().join(FILE_NAME),
+            r#"{ "windowScreen": "  HDMI-A-1  ", "windowWidth": 100, "windowHeight": 80, "windowX": 40, "windowY": 50, "windowMaximized": true }"#,
+        )
+        .unwrap();
+        let clamped_small = Settings::load(dir.path());
+        assert_eq!(clamped_small.window_screen.as_deref(), Some("HDMI-A-1"));
+        assert_eq!(clamped_small.window_width, MIN_WINDOW_WIDTH);
+        assert_eq!(clamped_small.window_height, MIN_WINDOW_HEIGHT);
+        assert_eq!(clamped_small.window_x, Some(40));
+        assert_eq!(clamped_small.window_y, Some(50));
+        assert!(clamped_small.window_maximized);
+
+        // 2. Tokens.qml minimum size (880x600) and viewport-shrunk sizes (e.g. 720x500) are preserved intact.
+        fs::write(
+            dir.path().join(FILE_NAME),
+            r#"{ "windowScreen": "eDP-1", "windowWidth": 880, "windowHeight": 600, "windowX": 0, "windowY": 0 }"#,
+        )
+        .unwrap();
+        let tokens_min = Settings::load(dir.path());
+        assert_eq!(tokens_min.window_screen.as_deref(), Some("eDP-1"));
+        assert_eq!(tokens_min.window_width, 880);
+        assert_eq!(tokens_min.window_height, 600);
+
+        fs::write(
+            dir.path().join(FILE_NAME),
+            r#"{ "window_screen": "   ", "window_width": 99999, "window_height": 99999 }"#,
+        )
+        .unwrap();
+        let clamped_large = Settings::load(dir.path());
+        assert_eq!(clamped_large.window_screen, None);
+        assert_eq!(clamped_large.window_width, MAX_WINDOW_WIDTH);
+        assert_eq!(clamped_large.window_height, MAX_WINDOW_HEIGHT);
+
+        // 3. Partial coordinates (only X or only Y) are cleared so both are None.
+        let partial = Settings {
+            window_screen: Some("DP-2".into()),
+            window_x: Some(120),
+            window_y: None,
+            ..Default::default()
+        }
+        .sanitized();
+        assert_eq!(partial.window_screen.as_deref(), Some("DP-2"));
+        assert_eq!(partial.window_x, None);
+        assert_eq!(partial.window_y, None);
     }
 }

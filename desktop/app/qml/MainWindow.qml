@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import QtQuick
+import QtQuick.Window
 import QtQuick.Effects
 import app.nectarlink
 
@@ -108,19 +109,245 @@ NativeWindow {
     readonly property string currentDeviceName: DeviceList.count > 0
         ? DeviceList.deviceNameAt(currentDeviceIndex) : ""
 
-    width: 1120
-    height: 740
     minimumWidth: Theme.layout.minWindow[0]
     minimumHeight: Theme.layout.minWindow[1]
+    property string normalScreen: Preferences.windowScreen
+    property int normalWidth: Math.max(minimumWidth, Preferences.windowWidth > 0 ? Preferences.windowWidth : 1120)
+    property int normalHeight: Math.max(minimumHeight, Preferences.windowHeight > 0 ? Preferences.windowHeight : 740)
+    property int normalX: Preferences.windowX
+    property int normalY: Preferences.windowY
+    property bool hasNormalPosition: Preferences.hasWindowPosition
+    property bool restoringGeometry: true
+
+    width: normalWidth
+    height: normalHeight
     title: "NectarLink"
+
+    function screenKey(s) {
+        if (!s) return ""
+        const parts = [s.manufacturer || "", s.model || "", s.serialNumber || ""].filter(function(p) { return p.length > 0 })
+        if (parts.length > 0) return parts.join(":")
+        return s.name || ""
+    }
+
+    function findScreen(ident) {
+        const screens = Qt.application.screens
+        if (!ident || ident.length === 0 || !screens || screens.length === 0) return null
+        for (let i = 0; i < screens.length; ++i) {
+            const s = screens[i]
+            if (screenKey(s) === ident || s.name === ident) {
+                return s
+            }
+        }
+        return null
+    }
+
+    function primaryScreen() {
+        const screens = Qt.application.screens
+        if (screens && screens.length > 0) return screens[0]
+        return window.screen ? window.screen : null
+    }
+
+    function screenOriginX(s) {
+        return (s && s.virtualX !== undefined) ? s.virtualX : 0
+    }
+
+    function screenOriginY(s) {
+        return (s && s.virtualY !== undefined) ? s.virtualY : 0
+    }
+
+    // A screen's own size. Its desktopAvailable* properties cover the whole
+    // virtual desktop, which spans every monitor.
+    function screenAvailWidth(s) {
+        if (s && s.width > 0) return s.width
+        return Screen.width > 0 ? Screen.width : 1920
+    }
+
+    function screenAvailHeight(s) {
+        if (s && s.height > 0) return s.height
+        return Screen.height > 0 ? Screen.height : 1080
+    }
+
+    function currentScreen() {
+        const screens = Qt.application.screens
+        if (screens && screens.length > 0) {
+            const cx = window.x + Math.round(window.width / 2)
+            const cy = window.y + Math.round(window.height / 2)
+            for (let i = 0; i < screens.length; ++i) {
+                const s = screens[i]
+                const sx = screenOriginX(s)
+                const sy = screenOriginY(s)
+                const sw = screenAvailWidth(s)
+                const sh = screenAvailHeight(s)
+                if (cx >= sx && cx < sx + sw && cy >= sy && cy < sy + sh) {
+                    return s
+                }
+            }
+        }
+        return window.screen ? window.screen : primaryScreen()
+    }
+
+    function updateNormalPositionFromWindow() {
+        const s = currentScreen()
+        const key = screenKey(s)
+        if (key.length > 0) {
+            normalScreen = key
+        }
+        normalX = window.x - screenOriginX(s)
+        normalY = window.y - screenOriginY(s)
+        hasNormalPosition = true
+    }
+
+    Timer {
+        id: restoreCompleteTimer
+        interval: 180
+        onTriggered: {
+            if (!Preferences.windowMaximized && window.visibility === Window.Windowed) {
+                const s = findScreen(window.normalScreen) || primaryScreen()
+                const targetGlobalX = screenOriginX(s) + window.normalX
+                const targetGlobalY = screenOriginY(s) + window.normalY
+                if (window.hasNormalPosition) {
+                    if (window.x !== targetGlobalX) window.x = targetGlobalX
+                    if (window.y !== targetGlobalY) window.y = targetGlobalY
+                } else if (window.visible) {
+                    window.updateNormalPositionFromWindow()
+                }
+            }
+            window.restoringGeometry = false
+        }
+    }
+
+    Timer {
+        id: geometrySaveTimer
+        interval: 250
+        onTriggered: window.saveWindowState()
+    }
+
+    // Note: On Wayland compositors, client-side global window coordinates (x, y) read as 0
+    // and setting them is a no-op; only window dimensions, target screen, and maximized state take effect.
+    function restoreAndBringToFront() {
+        restoringGeometry = true
+        const savedScreen = findScreen(Preferences.windowScreen)
+        const targetScreen = savedScreen ? savedScreen : primaryScreen()
+        const sx = screenOriginX(targetScreen)
+        const sy = screenOriginY(targetScreen)
+        const availW = screenAvailWidth(targetScreen)
+        const availH = screenAvailHeight(targetScreen)
+
+        const desiredW = Math.max(minimumWidth, Preferences.windowWidth > 0 ? Preferences.windowWidth : 1120)
+        const desiredH = Math.max(minimumHeight, Preferences.windowHeight > 0 ? Preferences.windowHeight : 740)
+        const minW = Math.min(minimumWidth, availW)
+        const minH = Math.min(minimumHeight, availH)
+        const fittedW = Math.max(minW, Math.min(desiredW, availW))
+        const fittedH = Math.max(minH, Math.min(desiredH, availH))
+
+        normalWidth = fittedW
+        normalHeight = fittedH
+        width = fittedW
+        height = fittedH
+
+        const targetKey = screenKey(targetScreen)
+        if (targetKey.length > 0) {
+            normalScreen = targetKey
+        }
+
+        if (savedScreen && Preferences.hasWindowPosition) {
+            const maxRelX = Math.max(0, availW - fittedW)
+            const maxRelY = Math.max(0, availH - fittedH)
+            normalX = Math.max(0, Math.min(Preferences.windowX, maxRelX))
+            normalY = Math.max(0, Math.min(Preferences.windowY, maxRelY))
+            hasNormalPosition = true
+        } else {
+            normalX = Math.max(0, Math.round((availW - fittedW) / 2))
+            normalY = Math.max(0, Math.round((availH - fittedH) / 2))
+            hasNormalPosition = true
+        }
+
+        if (targetScreen && window.screen !== targetScreen) {
+            window.screen = targetScreen
+        }
+        x = sx + normalX
+        y = sy + normalY
+
+        if (Preferences.windowMaximized) {
+            bringToFront()
+            showMaximized()
+        } else {
+            bringToFront()
+            x = sx + normalX
+            y = sy + normalY
+        }
+        restoreCompleteTimer.restart()
+    }
+
+    function saveWindowState() {
+        geometrySaveTimer.stop()
+        if (window.visible && !restoringGeometry) {
+            const s = currentScreen()
+            const key = screenKey(s)
+            if (key.length > 0) {
+                normalScreen = key
+            }
+            if (window.visibility === Window.Windowed
+                && window.width >= window.minimumWidth && window.height >= window.minimumHeight) {
+                normalX = window.x - screenOriginX(s)
+                normalY = window.y - screenOriginY(s)
+                hasNormalPosition = true
+                normalWidth = Math.max(window.minimumWidth, window.width)
+                normalHeight = Math.max(window.minimumHeight, window.height)
+            }
+        }
+        Preferences.saveWindowGeometry(
+            normalScreen,
+            hasNormalPosition,
+            normalX,
+            normalY,
+            normalWidth,
+            normalHeight,
+            window.visibility === Window.Maximized
+        )
+    }
 
     property bool resizing: resizeSettleTimer.running
     Timer {
         id: resizeSettleTimer
         interval: 140
     }
-    onWidthChanged: if (visible) resizeSettleTimer.restart()
-    onHeightChanged: if (visible) resizeSettleTimer.restart()
+    onXChanged: {
+        if (visible && !restoringGeometry && window.visibility === Window.Windowed) {
+            updateNormalPositionFromWindow()
+            geometrySaveTimer.restart()
+        }
+    }
+    onYChanged: {
+        if (visible && !restoringGeometry && window.visibility === Window.Windowed) {
+            updateNormalPositionFromWindow()
+            geometrySaveTimer.restart()
+        }
+    }
+    onWidthChanged: {
+        if (visible) {
+            resizeSettleTimer.restart()
+            if (!restoringGeometry && window.visibility === Window.Windowed) {
+                normalWidth = Math.max(window.minimumWidth, window.width)
+                geometrySaveTimer.restart()
+            }
+        }
+    }
+    onHeightChanged: {
+        if (visible) {
+            resizeSettleTimer.restart()
+            if (!restoringGeometry && window.visibility === Window.Windowed) {
+                normalHeight = Math.max(window.minimumHeight, window.height)
+                geometrySaveTimer.restart()
+            }
+        }
+    }
+    onWindowVisibilityChanged: {
+        if (visible && !restoringGeometry && (window.visibility === Window.Windowed || window.visibility === Window.Maximized)) {
+            geometrySaveTimer.restart()
+        }
+    }
 
     // Mica/Acrylic is applied by Windows a moment after it's requested. Showing
     // through before it's there reveals the bare desktop (a flash), so the
