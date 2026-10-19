@@ -66,6 +66,10 @@ has a Stop button. Choosing another
   was fetched with every icon each time it opened. The PC now keeps the
   last list, also for the next start, and refreshes it in the background;
   the phone keeps the icons it already drew.
+- **The PC's window opens where you left it.** It comes back on the same
+  monitor, at the same size and place, and maximized if it was. If that
+  monitor is gone or smaller, it fits the window on screen. Thanks to
+  Jochen Kirstätter ([#26](https://github.com/thtbee/nectarlink/issues/26)).
 
 ### Fixed
 
