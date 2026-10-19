@@ -243,6 +243,13 @@ Item {
     ]
 
     FolderDialog {
+        id: photoBackupFolderPicker
+        property string deviceId
+        title: qsTr("Back up photos to")
+        onAccepted: PhotoBackup.chooseFolder(deviceId, selectedFolder.toString())
+    }
+
+    FolderDialog {
         id: recordingsFolderPicker
         title: qsTr("Save recordings in")
         onAccepted: Preferences.chooseRecordingsFolder(selectedFolder.toString())
@@ -2122,6 +2129,93 @@ Item {
                                     size: "sm"
                                     text: qsTr("Choose folder")
                                     onClicked: recordingsFolderPicker.open()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Photo backup: every album, by year and month, never deleting.
+                Card {
+                    width: parent.width
+                    Column {
+                        width: parent.width
+                        ListRow {
+                            width: parent.width
+                            iconPath: Icons.photo
+                            title: qsTr("Photo backup")
+                            description: qsTr("Copies new photos from every album into a folder on this PC, by year and month. Nothing is deleted, here or on the phone. Needs only the phone's photos permission.")
+                        }
+                        Repeater {
+                            model: { try { return JSON.parse(PhotoBackup.phones || "[]") } catch (e) { return [] } }
+                            delegate: Column {
+                                id: backupDelegate
+                                required property var modelData
+                                width: parent.width
+                                Divider { width: parent.width }
+                                ListRow {
+                                    width: parent.width
+                                    iconPath: Icons.phone
+                                    title: backupDelegate.modelData.name
+                                    description: backupDelegate.modelData.status
+                                    Toggle {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        label: qsTr("Back up photos from %1").arg(backupDelegate.modelData.name)
+                                        checked: Boolean(backupDelegate.modelData.enabled)
+                                        onToggled: (on) => PhotoBackup.setEnabled(backupDelegate.modelData.id, on)
+                                    }
+                                }
+                                ListRow {
+                                    width: parent.width
+                                    visible: Boolean(backupDelegate.modelData.enabled)
+                                    iconPath: Icons.folder
+                                    title: backupDelegate.modelData.folder
+                                    description: qsTr("Backup folder")
+                                    Row {
+                                        spacing: 8
+                                        Button {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            variant: "text"
+                                            size: "sm"
+                                            text: qsTr("Open")
+                                            onClicked: PhotoBackup.openFolder(backupDelegate.modelData.id)
+                                        }
+                                        Button {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            variant: "tonal"
+                                            size: "sm"
+                                            text: qsTr("Choose folder")
+                                            onClicked: {
+                                                photoBackupFolderPicker.deviceId = backupDelegate.modelData.id
+                                                photoBackupFolderPicker.open()
+                                            }
+                                        }
+                                    }
+                                }
+                                ListRow {
+                                    width: parent.width
+                                    visible: Boolean(backupDelegate.modelData.enabled)
+                                    iconPath: Icons.video
+                                    title: qsTr("Include videos")
+                                    description: qsTr("Videos can be large. Copied one at a time, so a lost connection costs at most one file.")
+                                    Row {
+                                        spacing: 8
+                                        Button {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            variant: "text"
+                                            size: "sm"
+                                            iconPath: Icons.refresh
+                                            text: qsTr("Back up now")
+                                            enabled: Boolean(backupDelegate.modelData.online)
+                                            onClicked: PhotoBackup.backUpNow(backupDelegate.modelData.id)
+                                        }
+                                        Toggle {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            label: qsTr("Include videos")
+                                            checked: Boolean(backupDelegate.modelData.videos)
+                                            onToggled: (on) => PhotoBackup.setVideos(backupDelegate.modelData.id, on)
+                                        }
+                                    }
                                 }
                             }
                         }

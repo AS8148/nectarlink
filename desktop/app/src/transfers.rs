@@ -239,7 +239,7 @@ pub fn show_in_folder(path: &Path) {
 pub fn on_event(event: &NodeEvent) {
     let NodeEvent::Transfer(t) = event else { return };
     // Photos the user asked to open or copy say nothing about being saved.
-    if t.direction != Direction::Incoming || crate::photos::handles(&t.id) {
+    if t.direction != Direction::Incoming || crate::photos::handles(&t.id) || crate::photo_backup::claims(t) {
         return;
     }
     if t.state == TransferState::Requested {

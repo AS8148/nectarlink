@@ -352,6 +352,17 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("PhoneMic", "Tap Start on %1 to use its microphone."), // desktop/app/src/phone_mic.rs
     QT_TRANSLATE_NOOP("PhoneMic", "The microphone is turned off for this PC on %1."), // desktop/app/src/phone_mic.rs
     QT_TRANSLATE_NOOP("PhoneMic", "Update NectarLink on %1 to use its microphone."), // desktop/app/src/phone_mic.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "Can't write to the backup folder."), // desktop/app/src/photo_backup.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "Copying, %1 left"), // desktop/app/src/bridge/photo_backup.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "Looking for new photos…"), // desktop/app/src/bridge/photo_backup.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "Off"), // desktop/app/src/bridge/photo_backup.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "Photos are turned off for this PC on %1."), // desktop/app/src/photo_backup.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "The backup folder's drive is full."), // desktop/app/src/photo_backup.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "The backup stopped. It tries again in a few minutes."), // desktop/app/src/photo_backup.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "Up to date"), // desktop/app/src/bridge/photo_backup.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "Up to date, %1 backed up"), // desktop/app/src/bridge/photo_backup.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "Update NectarLink on %1 to back up its photos."), // desktop/app/src/photo_backup.rs
+    QT_TRANSLATE_NOOP("PhotoBackup", "Waiting for %1"), // desktop/app/src/bridge/photo_backup.rs
     QT_TRANSLATE_NOOP("Photos", "Copied to clipboard."), // desktop/app/src/photos.rs
     QT_TRANSLATE_NOOP("Photos", "From %1"), // desktop/app/src/photos.rs
     QT_TRANSLATE_NOOP("Photos", "New photo"), // desktop/app/src/photos.rs

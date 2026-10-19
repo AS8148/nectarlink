@@ -40,6 +40,7 @@ mod pc_mirror;
 mod pc_notifications;
 mod pc_storage;
 mod phone_mic;
+mod photo_backup;
 mod photos;
 mod play_on_phone;
 mod qr;
@@ -547,6 +548,7 @@ fn main() -> ExitCode {
     battery::set_enabled(settings.battery_alerts);
     storage::start();
     folder_sync::start_poller();
+    photo_backup::start();
     webcam::init(&settings);
     phone_mic::init(&settings);
     local_api::init(&settings);
