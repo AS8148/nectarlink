@@ -80,6 +80,11 @@ has a Stop button. Choosing another
   drops a moment of sound under load rather than holding up everything
   else. Thanks to Jochen Kirstätter
   ([#23](https://github.com/thtbee/nectarlink/pull/23)).
+- Copying text on the phone that also carried a link to a file sent the
+  wrong thing to the PC, or treated it as an image. The text now comes
+  through as text, and files that aren't images aren't sent as images.
+  Thanks to Jochen Kirstätter
+  ([#27](https://github.com/thtbee/nectarlink/issues/27)).
 - The Timeline showed thumbnails only for photos saved from the phone,
   and some of those came out empty. Images you send or receive now get
   one too, files without one get an icon for their type, and Copy works
