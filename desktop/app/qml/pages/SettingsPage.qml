@@ -1391,7 +1391,6 @@ Item {
                                     ? qsTr("When Instant Hotspot turns it on, this PC joins %1.").arg(hotspotRow.network)
                                     : qsTr("Join the phone's hotspot once from Windows' Wi-Fi list, then choose it here.")
                                 Button {
-                                    anchors.verticalCenter: parent.verticalCenter
                                     variant: "tonal"
                                     size: "sm"
                                     text: qsTr("Choose network")
@@ -2188,7 +2187,6 @@ Item {
                                     title: backupDelegate.modelData.name
                                     description: backupDelegate.modelData.status
                                     Toggle {
-                                        anchors.verticalCenter: parent.verticalCenter
                                         label: qsTr("Back up photos from %1").arg(backupDelegate.modelData.name)
                                         checked: Boolean(backupDelegate.modelData.enabled)
                                         onToggled: (on) => PhotoBackup.setEnabled(backupDelegate.modelData.id, on)
