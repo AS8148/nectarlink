@@ -115,16 +115,10 @@ pub fn compute_capabilities(
     #[cfg(any(windows, target_os = "linux"))]
     {
         caps.push(nectarlink_core::PC_WAKE.into());
-        caps.push(nectarlink_core::DECK_ACTIONS.into());
-    }
-    #[cfg(windows)]
-    {
         caps.push("media.control".into());
-        caps.push(nectarlink_core::STORAGE_MOUNT.into());
-        caps.push(nectarlink_core::STORAGE_READ.into());
-        caps.push(nectarlink_core::STORAGE_WRITE.into());
         caps.push(nectarlink_core::MIRROR_VIEW.into());
         caps.push(nectarlink_core::MIRROR_LISTEN.into());
+        caps.push(nectarlink_core::DECK_ACTIONS.into());
         caps.push(nectarlink_core::PC_AUDIO.into());
         caps.push(nectarlink_core::RECORDER.into());
         caps.push(nectarlink_core::WEBCAM_VIRTUAL.into());
@@ -132,6 +126,12 @@ pub fn compute_capabilities(
         caps.push(nectarlink_core::MIC_LISTEN.into());
     }
     #[cfg(windows)]
+    {
+        caps.push(nectarlink_core::STORAGE_MOUNT.into());
+        caps.push(nectarlink_core::STORAGE_READ.into());
+        caps.push(nectarlink_core::STORAGE_WRITE.into());
+    }
+    #[cfg(any(windows, target_os = "linux"))]
     let mut pc_mirror_enabled = crate::pc_mirror::is_active();
     #[cfg(any(windows, target_os = "linux"))]
     let mut remote_input_enabled = false;
@@ -142,7 +142,6 @@ pub fn compute_capabilities(
         for d in devices {
             if let Ok(toggles) = node.device_toggles(d.id) {
                 for (name, on) in toggles {
-                    #[cfg(windows)]
                     if on && name == nectarlink_core::PC_MIRROR_TOGGLE {
                         pc_mirror_enabled = true;
                     }
@@ -153,8 +152,8 @@ pub fn compute_capabilities(
             }
         }
     }
-    #[cfg(windows)]
-    if pc_mirror_enabled {
+    #[cfg(any(windows, target_os = "linux"))]
+    if pc_mirror_enabled && crate::pc_mirror::is_capture_available() {
         caps.push(nectarlink_core::MIRROR_CAPTURE.into());
     }
     #[cfg(windows)]

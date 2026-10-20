@@ -282,7 +282,45 @@ fn move_file(src: &Path, dest: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+/// Converts `src` (`.m4a`) to `dest` in `format` (`Mp3`, `Wav`, or `Flac`)
+/// using `ffmpeg` on Linux.
+#[cfg(target_os = "linux")]
+pub fn convert_audio(src: &Path, dest: &Path, format: RecordingFormat) -> std::io::Result<()> {
+    match format {
+        RecordingFormat::M4a => {
+            fs::copy(src, dest)?;
+            Ok(())
+        }
+        RecordingFormat::Wav | RecordingFormat::Mp3 | RecordingFormat::Flac => {
+            let safe_src = if src.is_relative() && src.to_string_lossy().starts_with('-') {
+                Path::new(".").join(src)
+            } else {
+                src.to_path_buf()
+            };
+            let safe_dest = if dest.is_relative() && dest.to_string_lossy().starts_with('-') {
+                Path::new(".").join(dest)
+            } else {
+                dest.to_path_buf()
+            };
+            let status = std::process::Command::new("ffmpeg")
+                .args(["-v", "error", "-y", "-i"])
+                .arg(&safe_src)
+                .arg("--")
+                .arg(&safe_dest)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!("ffmpeg exited with {status}")))
+            }
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn convert_audio(_src: &Path, _dest: &Path, _format: RecordingFormat) -> Result<(), String> {
     Err("audio conversion via Media Foundation is only supported on Windows".into())
 }
@@ -808,7 +846,7 @@ mod tests {
         assert_eq!(text, "00:01.250  Intro\n01:05.000  Marker 2\n01:01:01.005  Wrap-up\n");
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn media_foundation_converts_m4a_to_m4a_mp3_wav_and_flac_with_markers() {
         let dir = tempfile::tempdir().unwrap();
