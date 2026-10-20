@@ -30,13 +30,39 @@ fn exe_dir() -> Option<PathBuf> {
     std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf))
 }
 
+fn has_qm_files(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|entries| {
+        entries.flatten().any(|e| e.path().extension().and_then(|s| s.to_str()) == Some("qm"))
+    })
+}
+
+fn select_translation_dir(exe_dir: &Path) -> PathBuf {
+    if has_qm_files(exe_dir) {
+        return exe_dir.to_path_buf();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(rel_share) = exe_dir.parent().map(|p| p.join("share").join("nectarlink"))
+            && has_qm_files(&rel_share)
+        {
+            return rel_share;
+        }
+        let sys_share = Path::new("/usr/share/nectarlink");
+        if has_qm_files(sys_share) {
+            return sys_share.to_path_buf();
+        }
+    }
+    exe_dir.to_path_buf()
+}
+
 /// Uses `language` ("" for the system's) from now on, retranslating the
 /// open windows. Call on the Qt thread, after the `QGuiApplication` exists.
 pub fn install(language: &str) {
     let language = if is_known(language) { language } else { "" };
-    let Some(dir) = exe_dir() else { return };
+    let Some(exe) = exe_dir() else { return };
+    let dir = select_translation_dir(&exe);
     let installed = crate::bridge::native::ffi::install_translator(&dir.to_string_lossy(), language);
-    tracing::debug!(language, installed, "translator");
+    tracing::debug!(language, dir = %dir.display(), installed, "translator");
 }
 
 /// `text` (from `context`) in the app's language. Use [`tr!`], which also
