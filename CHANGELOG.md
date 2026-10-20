@@ -8,6 +8,14 @@ change things that need a step from you, and its notes say so.
 
 ### New
 
+- **The PC app on macOS, as a preview.** It builds and runs on macOS 14
+  and later with pairing, files and folders, the photos browser,
+  Continuity Camera, calls and SMS, the phone's toggles and volume,
+  clipboard text both ways (items password managers mark private are
+  never sent), photos copied on the phone, and notifications. Screen
+  mirroring, recordings, PC audio, phone storage and the virtual camera
+  aren't there yet, and phones show them as unavailable. Thanks to
+  saivinay1805 ([#24](https://github.com/thtbee/nectarlink/pull/24)).
 - **Play on phone.** A switch on Home, under Phone as speaker (and a button
   on the PC's media card), moves what plays on the PC to your phone. The
   switch waits, greyed out, until a video plays. Streaming services that protect their video
