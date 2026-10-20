@@ -50,5 +50,24 @@ pub mod ffi {
 
         /// `text` in the installed language (`QCoreApplication::translate`).
         fn translate(context: &str, text: &str) -> String;
+
+        /// Decodes image bytes into a byte vector: 4-byte width (LE), 4-byte height (LE), followed by ARGB32 bytes.
+        #[allow(dead_code)]
+        fn decode_image(bytes: &[u8]) -> Vec<u8>;
+
+        #[allow(dead_code)]
+        fn mac_clipboard_change_count() -> i64;
+
+        #[allow(dead_code)]
+        fn mac_clipboard_read_text(is_private: &mut bool) -> String;
+
+        #[allow(dead_code)]
+        fn mac_clipboard_write_text(text: &str, is_private: bool) -> bool;
+
+        #[allow(dead_code)]
+        fn mac_local_offset_ms(at_ms: i64) -> i64;
+
+        #[allow(dead_code)]
+        fn mac_free_space(path: &str, ok: &mut bool) -> u64;
     }
 }

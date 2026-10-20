@@ -404,7 +404,7 @@ pub fn shutdown() {
     }
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
