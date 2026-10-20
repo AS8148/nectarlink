@@ -116,6 +116,9 @@ pub fn compute_capabilities(
     {
         caps.push(nectarlink_core::PC_WAKE.into());
         caps.push("media.control".into());
+        caps.push(nectarlink_core::STORAGE_MOUNT.into());
+        caps.push(nectarlink_core::STORAGE_READ.into());
+        caps.push(nectarlink_core::STORAGE_WRITE.into());
         caps.push(nectarlink_core::MIRROR_VIEW.into());
         caps.push(nectarlink_core::MIRROR_LISTEN.into());
         caps.push(nectarlink_core::DECK_ACTIONS.into());
@@ -124,12 +127,6 @@ pub fn compute_capabilities(
         caps.push(nectarlink_core::WEBCAM_VIRTUAL.into());
         caps.push(nectarlink_core::MEDIA_STREAM.into());
         caps.push(nectarlink_core::MIC_LISTEN.into());
-    }
-    #[cfg(windows)]
-    {
-        caps.push(nectarlink_core::STORAGE_MOUNT.into());
-        caps.push(nectarlink_core::STORAGE_READ.into());
-        caps.push(nectarlink_core::STORAGE_WRITE.into());
     }
     #[cfg(any(windows, target_os = "linux"))]
     let mut pc_mirror_enabled = crate::pc_mirror::is_active();
