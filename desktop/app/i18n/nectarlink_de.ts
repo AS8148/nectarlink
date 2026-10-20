@@ -1404,6 +1404,11 @@
     </message>
     <message>
         <location filename="rust_strings.h" line="173" />
+        <source>Enter an application path (/usr/bin/..., .desktop, or .AppImage).</source>
+        <translation>Gib einen Anwendungspfad ein (/usr/bin/…, .desktop oder .AppImage).</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="174" />
         <source>Enter an http:// or https:// web address.</source>
         <translation>Gib eine Webadresse mit http:// oder https:// ein.</translation>
     </message>

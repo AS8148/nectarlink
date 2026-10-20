@@ -35,6 +35,7 @@ pub mod vmic;
 pub mod wallpaper;
 pub mod widget;
 pub mod wifi;
+pub mod window_capture;
 pub mod wol;
 
 use std::{fs, io::Read, process::Command};

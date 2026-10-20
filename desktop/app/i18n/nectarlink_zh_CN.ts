@@ -1404,6 +1404,11 @@
     </message>
     <message>
         <location filename="rust_strings.h" line="173"/>
+        <source>Enter an application path (/usr/bin/..., .desktop, or .AppImage).</source>
+        <translation>请输入应用路径（/usr/bin/...、.desktop 或 .AppImage）。</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="174"/>
         <source>Enter an http:// or https:// web address.</source>
         <translation>请输入以 http:// 或 https:// 开头的网址。</translation>
     </message>
