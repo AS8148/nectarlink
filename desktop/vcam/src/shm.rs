@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use ab_glyph::{Font, FontRef, GlyphId, PxScale, ScaleFont, point};
 
+#[cfg(windows)]
 use windows::{
     Win32::{
         Foundation::{CloseHandle, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree},
@@ -31,11 +32,13 @@ pub const DEFAULT_MAPPING_NAME: &str = "Global\\NectarlinkVcamFrame_v2";
 /// created (the media source running in-process, as in tests).
 pub const LOCAL_MAPPING_NAME: &str = "Local\\NectarlinkVcamFrame_v2";
 /// Wide-string mapping name for local v2 virtual camera frame transport.
+#[cfg(windows)]
 pub const MAPPING_NAME: PCWSTR = w!("Local\\NectarlinkVirtualCamera_v2");
 
 /// Who may use the global mapping: the system, the Frame Server's
 /// LocalService account and administrators fully, signed-in (interactive)
 /// users read and write (the app), nobody else.
+#[cfg(windows)]
 const GLOBAL_SDDL: PCWSTR = w!("D:P(A;;GA;;;SY)(A;;GA;;;LS)(A;;GA;;;BA)(A;;GRGW;;;IU)");
 
 pub const MAX_WIDTH: u32 = 3840;
@@ -65,9 +68,17 @@ pub struct SharedHeader {
 }
 
 /// Shared-memory mapping handle and view. Safe to share across threads.
+#[cfg(windows)]
 pub struct SharedFrameMapping {
     handle: HANDLE,
     view: MEMORY_MAPPED_VIEW_ADDRESS,
+}
+
+/// Shared-memory mapping file descriptor and mapped view on Unix (`/dev/shm`).
+#[cfg(unix)]
+pub struct SharedFrameMapping {
+    fd: std::os::fd::OwnedFd,
+    view: *mut std::ffi::c_void,
 }
 
 #[allow(unsafe_code)]
@@ -77,12 +88,48 @@ unsafe impl Send for SharedFrameMapping {}
 #[allow(unsafe_code)]
 unsafe impl Sync for SharedFrameMapping {}
 
+#[cfg(windows)]
 impl std::fmt::Debug for SharedFrameMapping {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SharedFrameMapping").field("view", &self.view.Value).finish()
     }
 }
 
+#[cfg(unix)]
+impl std::fmt::Debug for SharedFrameMapping {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedFrameMapping").field("view", &self.view).finish()
+    }
+}
+
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn unix_shm_path(name: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::MetadataExt;
+    let sanitized: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect();
+    // SAFETY: `geteuid` has no preconditions and is always safe to call on POSIX.
+    let uid = unsafe { libc::geteuid() };
+    let file_name = format!("nectarlink_shm_{uid}_{sanitized}");
+    if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from)
+        && let Ok(meta) = std::fs::symlink_metadata(&runtime_dir)
+        && meta.is_dir()
+        && meta.uid() == uid
+        && (meta.mode() & 0o077) == 0
+    {
+        return runtime_dir.join(file_name);
+    }
+    let base = if std::path::Path::new("/dev/shm").is_dir() {
+        std::path::PathBuf::from("/dev/shm")
+    } else {
+        std::env::temp_dir()
+    };
+    base.join(file_name)
+}
+
+#[cfg(windows)]
 impl SharedFrameMapping {
     /// Opens or creates the shared-memory frame mapping with `name` (a
     /// `Global\` name gets [`GLOBAL_SDDL`]'s permissions).
@@ -176,7 +223,110 @@ impl SharedFrameMapping {
         // SAFETY: `HEADER_BYTES` is within `TOTAL_MAPPING_BYTES`.
         unsafe { (self.view.Value as *mut u8).add(HEADER_BYTES) }
     }
+}
 
+#[cfg(unix)]
+impl SharedFrameMapping {
+    /// Opens or creates the shared-memory frame mapping with `name` in
+    /// `$XDG_RUNTIME_DIR` or `/dev/shm` with `0600` owner-only permissions.
+    #[allow(unsafe_code)]
+    pub fn open_or_create(name: &str) -> std::io::Result<Self> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        let path = unix_shm_path(name);
+        // SAFETY: `geteuid` has no preconditions.
+        let uid = unsafe { libc::geteuid() };
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)?;
+        let meta = file.metadata()?;
+        if !meta.is_file() || meta.uid() != uid {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "shared frame mapping is not a regular file owned by current user",
+            ));
+        }
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        file.set_len(TOTAL_MAPPING_BYTES as u64)?;
+        Self::map(std::os::fd::OwnedFd::from(file))
+    }
+
+    /// For the camera's media source: the global mapping, or the caller's
+    /// session's when it may not create global objects (in-process tests).
+    pub fn for_camera(name: &str) -> std::io::Result<Self> {
+        if name == DEFAULT_MAPPING_NAME {
+            Self::open_or_create(DEFAULT_MAPPING_NAME).or_else(|_| Self::open_or_create(LOCAL_MAPPING_NAME))
+        } else {
+            Self::open_or_create(name)
+        }
+    }
+
+    /// Opens an existing mapping without creating it.
+    #[allow(unsafe_code)]
+    pub fn open_existing(name: &str) -> std::io::Result<Self> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let path = unix_shm_path(name);
+        // SAFETY: `geteuid` has no preconditions.
+        let uid = unsafe { libc::geteuid() };
+        let file =
+            std::fs::OpenOptions::new().read(true).write(true).custom_flags(libc::O_NOFOLLOW).open(path)?;
+        let meta = file.metadata()?;
+        if !meta.is_file() || meta.uid() != uid {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "shared frame mapping is not a regular file owned by current user",
+            ));
+        }
+        let len = meta.len();
+        if (len as usize) < TOTAL_MAPPING_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "shared frame mapping smaller than expected",
+            ));
+        }
+        Self::map(std::os::fd::OwnedFd::from(file))
+    }
+
+    #[allow(unsafe_code)]
+    fn map(fd: std::os::fd::OwnedFd) -> std::io::Result<Self> {
+        use std::os::fd::AsRawFd;
+        // SAFETY: `mmap` maps `TOTAL_MAPPING_BYTES` from a valid open file descriptor.
+        unsafe {
+            let view = libc::mmap(
+                std::ptr::null_mut(),
+                TOTAL_MAPPING_BYTES,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd.as_raw_fd(),
+                0,
+            );
+            if view == libc::MAP_FAILED || view.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mapping = Self { fd, view };
+            mapping.ensure_initialized();
+            Ok(mapping)
+        }
+    }
+
+    #[allow(unsafe_code)]
+    fn header(&self) -> &SharedHeader {
+        // SAFETY: `self.view` points to a valid page-aligned mapping of `TOTAL_MAPPING_BYTES`.
+        unsafe { &*(self.view as *const SharedHeader) }
+    }
+
+    #[allow(unsafe_code)]
+    fn payload_ptr(&self) -> *mut u8 {
+        // SAFETY: `HEADER_BYTES` is within `TOTAL_MAPPING_BYTES`.
+        unsafe { (self.view as *mut u8).add(HEADER_BYTES) }
+    }
+}
+
+impl SharedFrameMapping {
     fn ensure_initialized(&self) {
         let h = self.header();
         if h.magic.load(Ordering::Acquire) != MAGIC {
@@ -316,10 +466,17 @@ impl SharedFrameMapping {
 impl Drop for SharedFrameMapping {
     #[allow(unsafe_code)]
     fn drop(&mut self) {
+        #[cfg(windows)]
         // SAFETY: paired with `MapViewOfFile` and `CreateFileMappingW`.
         unsafe {
             let _ = UnmapViewOfFile(self.view);
             let _ = CloseHandle(self.handle);
+        }
+        #[cfg(unix)]
+        // SAFETY: paired with `libc::mmap(TOTAL_MAPPING_BYTES)`. `self.fd` is closed by `OwnedFd::drop`.
+        unsafe {
+            let _ = libc::munmap(self.view, TOTAL_MAPPING_BYTES);
+            let _ = &self.fd;
         }
     }
 }
@@ -800,5 +957,25 @@ mod tests {
         assert_eq!(MAX_FRAME_BYTES, 3840 * 2160 * 4);
         assert!(DEFAULT_MAPPING_NAME.ends_with("_v2"));
         assert!(LOCAL_MAPPING_NAME.ends_with("_v2"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[allow(unsafe_code)]
+    fn unix_shm_enforces_owner_only_permissions_and_uid_scope() {
+        use std::os::unix::fs::MetadataExt;
+        let name = format!(r"Local\NectarlinkVcamPermTest_{}", std::process::id());
+        let path = unix_shm_path(&name);
+        let uid = unsafe { libc::geteuid() };
+        assert!(
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.starts_with(&format!("nectarlink_shm_{uid}_")))
+        );
+        let _mapping = SharedFrameMapping::open_or_create(&name).expect("create mapping");
+        let meta = std::fs::symlink_metadata(&path).expect("shm file metadata");
+        assert_eq!(meta.uid(), uid);
+        assert_eq!(meta.mode() & 0o777, 0o600);
+        let _ = std::fs::remove_file(&path);
     }
 }

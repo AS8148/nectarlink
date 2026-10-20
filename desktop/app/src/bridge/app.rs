@@ -1770,7 +1770,7 @@ impl qobject::AppController {
 
     pub fn logs_url(&self) -> QString {
         let dir = crate::logging::logs_dir(&core_host::host().data_dir);
-        QString::from(&format!("file:///{}", dir.to_string_lossy().replace('\\', "/")))
+        QString::from(&crate::icons::file_url(&dir))
     }
 
     pub fn open_phone_storage(&self, device: &QString) {
@@ -1967,9 +1967,16 @@ impl qobject::AppController {
                 .map(|p| String::from(&p))
                 .filter(|p| !p.is_empty())
                 .or_else(|| {
-                    raw.strip_prefix("file:///")
-                        .or_else(|| raw.strip_prefix("file://"))
-                        .map(|s| s.replace('/', "\\"))
+                    #[cfg(windows)]
+                    {
+                        raw.strip_prefix("file:///")
+                            .or_else(|| raw.strip_prefix("file://"))
+                            .map(|s| s.replace('/', "\\"))
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        raw.strip_prefix("file://").map(str::to_owned)
+                    }
                 });
             if let Some(local_str) = local {
                 let pb = std::path::PathBuf::from(&local_str);

@@ -237,6 +237,120 @@ END
     embed_resource::compile(&rc_path, embed_resource::NONE).manifest_required().expect("compile resources");
 }
 
+fn find_lrelease() -> Option<PathBuf> {
+    if let Ok(custom) = std::env::var("LRELEASE") {
+        let p = PathBuf::from(custom);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    if let Some(qmake) = std::env::var_os("QMAKE").map(PathBuf::from)
+        && let Some(bin_dir) = qmake.parent()
+    {
+        for name in ["lrelease", "lrelease.exe", "lrelease-qt6"] {
+            let candidate = bin_dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    for candidate in [
+        "/usr/lib/qt6/bin/lrelease",
+        "/usr/lib64/qt6/bin/lrelease",
+        "/usr/bin/lrelease-qt6",
+        "/usr/bin/lrelease",
+    ] {
+        let p = PathBuf::from(candidate);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn offered_languages(manifest_dir: &Path) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    let i18n_rs = manifest_dir.join("src").join("i18n.rs");
+    println!("cargo:rerun-if-changed={}", i18n_rs.display());
+    let Ok(src) = fs::read_to_string(&i18n_rs) else {
+        return set;
+    };
+    let Some((_, rest)) = src.split_once("pub const LANGUAGES") else {
+        return set;
+    };
+    let Some((table, _)) = rest.split_once("];") else {
+        return set;
+    };
+    for part in table.split('(').skip(1) {
+        if let Some(after_quote) = part.strip_prefix('"')
+            && let Some((code, _)) = after_quote.split_once('"')
+            && !code.is_empty()
+        {
+            set.insert(code.to_string());
+        }
+    }
+    set
+}
+
+fn compile_translations() {
+    let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") else {
+        return;
+    };
+    let manifest_path = Path::new(&manifest_dir);
+    let offered = offered_languages(manifest_path);
+    let i18n_dir = manifest_path.join("i18n");
+    println!("cargo:rerun-if-changed={}", i18n_dir.display());
+    let Ok(entries) = fs::read_dir(&i18n_dir) else {
+        return;
+    };
+    let ts_files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("ts"))
+        .collect();
+    for ts in &ts_files {
+        println!("cargo:rerun-if-changed={}", ts.display());
+    }
+    if ts_files.is_empty() {
+        return;
+    }
+    let Some(lrelease) = find_lrelease() else {
+        println!(
+            "cargo:warning=lrelease not found; skipping .qm compilation (install qt6-l10n-tools or set LRELEASE)"
+        );
+        return;
+    };
+    let Ok(out_dir) = std::env::var("OUT_DIR") else {
+        return;
+    };
+    let out_path = PathBuf::from(out_dir);
+    let profile_dir = out_path.ancestors().nth(3).map(Path::to_path_buf);
+
+    for ts in ts_files {
+        let Some(stem) = ts.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Some(lang) = stem.strip_prefix("nectarlink_") else {
+            continue;
+        };
+        if !offered.contains(lang) {
+            continue;
+        }
+        let qm_name = format!("{stem}.qm");
+        let out_qm = out_path.join(&qm_name);
+        let compiled = std::process::Command::new(&lrelease)
+            .arg("-silent")
+            .arg(&ts)
+            .arg("-qm")
+            .arg(&out_qm)
+            .status()
+            .is_ok_and(|s| s.success());
+        if compiled && let Some(ref target_dir) = profile_dir {
+            let _ = fs::copy(&out_qm, target_dir.join(&qm_name));
+        }
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=src/mark.rs");
     for qml in QML.iter().chain(QML_SINGLETONS.iter()) {
@@ -244,6 +358,9 @@ fn main() {
     }
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         windows_resources();
+    }
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        compile_translations();
     }
     let module = QmlModule::new("app.nectarlink")
         .qml_files(QML.iter().map(|f| QmlFile::from(*f)))
@@ -288,6 +405,11 @@ fn main() {
         println!("cargo:rustc-link-lib=ole32");
         println!("cargo:rustc-link-lib=shell32");
         println!("cargo:rustc-link-lib=user32");
+    } else if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        println!("cargo:rustc-link-lib=Qt6Quick");
+        println!(
+            "cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN:$ORIGIN/lib:$ORIGIN/../lib:$ORIGIN/../lib/nectarlink/lib"
+        );
     } else if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         println!("cargo:rustc-link-lib=framework=AppKit");
         println!("cargo:rustc-link-lib=framework=CoreGraphics");
@@ -295,4 +417,10 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=AudioToolbox");
         println!("cargo:rustc-link-lib=framework=IOKit");
     }
+    println!("cargo:rerun-if-changed=cpp/app_helpers.h");
+    println!("cargo:rerun-if-changed=cpp/app_helpers.cpp");
+    println!("cargo:rerun-if-changed=cpp/native_window.h");
+    println!("cargo:rerun-if-changed=cpp/native_window.cpp");
+    println!("cargo:rerun-if-changed=cpp/video_view.h");
+    println!("cargo:rerun-if-changed=cpp/video_view.cpp");
 }

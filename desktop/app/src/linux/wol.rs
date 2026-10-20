@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#![allow(dead_code, unused_variables)]
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeSupport {
+    Enabled,
+    Disabled,
+    Unknown,
+}
+
+impl WakeSupport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WakeSupport::Enabled => "enabled",
+            WakeSupport::Disabled => "disabled",
+            WakeSupport::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeAdapter {
+    pub label: String,
+    pub wired: bool,
+    pub mac: String,
+    pub broadcasts: Vec<String>,
+    pub support: WakeSupport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WakeStatus {
+    pub info: nectarlink_core::PcWakeInfo,
+    pub adapters: Vec<WakeAdapter>,
+}
+
+impl WakeStatus {
+    pub fn primary(&self) -> Option<&WakeAdapter> {
+        self.adapters.first()
+    }
+    pub fn state_str(&self) -> &'static str {
+        "none"
+    }
+}
+
+pub fn query_wake_status() -> WakeStatus {
+    WakeStatus { info: nectarlink_core::PcWakeInfo::default(), adapters: Vec::new() }
+}

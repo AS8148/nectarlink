@@ -17,12 +17,10 @@ use windows::{
     core::{GUID, HRESULT, IUnknown, Interface},
 };
 
-#[cfg(windows)]
 pub mod shm;
 #[cfg(windows)]
 pub mod source;
 
-#[cfg(windows)]
 pub use shm::{
     DEFAULT_MAPPING_NAME, LOCAL_MAPPING_NAME, MAX_FRAME_BYTES, MAX_HEIGHT, MAX_WIDTH, SharedFrameMapping,
     bgrx_to_nv12, fit_bgrx_aspect, render_placeholder_bgrx,
@@ -30,59 +28,10 @@ pub use shm::{
 #[cfg(windows)]
 pub use source::{SAMPLE_DURATION_100NS, VcamClassFactory, VcamMediaSource, VcamMediaStream};
 
+/// CLSID of the NectarLink Virtual Camera Media Foundation media source:
+/// `{8E6C3B74-5D4A-4B9E-9A12-7C8F1E2D3A40}`.
 #[cfg(windows)]
 pub const CLSID_NECTARLINK_VCAM: GUID = GUID::from_u128(0x8e6c3b74_5d4a_4b9e_9a12_7c8f1e2d3a40);
-
-#[cfg(not(windows))]
-pub const DEFAULT_MAPPING_NAME: &str = "";
-#[cfg(not(windows))]
-pub const LOCAL_MAPPING_NAME: &str = "";
-#[cfg(not(windows))]
-pub const MAX_FRAME_BYTES: usize = 0;
-#[cfg(not(windows))]
-pub const MAX_HEIGHT: u32 = 0;
-#[cfg(not(windows))]
-pub const MAX_WIDTH: u32 = 0;
-#[cfg(not(windows))]
-pub const SAMPLE_DURATION_100NS: i64 = 0;
-#[cfg(not(windows))]
-pub const CLSID_NECTARLINK_VCAM: [u8; 16] = [0; 16];
-
-#[cfg(not(windows))]
-#[derive(Debug)]
-pub struct SharedFrameMapping;
-
-#[cfg(not(windows))]
-impl SharedFrameMapping {
-    pub fn open_or_create(_name: &str) -> Result<Self, String> {
-        Err("virtual camera is only supported on Windows".into())
-    }
-    pub fn open_existing(_name: &str) -> Result<Self, String> {
-        Err("virtual camera is only supported on Windows".into())
-    }
-    pub fn write_frame(
-        &self,
-        _device_name: &str,
-        _w: u32,
-        _h: u32,
-        _timestamp: u64,
-        _bgrx: &[u8],
-        _mirror: bool,
-    ) {
-    }
-    pub fn set_idle(&self, _device_name: &str) {}
-}
-
-#[cfg(not(windows))]
-pub fn render_placeholder_bgrx(_bgrx: &mut [u8], _w: u32, _h: u32, _text: &str) {}
-#[cfg(not(windows))]
-pub fn bgrx_to_nv12(_bgrx: &[u8], _w: u32, _h: u32) -> Vec<u8> {
-    Vec::new()
-}
-#[cfg(not(windows))]
-pub fn fit_bgrx_aspect(_bgrx: &[u8], _sw: u32, _sh: u32, _tw: u32, _th: u32) -> Vec<u8> {
-    Vec::new()
-}
 
 /// Standard COM DLL entry point returning an `IClassFactory` for
 /// [`CLSID_NECTARLINK_VCAM`].
@@ -125,10 +74,11 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
     if source::ACTIVE_OBJECTS.load(Ordering::Relaxed) == 0 { S_OK } else { S_FALSE }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 #[allow(unsafe_code)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
     use windows::Win32::{
         Media::{
             KernelStreaming::PINNAME_VIDEO_CAPTURE,
@@ -145,6 +95,7 @@ mod tests {
         System::Com::StructuredStorage::PROPVARIANT,
     };
 
+    #[cfg(windows)]
     #[test]
     fn dll_get_class_object_activates_media_source_in_process() {
         unsafe {
@@ -164,6 +115,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn media_source_delivers_placeholder_and_live_shared_memory_samples() {
         unsafe {
