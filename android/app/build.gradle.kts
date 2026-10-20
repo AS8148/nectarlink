@@ -198,6 +198,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.service)
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.camerax.camera2)
     implementation(libs.camerax.lifecycle)

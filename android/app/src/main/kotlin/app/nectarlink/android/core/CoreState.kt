@@ -287,6 +287,14 @@ data class CoreState(
             storageRequestedFrom = if (enabled && storageRequestedFrom == id) null else storageRequestedFrom,
         )
 
+    fun withDevicesOffline(): CoreState = copy(
+        devices = devices.map { d ->
+            if (d.online) d.copy(link = Link.Offline(System.currentTimeMillis() / 1000L), wakeState = WakeState.Idle) else d
+        }.sortedWith(deviceOrder),
+        keyboardFromPc = emptySet(),
+        micRequestFrom = null,
+    )
+
     /** Folds one core event into the state. */
     fun reduce(event: Event): CoreState = when (event) {
         is Event.DeviceAdded -> {
