@@ -112,9 +112,10 @@ pub fn compute_capabilities(
         nectarlink_core::SMS_SHOW.into(),
         nectarlink_core::TOGGLES_SHOW.into(),
     ];
+    #[cfg(any(windows, target_os = "linux"))]
+    caps.push(nectarlink_core::PC_WAKE.into());
     #[cfg(windows)]
     {
-        caps.push(nectarlink_core::PC_WAKE.into());
         caps.push("media.control".into());
         caps.push(nectarlink_core::STORAGE_MOUNT.into());
         caps.push(nectarlink_core::STORAGE_READ.into());

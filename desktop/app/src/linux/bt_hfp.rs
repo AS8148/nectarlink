@@ -9,6 +9,12 @@ pub struct HfpStatus {
     pub detail: String,
 }
 
+pub(crate) fn is_valid_bt_mac(mac: &str) -> bool {
+    !mac.is_empty()
+        && !mac.starts_with('-')
+        && mac.bytes().all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'-')
+}
+
 pub(crate) fn parse_bluetoothctl_devices(output: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for raw_line in output.lines() {
@@ -18,7 +24,7 @@ pub(crate) fn parse_bluetoothctl_devices(output: &str) -> Vec<(String, String)> 
         };
         let rest = rest.trim();
         let mut parts = rest.splitn(2, char::is_whitespace);
-        let Some(mac) = parts.next().map(str::trim).filter(|m| !m.is_empty()) else {
+        let Some(mac) = parts.next().map(str::trim).filter(|m| is_valid_bt_mac(m)) else {
             continue;
         };
         let name = parts.next().map(str::trim).unwrap_or_default().to_owned();
