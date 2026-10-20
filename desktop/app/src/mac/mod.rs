@@ -30,6 +30,7 @@ pub mod tray;
 pub mod vcam;
 pub mod wallpaper;
 pub mod widget;
+pub mod wifi;
 pub mod window_capture;
 pub mod wol;
 
@@ -109,6 +110,19 @@ pub fn work_area() -> Option<(i32, i32, i32, i32)> {
     None
 }
 
+/// How far this PC's time zone is from UTC at `at_ms` (Unix milliseconds).
+pub fn local_offset_ms(at_ms: i64) -> i64 {
+    crate::bridge::native::ffi::mac_local_offset_ms(at_ms)
+}
+
+/// Free bytes on the drive holding `path`.
+pub fn free_space(path: &std::path::Path) -> Option<u64> {
+    let s = path.to_str()?;
+    let mut ok = false;
+    let bytes = crate::bridge::native::ffi::mac_free_space(s, &mut ok);
+    ok.then_some(bytes)
+}
+
 /// Fills `buf` from cryptographic randomness.
 pub fn secure_random(buf: &mut [u8]) -> bool {
     use std::io::Read;
@@ -124,4 +138,15 @@ pub fn with_com<T>(f: impl FnOnce() -> T) -> T {
 #[allow(dead_code)]
 pub(crate) fn reg_string(_root: u32, _key: &str, _value: &str) -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn free_space_returns_some_on_system_drive() {
+        let space = free_space(std::path::Path::new("/"));
+        assert!(space.is_some());
+    }
 }

@@ -2,7 +2,6 @@
 #pragma once
 
 #include <QtCore/QPointer>
-#include <QtGui/QScreen>
 #include <QtQml/qqmlregistration.h>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
@@ -56,8 +55,6 @@ public:
     Q_INVOKABLE void addCaptionHole(QQuickItem *item);
     Q_INVOKABLE void removeCaptionHole(QQuickItem *item);
 
-    // Selects and sets the native QScreen matching screenName.
-    Q_INVOKABLE void setScreenByName(const QString &screenName);
     Q_INVOKABLE void toggleMaximized();
     // Shows, restores and focuses the window, even when another app is in
     // front (the caller must have the right to take the foreground).
