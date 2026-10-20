@@ -7579,24 +7579,34 @@ Voraussetzungen
 <context>
     <name>Setup</name>
     <message>
-        <location filename="rust_strings.h" line="401" />
+        <location filename="rust_strings.h" line="402" />
         <source>Couldn't start setup: %1</source>
         <translation>Installation konnte nicht gestartet werden: %1</translation>
     </message>
     <message>
-        <location filename="rust_strings.h" line="402" />
+        <location filename="rust_strings.h" line="403" />
+        <source>Couldn't uninstall NectarLink: %1</source>
+        <translation>NectarLink konnte nicht deinstalliert werden: %1</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="404" />
         <source>Setup is taking too long. Try again after restarting the PC.</source>
         <translation>Die Installation dauert zu lange. Starte den PC neu und versuche es erneut.</translation>
     </message>
     <message>
-        <location filename="rust_strings.h" line="403" />
+        <location filename="rust_strings.h" line="405" />
         <source>Setup stopped with code %1.</source>
         <translation>Installation mit Code %1 abgebrochen.</translation>
     </message>
     <message>
-        <location filename="rust_strings.h" line="404" />
+        <location filename="rust_strings.h" line="406" />
         <source>The uninstaller is missing. Reinstall NectarLink, then uninstall it.</source>
         <translation>Das Deinstallationsprogramm fehlt. Installiere NectarLink erneut und deinstalliere es anschließend.</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="407" />
+        <source>Uninstall stopped with code %1.</source>
+        <translation>Deinstallation mit Code %1 abgebrochen.</translation>
     </message>
 </context>
 <context>
