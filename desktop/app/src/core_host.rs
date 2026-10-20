@@ -101,7 +101,7 @@ pub fn start(data_dir: PathBuf, platform: Arc<dyn Platform>) -> std::io::Result<
 /// and input injection (`mirror.input`, `input.inject`) only when enabled for at
 /// least one paired device (or actively sharing).
 pub fn compute_capabilities(
-    #[cfg_attr(not(windows), allow(unused_variables))] node: Option<&Node>,
+    #[cfg_attr(not(any(windows, target_os = "linux")), allow(unused_variables))] node: Option<&Node>,
 ) -> Vec<String> {
     let mut caps = vec![
         "pc.power".into(),
@@ -113,7 +113,10 @@ pub fn compute_capabilities(
         nectarlink_core::TOGGLES_SHOW.into(),
     ];
     #[cfg(any(windows, target_os = "linux"))]
-    caps.push(nectarlink_core::PC_WAKE.into());
+    {
+        caps.push(nectarlink_core::PC_WAKE.into());
+        caps.push(nectarlink_core::DECK_ACTIONS.into());
+    }
     #[cfg(windows)]
     {
         caps.push("media.control".into());
@@ -122,7 +125,6 @@ pub fn compute_capabilities(
         caps.push(nectarlink_core::STORAGE_WRITE.into());
         caps.push(nectarlink_core::MIRROR_VIEW.into());
         caps.push(nectarlink_core::MIRROR_LISTEN.into());
-        caps.push(nectarlink_core::DECK_ACTIONS.into());
         caps.push(nectarlink_core::PC_AUDIO.into());
         caps.push(nectarlink_core::RECORDER.into());
         caps.push(nectarlink_core::WEBCAM_VIRTUAL.into());
@@ -131,15 +133,16 @@ pub fn compute_capabilities(
     }
     #[cfg(windows)]
     let mut pc_mirror_enabled = crate::pc_mirror::is_active();
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let mut remote_input_enabled = false;
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     if let Some(node) = node
         && let Ok(devices) = node.paired_devices()
     {
         for d in devices {
             if let Ok(toggles) = node.device_toggles(d.id) {
                 for (name, on) in toggles {
+                    #[cfg(windows)]
                     if on && name == nectarlink_core::PC_MIRROR_TOGGLE {
                         pc_mirror_enabled = true;
                     }
@@ -155,7 +158,11 @@ pub fn compute_capabilities(
         caps.push(nectarlink_core::MIRROR_CAPTURE.into());
     }
     #[cfg(windows)]
-    if remote_input_enabled {
+    let input_available = true;
+    #[cfg(target_os = "linux")]
+    let input_available = crate::win::input::is_available();
+    #[cfg(any(windows, target_os = "linux"))]
+    if remote_input_enabled && input_available {
         caps.push(nectarlink_core::MIRROR_INPUT.into());
         caps.push(nectarlink_core::INPUT_INJECT.into());
     }
