@@ -4,7 +4,7 @@
 //! the phone in its app and the PC pauses; anything else the phone watches
 //! streamed from the PC, which keeps playing it.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod imp {
 
     #![allow(unsafe_code)]
@@ -19,11 +19,14 @@ mod imp {
     };
 
     use nectarlink_core::{DeviceId, Error, FeatureState, LinkState, MediaAction, PlayOnPhone};
+    #[cfg(windows)]
     use windows::Win32::{
         Foundation::{HWND, RECT},
         System::Com::{COINIT_MULTITHREADED, CoInitializeEx},
     };
 
+    #[cfg(target_os = "linux")]
+    use crate::win::browser::{HWND, RECT};
     use crate::{
         bridge::app::{describe, show_message},
         core_host,
@@ -150,6 +153,7 @@ mod imp {
             return show_message(tr!("PlayOnPhone", "Connect your phone to play on it."));
         };
         let spawned = std::thread::Builder::new().name("play-on-phone".into()).spawn(move || {
+            #[cfg(windows)]
             // SAFETY: COM for this short-lived thread (UI Automation).
             let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
             let (title, position) = now_playing(&player);
@@ -278,6 +282,7 @@ mod imp {
             let stop = Arc::new(AtomicBool::new(false));
             let (found, stopped, player) = (place.clone(), stop.clone(), player.to_owned());
             let spawned = std::thread::Builder::new().name("play-on-phone-follow".into()).spawn(move || {
+                #[cfg(windows)]
                 // SAFETY: COM for this thread, which ends with the watching.
                 let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
                 // Places in the pixels the capture uses.
@@ -371,7 +376,7 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 mod imp {
     #![allow(dead_code)]
 
