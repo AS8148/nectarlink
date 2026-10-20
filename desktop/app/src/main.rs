@@ -56,6 +56,10 @@ mod storage;
 mod transfers;
 mod updater;
 mod webcam;
+#[cfg(windows)]
+mod win;
+#[cfg(target_os = "macos")]
+#[path = "mac/mod.rs"]
 mod win;
 
 use std::{

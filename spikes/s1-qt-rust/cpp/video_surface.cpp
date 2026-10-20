@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "video_surface.h"
 
-#include "frame_notifier.h"
 #include "s1-qt-rust/src/video.cxx.h"
 
 #include <rust/cxx.h>
@@ -11,13 +10,15 @@
 #include <QtQuick/QSGSimpleTextureNode>
 #include <QtQuick/qsgtexture_platform.h>
 
+#ifdef _WIN32
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 
-#include <optional>
-
 using Microsoft::WRL::ComPtr;
+#endif
+
+#include <optional>
 
 namespace nl {
 
@@ -25,7 +26,9 @@ namespace {
 
 constexpr quint32 kWidth = 1920;
 constexpr quint32 kHeight = 1080;
+#ifdef _WIN32
 constexpr quint32 kFps = 60;
+#endif
 
 // Owns the producer and the GPU resources on Qt's device. Lives on the render
 // thread, so the producer stops whenever the scene graph lets go of the node.
@@ -34,6 +37,12 @@ class VideoNode final : public QSGSimpleTextureNode
 public:
     static VideoNode *create(QQuickWindow *window, std::shared_ptr<FrameNotifier> notifier, QString *error)
     {
+#ifndef _WIN32
+        Q_UNUSED(window);
+        Q_UNUSED(notifier);
+        *error = QStringLiteral("video needs the D3D11 backend (Windows only)");
+        return nullptr;
+#else
         QSGRendererInterface *ri = window->rendererInterface();
         if (ri->graphicsApi() != QSGRendererInterface::Direct3D11) {
             *error = QStringLiteral("video needs the D3D11 backend");
@@ -86,12 +95,17 @@ public:
         node->setTexture(node->m_sgTexture.get());
         node->setFiltering(QSGTexture::Linear);
         return node.release();
+#endif
     }
 
     // Copies the newest published frame, GPU to GPU. Returns false if the
     // producer held the texture and the copy should be retried next frame.
     bool sync(quint64 *shown)
     {
+#ifndef _WIN32
+        Q_UNUSED(shown);
+        return true;
+#else
         const quint64 published = (*m_source)->frames_published();
         if (published == m_lastPublished)
             return true;
@@ -104,14 +118,29 @@ public:
         ++*shown;
         markDirty(QSGNode::DirtyMaterial);
         return true;
+#endif
     }
 
-    quint64 published() const { return (*m_source)->frames_published(); }
-    quint64 dropped() const { return (*m_source)->frames_dropped(); }
+    quint64 published() const {
+#ifndef _WIN32
+        return 0;
+#else
+        return (*m_source)->frames_published();
+#endif
+    }
+
+    quint64 dropped() const {
+#ifndef _WIN32
+        return 0;
+#else
+        return (*m_source)->frames_dropped();
+#endif
+    }
 
 private:
     VideoNode() = default;
 
+#ifdef _WIN32
     // Declared first so it is destroyed last: the producer stops only after
     // Qt's references to the shared texture are released.
     std::optional<rust::Box<VideoSource>> m_source;
@@ -122,6 +151,7 @@ private:
     std::unique_ptr<QSGTexture> m_sgTexture;
     ID3D11DeviceContext *m_context = nullptr; // owned by Qt
     quint64 m_lastPublished = 0;
+#endif
 };
 
 QRectF fitted(const QRectF &bounds, QSizeF content)
