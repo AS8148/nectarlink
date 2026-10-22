@@ -131,13 +131,14 @@ Window {
 
     function formatBytes(bytes) {
         const b = Number(bytes) || 0
+        const locale = Qt.locale()
         if (b < 1024)
             return qsTr("%1 B").arg(b)
         if (b < 1024 * 1024)
-            return qsTr("%1 KB").arg((b / 1024).toFixed(1))
+            return qsTr("%1 KB").arg(locale.toString(b / 1024, "f", 1))
         if (b < 1024 * 1024 * 1024)
-            return qsTr("%1 MB").arg((b / (1024 * 1024)).toFixed(1))
-        return qsTr("%1 GB").arg((b / (1024 * 1024 * 1024)).toFixed(2))
+            return qsTr("%1 MB").arg(locale.toString(b / (1024 * 1024), "f", 1))
+        return qsTr("%1 GB").arg(locale.toString(b / (1024 * 1024 * 1024), "f", 2))
     }
 
     Component.onCompleted: {

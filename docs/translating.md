@@ -1,8 +1,7 @@
 # Translating NectarLink
 
 NectarLink's Android and Windows apps can be translated into any language.
-Simplified Chinese is complete today; German is under way
-([#15](https://github.com/thtbee/nectarlink/issues/15)).
+Simplified Chinese and German are complete today.
 
 ## How to help
 
@@ -68,8 +67,8 @@ lupdate desktop/app/qml desktop/app/i18n/rust_strings.h -ts desktop/app/i18n/nec
 ```
 
 New strings appear as unfinished in each catalogue, so translators see them.
-Simplified Chinese is offered, so its new strings must be translated in the
-same change; the test above fails otherwise.
+Offered languages must have their new strings translated in the same change;
+the test above fails otherwise.
 
 ## Setting up Weblate (maintainers)
 
