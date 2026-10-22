@@ -60,7 +60,6 @@ import app.nectarlink.android.R
 import app.nectarlink.android.core.Device
 import app.nectarlink.android.ui.detached
 import app.nectarlink.android.webcam.WebcamService
-import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -406,7 +405,7 @@ fun WebcamScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         val zoomLabel = stringResource(
                             R.string.webcam_zoom_label,
-                            String.format(Locale.US, "%.1f", session.zoomRatio).toFloat(),
+                            session.zoomRatio,
                         )
                         Text(
                             zoomLabel,
