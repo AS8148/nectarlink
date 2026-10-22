@@ -11,6 +11,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import app.nectarlink.android.banking.BankingPause
 import app.nectarlink.android.core.Core
 import app.nectarlink.android.elevated.Elevated
+import app.nectarlink.android.service.ConnectionService
 import app.nectarlink.android.ui.Preferences
 import app.nectarlink.android.update.AppUpdater
 import kotlinx.coroutines.CoroutineScope
@@ -77,6 +78,8 @@ class NectarlinkApplication : Application(), DefaultLifecycleObserver {
         pendingStopJob?.cancel()
         pendingStopJob = null
         core.start()
+        // Brings back the connection notification if it was swiped away.
+        if (core.state.value.devices.isNotEmpty()) ConnectionService.start(this)
     }
 
     override fun onStop(owner: LifecycleOwner) {

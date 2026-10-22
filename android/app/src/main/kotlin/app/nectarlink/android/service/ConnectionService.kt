@@ -37,6 +37,7 @@ import kotlinx.coroutines.launch
  */
 class ConnectionService : LifecycleService() {
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var inForeground = false
 
     override fun onCreate() {
         super.onCreate()
@@ -61,6 +62,7 @@ class ConnectionService : LifecycleService() {
                 .distinctUntilChanged()
                 .collect { (status, ready) ->
                     if (ready && status.paired == 0) {
+                        inForeground = false
                         stopSelf()
                     } else {
                         getSystemService(NotificationManager::class.java)
@@ -117,6 +119,14 @@ class ConnectionService : LifecycleService() {
         if (intent?.action == ACTION_STOP_RINGING) {
             (application as NectarlinkApplication).core.stopRinging()
         }
+        if (intent?.action == null && inForeground) {
+            // Android 14 and newer let the notification be swiped away while
+            // the service keeps running. Opening the app starts the service
+            // again, so the notification comes back then.
+            val core = (application as NectarlinkApplication).core
+            getSystemService(NotificationManager::class.java)
+                ?.notify(ONGOING_ID, ongoingNotification(Status.of(core.state.value)))
+        }
         return START_STICKY
     }
 
@@ -133,6 +143,7 @@ class ConnectionService : LifecycleService() {
             0
         }
         ServiceCompat.startForeground(this, ONGOING_ID, ongoingNotification(Status.of(state)), type)
+        inForeground = true
     }.onFailure {
         android.util.Log.w("ConnectionService", "can't enter foreground", it)
     }.isSuccess
