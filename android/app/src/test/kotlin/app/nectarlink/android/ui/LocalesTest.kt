@@ -54,6 +54,10 @@ class LocalesTest {
     @Test
     fun `the app's language picker offers exactly the languages Android is told about`() {
         assertEquals(offered(), AppLanguage.languages.map { it.first })
+        assertEquals("de", AppLanguage.normalize("de"))
+        assertEquals("de", AppLanguage.normalize("de-DE"))
+        assertEquals("de", AppLanguage.normalize("de-AT"))
+        assertEquals("de", AppLanguage.normalize("de-CH"))
     }
 
     @Test
