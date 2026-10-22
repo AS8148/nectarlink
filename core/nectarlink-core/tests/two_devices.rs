@@ -4579,6 +4579,49 @@ async fn localsend_discovers_peer_requires_accept_and_transfers_files_over_https
 }
 
 #[tokio::test]
+async fn localsend_drops_a_peer_once_it_stops_answering() {
+    let sender_port = free_tcp_port();
+    let receiver_port = free_tcp_port();
+    let sender =
+        start_localsend_in(tempfile::tempdir().unwrap(), "Phone Sender", DeviceKind::Phone, sender_port)
+            .await;
+    let receiver =
+        start_localsend_in(tempfile::tempdir().unwrap(), "PC Receiver", DeviceKind::Desktop, receiver_port)
+            .await;
+    sender.node.set_localsend_enabled(true).unwrap();
+    receiver.node.set_localsend_enabled(true).unwrap();
+    for _ in 0..40 {
+        if receiver.node.localsend_receiving() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let peer = sender
+        .node
+        .probe_localsend_peer("127.0.0.1", receiver_port)
+        .await
+        .expect("probe receiver over HTTPS");
+
+    sender.node.debug_sweep_localsend_peers().await;
+    assert!(
+        sender.node.localsend_peers().iter().any(|p| p.id == peer.id),
+        "a peer that still answers stays listed"
+    );
+
+    receiver.node.set_localsend_enabled(false).unwrap();
+    let mut gone = false;
+    for _ in 0..40 {
+        sender.node.debug_sweep_localsend_peers().await;
+        if !sender.node.localsend_peers().iter().any(|p| p.id == peer.id) {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(gone, "a peer that stopped answering is dropped");
+}
+
+#[tokio::test]
 async fn localsend_declining_transfer_returns_denied_to_sender() {
     let sender_port = free_tcp_port();
     let receiver_port = free_tcp_port();

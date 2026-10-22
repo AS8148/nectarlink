@@ -1412,8 +1412,12 @@ impl Node {
         let _ = store.expire_stale_queue_items(crate::now_unix_ms());
         let clipboard_history =
             crate::clipboard_history::ClipboardHistoryStore::open(&config.data_dir, protector.clone());
-        let localsend =
-            crate::localsend::LocalSendState::open(&config.data_dir, protector, config.localsend_port)?;
+        let localsend = crate::localsend::LocalSendState::open(
+            &config.data_dir,
+            protector,
+            config.localsend_port,
+            config.lan_discovery,
+        )?;
 
         // A stable port lets paired devices reconnect to the addresses they
         // remember even where local discovery is blocked (guest Wi-Fi, some
@@ -2163,6 +2167,13 @@ impl Node {
     /// Probes `host:port` via the LocalSend v2.1 HTTP/HTTPS API and adds the peer if found.
     pub async fn probe_localsend_peer(&self, host: &str, port: u16) -> Result<crate::LocalSendPeer> {
         crate::localsend::probe_peer(&self.shared, host, port).await
+    }
+
+    /// Checks on every LocalSend peer now and drops the ones that don't
+    /// answer, instead of waiting for them to go quiet. For tests.
+    #[doc(hidden)]
+    pub async fn debug_sweep_localsend_peers(&self) {
+        crate::localsend::sweep_stale_peers(&self.shared, std::time::Duration::ZERO).await;
     }
 
     // ---- Clipboard (docs/protocol/clipboard.md) ----

@@ -20,7 +20,8 @@ pub struct NodeConfig {
     /// Allow connections through relay servers ("Reach my phone away from
     /// home"). Off by default: LAN only.
     pub away_mode: bool,
-    /// Discover and announce on the local network via mDNS.
+    /// Discover and announce on the local network via mDNS, and, while
+    /// LocalSend is on, on LocalSend's multicast group.
     pub lan_discovery: bool,
     /// Fixed UDP port to listen on (0 = any). A fixed port makes firewall
     /// rules simpler on the desktop.

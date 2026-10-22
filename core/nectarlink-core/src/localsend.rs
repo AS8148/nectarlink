@@ -74,6 +74,10 @@ const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 const PROGRESS_EVERY: Duration = Duration::from_millis(150);
+const ANNOUNCE_EVERY: Duration = Duration::from_secs(10);
+/// A peer not heard from for this long is asked for its info, and dropped if
+/// it doesn't answer.
+const PEER_STALE_AFTER: Duration = Duration::from_secs(45);
 const UPLOAD_CHUNK: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const MAX_JSON_BODY_BYTES: usize = 4 * 1024 * 1024;
@@ -239,6 +243,11 @@ struct UploadSession {
     last_progress: Instant,
 }
 
+struct KnownPeer {
+    peer: LocalSendPeer,
+    last_seen: Instant,
+}
+
 struct RunningState {
     cancel: CancellationToken,
     announce_tx: tokio::sync::mpsc::UnboundedSender<()>,
@@ -255,7 +264,11 @@ pub(crate) struct LocalSendState {
     identity: LocalSendIdentity,
     server_tls: Arc<ServerConfig>,
     client_tls: Arc<ClientConfig>,
-    peers: Mutex<HashMap<DeviceId, LocalSendPeer>>,
+    peers: Mutex<HashMap<DeviceId, KnownPeer>>,
+    /// Announce and listen on the LAN multicast group (off with
+    /// `NodeConfig::lan_discovery`, as in tests).
+    multicast: bool,
+    sweeping: AtomicBool,
     running: Mutex<Option<RunningState>>,
     pending_approvals: Mutex<HashMap<String, oneshot::Sender<bool>>>,
     sessions: Mutex<HashMap<String, Arc<Mutex<UploadSession>>>>,
@@ -272,7 +285,12 @@ impl std::fmt::Debug for LocalSendState {
 }
 
 impl LocalSendState {
-    pub fn open(data_dir: &Path, protector: Arc<dyn KeyProtector>, configured_port: u16) -> Result<Self> {
+    pub fn open(
+        data_dir: &Path,
+        protector: Arc<dyn KeyProtector>,
+        configured_port: u16,
+        multicast: bool,
+    ) -> Result<Self> {
         let state_path = data_dir.join(STATE_FILE);
         let mut stored: StoredLocalSendState = match fs::read(&state_path) {
             Ok(sealed) => protector
@@ -312,6 +330,8 @@ impl LocalSendState {
             server_tls,
             client_tls,
             peers: Mutex::new(HashMap::new()),
+            multicast,
+            sweeping: AtomicBool::new(false),
             running: Mutex::new(None),
             pending_approvals: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
@@ -350,7 +370,7 @@ impl LocalSendState {
 
     pub fn peers(&self) -> Vec<LocalSendPeer> {
         let mut list: Vec<LocalSendPeer> =
-            self.peers.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
+            self.peers.lock().unwrap_or_else(|e| e.into_inner()).values().map(|k| k.peer.clone()).collect();
         list.sort_by(|a, b| {
             a.alias.cmp(&b.alias).then_with(|| a.ip.cmp(&b.ip)).then_with(|| a.port.cmp(&b.port))
         });
@@ -358,7 +378,7 @@ impl LocalSendState {
     }
 
     pub fn peer(&self, id: &DeviceId) -> Option<LocalSendPeer> {
-        self.peers.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned()
+        self.peers.lock().unwrap_or_else(|e| e.into_inner()).get(id).map(|k| k.peer.clone())
     }
 
     pub fn has_peer(&self, id: &DeviceId) -> bool {
@@ -366,7 +386,7 @@ impl LocalSendState {
     }
 
     pub fn peer_name(&self, id: &DeviceId) -> Option<String> {
-        self.peers.lock().unwrap_or_else(|e| e.into_inner()).get(id).map(|p| p.alias.clone())
+        self.peers.lock().unwrap_or_else(|e| e.into_inner()).get(id).map(|k| k.peer.alias.clone())
     }
 
     pub fn upsert_peer(&self, shared: &Shared, peer: LocalSendPeer) -> bool {
@@ -375,12 +395,33 @@ impl LocalSendState {
         }
         let changed = {
             let mut map = self.peers.lock().unwrap_or_else(|e| e.into_inner());
-            map.insert(peer.id, peer.clone()).as_ref() != Some(&peer)
+            let known = KnownPeer { peer: peer.clone(), last_seen: Instant::now() };
+            map.insert(peer.id, known).map(|old| old.peer).as_ref() != Some(&peer)
         };
         if changed {
             shared.emit(NodeEvent::LocalSendChanged);
         }
         changed
+    }
+
+    fn peers_seen_before(&self, cutoff: Instant) -> Vec<LocalSendPeer> {
+        let map = self.peers.lock().unwrap_or_else(|e| e.into_inner());
+        map.values().filter(|k| k.last_seen < cutoff).map(|k| k.peer.clone()).collect()
+    }
+
+    /// Drops `id` unless it was heard from at or after `cutoff`.
+    fn remove_peer_unless_seen_since(&self, shared: &Shared, id: &DeviceId, cutoff: Instant) -> bool {
+        let removed = {
+            let mut map = self.peers.lock().unwrap_or_else(|e| e.into_inner());
+            match map.get(id) {
+                Some(k) if k.last_seen < cutoff => map.remove(id).is_some(),
+                _ => false,
+            }
+        };
+        if removed {
+            shared.emit(NodeEvent::LocalSendChanged);
+        }
+        removed
     }
 
     pub fn resolve_transfer_approval(&self, id: &str, accepted: bool) -> bool {
@@ -472,27 +513,34 @@ impl LocalSendState {
             });
         }
 
-        // Spawn UDP multicast discovery + periodic announcer.
+        // Discovery: multicast announcements when LAN discovery is on, a probe
+        // for a LocalSend app on this machine, and dropping peers that left.
         let weak = Arc::downgrade(shared);
         let udp_cancel = cancel.child_token();
+        let multicast = self.multicast;
         tokio::spawn(async move {
-            let udp =
+            let udp = if multicast {
                 match bind_multicast_socket(LOCALSEND_DEFAULT_PORT).or_else(|_| bind_multicast_socket(0)) {
-                    Ok(sock) => Arc::new(sock),
+                    Ok(sock) => Some(Arc::new(sock)),
                     Err(e) => {
                         tracing::warn!(error = %e, "can't bind LocalSend UDP discovery socket");
-                        return;
+                        None
                     }
-                };
+                }
+            } else {
+                None
+            };
 
-            let custom_udp = if bound_port != LOCALSEND_DEFAULT_PORT && bound_port != 0 {
+            let custom_udp = if udp.is_some() && bound_port != LOCALSEND_DEFAULT_PORT && bound_port != 0 {
                 bind_multicast_socket(bound_port).ok().map(Arc::new)
             } else {
                 None
             };
 
             if let Some(s) = weak.upgrade() {
-                send_multicast_announcement(&s, &udp, bound_port, receiving).await;
+                if let Some(udp) = &udp {
+                    send_multicast_announcement(&s, udp, bound_port, receiving).await;
+                }
                 let _ = probe_peer(&s, "127.0.0.1", configured_port).await;
                 if configured_port != LOCALSEND_DEFAULT_PORT {
                     let _ = probe_peer(&s, "127.0.0.1", LOCALSEND_DEFAULT_PORT).await;
@@ -517,20 +565,25 @@ impl LocalSendState {
             }
 
             let mut buf = vec![0u8; 8192];
-            let mut ticker = tokio::time::interval(Duration::from_secs(10));
+            let mut ticker = tokio::time::interval(ANNOUNCE_EVERY);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tokio::select! {
                     _ = udp_cancel.cancelled() => return,
                     _ = ticker.tick() => {
                         let Some(shared) = weak.upgrade() else { return };
-                        send_multicast_announcement(&shared, &udp, bound_port, receiving).await;
+                        if let Some(udp) = &udp {
+                            send_multicast_announcement(&shared, udp, bound_port, receiving).await;
+                        }
+                        spawn_sweep(&shared, udp_cancel.clone());
                     }
                     Some(()) = announce_rx.recv() => {
                         let Some(shared) = weak.upgrade() else { return };
-                        send_multicast_announcement(&shared, &udp, bound_port, receiving).await;
+                        if let Some(udp) = &udp {
+                            send_multicast_announcement(&shared, udp, bound_port, receiving).await;
+                        }
                     }
-                    res = udp.recv_from(&mut buf) => {
+                    res = recv_multicast(udp.as_deref(), &mut buf) => {
                         let Ok((n, src)) = res else { continue };
                         let Some(shared) = weak.upgrade() else { return };
                         handle_udp_packet(&shared, &buf[..n], src).await;
@@ -586,6 +639,46 @@ fn build_our_info_dto(shared: &Shared) -> InfoDto {
         protocol: Some("https".into()),
         download: false,
     }
+}
+
+async fn recv_multicast(udp: Option<&UdpSocket>, buf: &mut [u8]) -> std::io::Result<(usize, SocketAddr)> {
+    match udp {
+        Some(udp) => udp.recv_from(buf).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Runs one [`sweep_stale_peers`] in the background unless one is running.
+fn spawn_sweep(shared: &Arc<Shared>, cancel: CancellationToken) {
+    if shared.localsend.sweeping.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let shared = shared.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = cancel.cancelled() => {}
+            _ = sweep_stale_peers(&shared, PEER_STALE_AFTER) => {}
+        }
+        shared.localsend.sweeping.store(false, Ordering::Release);
+    });
+}
+
+/// Asks each peer not heard from in `stale_after` for its info and drops the
+/// ones that don't answer. LocalSend apps don't say when they leave, and some
+/// only announce when they start, so going quiet alone doesn't mean gone.
+pub(crate) async fn sweep_stale_peers(shared: &Arc<Shared>, stale_after: Duration) {
+    let Some(cutoff) = Instant::now().checked_sub(stale_after) else { return };
+    let mut probes = tokio::task::JoinSet::new();
+    for peer in shared.localsend.peers_seen_before(cutoff) {
+        let shared = shared.clone();
+        probes.spawn(async move {
+            // An answer refreshes the peer. One from a different app at the
+            // same address adds that app instead, and this one is still dropped.
+            let _ = probe_peer(&shared, &peer.ip, peer.port).await;
+            shared.localsend.remove_peer_unless_seen_since(&shared, &peer.id, cutoff);
+        });
+    }
+    while probes.join_next().await.is_some() {}
 }
 
 async fn send_multicast_announcement(shared: &Shared, udp: &UdpSocket, bound_port: u16, receiving: bool) {
@@ -2212,12 +2305,14 @@ mod tests {
     fn persists_identity_and_enabled_flag_encrypted_on_disk() {
         let dir = tempfile::tempdir().unwrap();
         let state1 =
-            LocalSendState::open(dir.path(), Arc::new(PlainKeyProtector), LOCALSEND_DEFAULT_PORT).unwrap();
+            LocalSendState::open(dir.path(), Arc::new(PlainKeyProtector), LOCALSEND_DEFAULT_PORT, false)
+                .unwrap();
         assert!(!state1.enabled());
         let fp1 = state1.identity.fingerprint.clone();
 
         let state2 =
-            LocalSendState::open(dir.path(), Arc::new(PlainKeyProtector), LOCALSEND_DEFAULT_PORT).unwrap();
+            LocalSendState::open(dir.path(), Arc::new(PlainKeyProtector), LOCALSEND_DEFAULT_PORT, false)
+                .unwrap();
         assert_eq!(state2.identity.fingerprint, fp1);
     }
 
