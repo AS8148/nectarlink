@@ -6,9 +6,9 @@
 use std::{
     collections::HashMap,
     env,
-    io::{BufRead, BufReader, Result, Write},
+    io::Result,
     path::PathBuf,
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Command, Stdio},
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -638,6 +638,14 @@ fn spawn_x11_hotkey_thread(stop: Arc<AtomicBool>, handler: Arc<SharedHandler>) -
         .ok()
 }
 
+/// Returns true when an `org.freedesktop.portal.Settings.SettingChanged`
+/// signal (`namespace`, `key`) affects desktop appearance (`"color-scheme"`,
+/// `"contrast"`, or `"accent-color"`).
+pub fn is_portal_appearance_setting(namespace: &str, key: &str) -> bool {
+    namespace.trim() == "org.freedesktop.appearance"
+        && matches!(key.trim(), "color-scheme" | "contrast" | "accent-color")
+}
+
 /// Returns true when a line from `gdbus monitor` or `dbus-monitor` indicates
 /// `org.freedesktop.login1.Manager.PrepareForSleep(false)` (system waking up).
 pub fn is_prepare_for_sleep_resume_line(line: &str) -> bool {
@@ -700,145 +708,70 @@ fn tray_icon_cache_path() -> PathBuf {
     }
 }
 
-fn spawn_dbus_monitor_reader(
-    mut child: Child,
-    stop: Arc<AtomicBool>,
-    handler: Arc<SharedHandler>,
-    is_login1: bool,
-) -> Option<JoinHandle<()>> {
-    let stdout = child.stdout.take()?;
-    std::thread::Builder::new()
-        .name(if is_login1 { "tray-login1-monitor".into() } else { "tray-portal-monitor".into() })
-        .spawn(move || {
-            let reader = BufReader::new(stdout);
-            let mut awaiting_sleep_bool = false;
-            for line in reader.lines() {
-                if stop.load(Ordering::Acquire) {
-                    break;
-                }
-                let Ok(line) = line else { break };
-                if is_login1 {
-                    if is_prepare_for_sleep_resume_line(&line) {
-                        awaiting_sleep_bool = false;
-                        handler.emit(TrayEvent::Resumed);
-                    } else if line.contains("PrepareForSleep") {
-                        awaiting_sleep_bool = !line.contains("true");
-                    } else if awaiting_sleep_bool {
-                        let trimmed = line.trim();
-                        if trimmed.contains("boolean false") {
-                            awaiting_sleep_bool = false;
-                            handler.emit(TrayEvent::Resumed);
-                        } else if trimmed.contains("boolean true") {
-                            awaiting_sleep_bool = false;
-                        }
-                    }
-                } else if is_portal_appearance_changed_line(&line) {
-                    handler.emit(TrayEvent::AppearanceChanged);
-                }
+fn spawn_login1_sleep_listener(stop: Arc<AtomicBool>, handler: Arc<SharedHandler>) {
+    let _ = std::thread::Builder::new().name("tray-login1-monitor".into()).spawn(move || {
+        let Ok(conn) = zbus::blocking::Connection::system() else { return };
+        let Ok(rule) = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface("org.freedesktop.login1.Manager")
+            .and_then(|b| b.member("PrepareForSleep"))
+            .map(|b| b.build())
+        else {
+            return;
+        };
+        let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn) else { return };
+        if dbus.add_match_rule(rule).is_err() {
+            return;
+        }
+        for msg in zbus::blocking::MessageIterator::from(&conn) {
+            if stop.load(Ordering::Acquire) {
+                break;
             }
-        })
-        .ok()
+            let Ok(msg) = msg else { break };
+            let hdr = msg.header();
+            if hdr.interface().map(|i| i.as_str()) == Some("org.freedesktop.login1.Manager")
+                && hdr.member().map(|m| m.as_str()) == Some("PrepareForSleep")
+                && let Ok(going_to_sleep) = msg.body().deserialize::<bool>()
+                && !going_to_sleep
+            {
+                handler.emit(TrayEvent::Resumed);
+            }
+        }
+    });
 }
 
-const TRAY_HELPER_SCRIPT: &str = r#"
-import os, sys, threading
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GLib
-
-icon_path = sys.argv[1]
-tooltip = sys.argv[2]
-labels = sys.argv[3:11]
-icon_dir = os.path.dirname(icon_path)
-icon_name = os.path.splitext(os.path.basename(icon_path))[0]
-
-def emit(action):
-    try:
-        sys.stdout.write(action + "\n")
-        sys.stdout.flush()
-    except Exception:
-        pass
-
-menu = Gtk.Menu()
-def add_item(label, action):
-    item = Gtk.MenuItem(label=label)
-    item.connect('activate', lambda _: emit(action))
-    menu.append(item)
-    return item
-
-open_item = add_item(labels[0], 'OPEN')
-add_item(labels[1], 'COMMAND_PALETTE')
-add_item(labels[2], 'SHELF')
-menu.append(Gtk.SeparatorMenuItem())
-add_item(labels[3], 'TAKE_PHOTO')
-add_item(labels[4], 'SCAN_DOCUMENT')
-find_phone_item = add_item(labels[5], 'FIND_PHONE')
-find_phone_item.set_sensitive(False)
-add_item(labels[6], 'OPEN_LINK')
-menu.append(Gtk.SeparatorMenuItem())
-add_item(labels[7], 'QUIT')
-menu.show_all()
-
-ind = None
-status_icon = None
-try:
-    try:
-        gi.require_version('AyatanaAppIndicator3', '0.1')
-        from gi.repository import AyatanaAppIndicator3 as AppIndicator
-    except Exception:
-        gi.require_version('AppIndicator3', '0.1')
-        from gi.repository import AppIndicator3 as AppIndicator
-    ind = AppIndicator.Indicator.new_with_path(
-        'nectarlink',
-        icon_name,
-        AppIndicator.IndicatorCategory.APPLICATION_STATUS,
-        icon_dir,
-    )
-    ind.set_status(AppIndicator.IndicatorStatus.ACTIVE)
-    ind.set_title(tooltip)
-    ind.set_icon_full(icon_path, tooltip)
-    ind.set_menu(menu)
-    try:
-        ind.set_secondary_activate_target(open_item)
-    except Exception:
-        pass
-except Exception:
-    status_icon = Gtk.StatusIcon.new_from_file(icon_path)
-    status_icon.set_tooltip_text(tooltip)
-    status_icon.set_visible(True)
-    status_icon.connect('activate', lambda _: emit('OPEN'))
-    status_icon.connect(
-        'popup-menu',
-        lambda icon, button, time: menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, time),
-    )
-
-def apply_cmd(line):
-    parts = line.rstrip('\r\n').split('\t', 1)
-    if len(parts) != 2:
-        return False
-    cmd, val = parts
-    if cmd == 'TOOLTIP':
-        if ind is not None:
-            ind.set_title(val)
-            ind.set_icon_full(icon_path, val)
-        if status_icon is not None:
-            status_icon.set_tooltip_text(val)
-    elif cmd == 'FIND_PHONE':
-        find_phone_item.set_sensitive(val == '1')
-    return False
-
-def stdin_reader():
-    try:
-        for line in sys.stdin:
-            GLib.idle_add(apply_cmd, line)
-    except Exception:
-        pass
-    GLib.idle_add(Gtk.main_quit)
-
-t = threading.Thread(target=stdin_reader, daemon=True)
-t.start()
-Gtk.main()
-"#;
+fn spawn_portal_appearance_listener(stop: Arc<AtomicBool>, handler: Arc<SharedHandler>) {
+    let _ = std::thread::Builder::new().name("tray-portal-monitor".into()).spawn(move || {
+        let Ok(conn) = zbus::blocking::Connection::session() else { return };
+        let Ok(rule) = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface("org.freedesktop.portal.Settings")
+            .and_then(|b| b.member("SettingChanged"))
+            .map(|b| b.build())
+        else {
+            return;
+        };
+        let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn) else { return };
+        if dbus.add_match_rule(rule).is_err() {
+            return;
+        }
+        for msg in zbus::blocking::MessageIterator::from(&conn) {
+            if stop.load(Ordering::Acquire) {
+                break;
+            }
+            let Ok(msg) = msg else { break };
+            let hdr = msg.header();
+            if hdr.interface().map(|i| i.as_str()) == Some("org.freedesktop.portal.Settings")
+                && hdr.member().map(|m| m.as_str()) == Some("SettingChanged")
+                && let Ok((namespace, key, _val)) =
+                    msg.body().deserialize::<(String, String, zbus::zvariant::OwnedValue)>()
+                && is_portal_appearance_setting(&namespace, &key)
+            {
+                handler.emit(TrayEvent::AppearanceChanged);
+            }
+        }
+    });
+}
 
 pub(crate) fn parse_tray_helper_action(line: &str) -> Option<TrayEvent> {
     match line.trim() {
@@ -856,13 +789,12 @@ pub(crate) fn parse_tray_helper_action(line: &str) -> Option<TrayEvent> {
 
 pub struct Tray {
     tooltip: Mutex<String>,
+    #[allow(dead_code)]
     labels: Mutex<MenuLabels>,
     find_phone_enabled: Mutex<bool>,
     icon_path: PathBuf,
     stop: Arc<AtomicBool>,
     handler: Arc<SharedHandler>,
-    helper_stdin: Mutex<Option<ChildStdin>>,
-    children: Mutex<Vec<Child>>,
     threads: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -885,174 +817,58 @@ impl Tray {
 
         let stop = Arc::new(AtomicBool::new(false));
         let shared_handler = SharedHandler::new(handler);
-        let mut helper_stdin = None;
-        let mut children = Vec::new();
         let mut threads = Vec::new();
 
         if !cfg!(test) && has_desktop_session() {
             record_foreground_window();
 
-            // 0. StatusNotifierItem / Gtk.StatusIcon system tray indicator helper.
-            let tray_child = Command::new("python3")
-                .args([
-                    "-u",
-                    "-c",
-                    TRAY_HELPER_SCRIPT,
-                    &icon_path.to_string_lossy(),
-                    tooltip,
-                    &labels.open,
-                    &labels.command_palette,
-                    &labels.shelf,
-                    &labels.take_photo,
-                    &labels.scan_document,
-                    &labels.find_phone,
-                    &labels.open_link,
-                    &labels.quit,
-                ])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn();
-
-            if let Ok(mut child) = tray_child {
-                helper_stdin = child.stdin.take();
-                let stdout = child.stdout.take();
-                children.push(child);
-                if let Some(stdout) = stdout {
-                    let reader = BufReader::new(stdout);
-                    let stop_clone = Arc::clone(&stop);
-                    let handler_clone = Arc::clone(&shared_handler);
-                    if let Ok(handle) =
-                        std::thread::Builder::new().name("tray-sni-helper".into()).spawn(move || {
-                            for line in reader.lines() {
-                                if stop_clone.load(Ordering::Acquire) {
-                                    break;
-                                }
-                                let Ok(line) = line else { break };
-                                if let Some(ev) = parse_tray_helper_action(&line) {
-                                    if matches!(
-                                        ev,
-                                        TrayEvent::CommandPalette
-                                            | TrayEvent::TakePhoto
-                                            | TrayEvent::ScanDocument
-                                    ) {
-                                        record_foreground_window();
-                                    }
-                                    handler_clone.emit(ev);
-                                }
-                            }
-                        })
+            // 0. Qt QSystemTrayIcon + QMenu on the main GUI thread.
+            crate::bridge::native::ffi::linux_tray_setup(
+                &icon_path.to_string_lossy(),
+                tooltip,
+                &labels.open,
+                &labels.command_palette,
+                &labels.shelf,
+                &labels.take_photo,
+                &labels.scan_document,
+                &labels.find_phone,
+                &labels.open_link,
+                &labels.quit,
+            );
+            let stop_clone = Arc::clone(&stop);
+            let handler_clone = Arc::clone(&shared_handler);
+            if let Ok(handle) = std::thread::Builder::new().name("tray-qt-actions".into()).spawn(move || {
+                while !stop_clone.load(Ordering::Acquire) {
+                    let action = crate::bridge::native::ffi::linux_tray_wait_action(200);
+                    if stop_clone.load(Ordering::Acquire) {
+                        break;
+                    }
+                    if !action.is_empty()
+                        && let Some(ev) = parse_tray_helper_action(&action)
                     {
-                        threads.push(handle);
+                        if matches!(
+                            ev,
+                            TrayEvent::CommandPalette | TrayEvent::TakePhoto | TrayEvent::ScanDocument
+                        ) {
+                            record_foreground_window();
+                        }
+                        handler_clone.emit(ev);
                     }
                 }
+            }) {
+                threads.push(handle);
             }
 
-            // 1. System bus org.freedesktop.login1.Manager PrepareForSleep monitor.
-            let login1_child = Command::new("gdbus")
-                .args([
-                    "monitor",
-                    "--system",
-                    "--dest",
-                    "org.freedesktop.login1",
-                ])
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .or_else(|_| {
-                    Command::new("dbus-monitor")
-                        .args([
-                            "--system",
-                            "type='signal',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'",
-                        ])
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::null())
-                        .spawn()
-                });
-            if let Ok(mut child) = login1_child {
-                let stdout = child.stdout.take();
-                children.push(child);
-                if let Some(stdout) = stdout {
-                    let fake_child_reader = BufReader::new(stdout);
-                    let stop_clone = Arc::clone(&stop);
-                    let handler_clone = Arc::clone(&shared_handler);
-                    if let Ok(handle) =
-                        std::thread::Builder::new().name("tray-login1-monitor".into()).spawn(move || {
-                            let mut awaiting_sleep_bool = false;
-                            for line in fake_child_reader.lines() {
-                                if stop_clone.load(Ordering::Acquire) {
-                                    break;
-                                }
-                                let Ok(line) = line else { break };
-                                if is_prepare_for_sleep_resume_line(&line) {
-                                    awaiting_sleep_bool = false;
-                                    handler_clone.emit(TrayEvent::Resumed);
-                                } else if line.contains("PrepareForSleep") {
-                                    awaiting_sleep_bool = !line.contains("true");
-                                } else if awaiting_sleep_bool {
-                                    let trimmed = line.trim();
-                                    if trimmed.contains("boolean false") {
-                                        awaiting_sleep_bool = false;
-                                        handler_clone.emit(TrayEvent::Resumed);
-                                    } else if trimmed.contains("boolean true") {
-                                        awaiting_sleep_bool = false;
-                                    }
-                                }
-                            }
-                        })
-                    {
-                        threads.push(handle);
-                    }
-                }
-            }
+            // 1. System bus org.freedesktop.login1.Manager PrepareForSleep listener via zbus.
+            spawn_login1_sleep_listener(Arc::clone(&stop), Arc::clone(&shared_handler));
 
-            // 2. Session bus org.freedesktop.portal.Settings SettingChanged monitor.
-            let portal_child = Command::new("gdbus")
-                .args([
-                    "monitor",
-                    "--session",
-                    "--dest",
-                    "org.freedesktop.portal.Desktop",
-                    "--object-path",
-                    "/org/freedesktop/portal/desktop",
-                ])
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn();
-            if let Ok(mut child) = portal_child {
-                let stdout = child.stdout.take();
-                children.push(child);
-                if let Some(stdout) = stdout {
-                    let reader = BufReader::new(stdout);
-                    let stop_clone = Arc::clone(&stop);
-                    let handler_clone = Arc::clone(&shared_handler);
-                    if let Ok(handle) =
-                        std::thread::Builder::new().name("tray-portal-monitor".into()).spawn(move || {
-                            for line in reader.lines() {
-                                if stop_clone.load(Ordering::Acquire) {
-                                    break;
-                                }
-                                let Ok(line) = line else { break };
-                                if is_portal_appearance_changed_line(&line) {
-                                    handler_clone.emit(TrayEvent::AppearanceChanged);
-                                }
-                            }
-                        })
-                    {
-                        threads.push(handle);
-                    }
-                }
-            }
+            // 2. Session bus org.freedesktop.portal.Settings SettingChanged listener via zbus.
+            spawn_portal_appearance_listener(Arc::clone(&stop), Arc::clone(&shared_handler));
         }
 
         if let Some(handle) = spawn_x11_hotkey_thread(Arc::clone(&stop), Arc::clone(&shared_handler)) {
             threads.push(handle);
         }
-
-        let _ = spawn_dbus_monitor_reader;
 
         Ok(Tray {
             tooltip: Mutex::new(tooltip.to_string()),
@@ -1061,8 +877,6 @@ impl Tray {
             icon_path,
             stop,
             handler: shared_handler,
-            helper_stdin: Mutex::new(helper_stdin),
-            children: Mutex::new(children),
             threads: Mutex::new(threads),
         })
     }
@@ -1071,12 +885,8 @@ impl Tray {
         if let Ok(mut guard) = self.tooltip.lock() {
             *guard = text.to_string();
         }
-        if let Ok(mut guard) = self.helper_stdin.lock()
-            && let Some(stdin) = guard.as_mut()
-        {
-            let sanitized = text.replace(['\r', '\n', '\t'], " ");
-            let _ = writeln!(stdin, "TOOLTIP\t{sanitized}");
-            let _ = stdin.flush();
+        if !cfg!(test) {
+            crate::bridge::native::ffi::linux_tray_set_tooltip(text);
         }
     }
 
@@ -1085,12 +895,8 @@ impl Tray {
         if let Ok(mut guard) = self.find_phone_enabled.lock() {
             *guard = enabled;
         }
-        if let Ok(mut guard) = self.helper_stdin.lock()
-            && let Some(stdin) = guard.as_mut()
-        {
-            let flag = if enabled { "1" } else { "0" };
-            let _ = writeln!(stdin, "FIND_PHONE\t{flag}");
-            let _ = stdin.flush();
+        if !cfg!(test) {
+            crate::bridge::native::ffi::linux_tray_set_find_phone_enabled(enabled);
         }
     }
 }
@@ -1099,15 +905,8 @@ impl Drop for Tray {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         self.handler.clear();
-        if let Ok(mut stdin_guard) = self.helper_stdin.lock() {
-            let _ = stdin_guard.take();
-        }
-        if let Ok(mut children) = self.children.lock() {
-            for child in children.iter_mut() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            children.clear();
+        if !cfg!(test) {
+            crate::bridge::native::ffi::linux_tray_teardown();
         }
         if let Ok(mut threads) = self.threads.lock() {
             for handle in threads.drain(..) {

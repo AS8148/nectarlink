@@ -10,16 +10,13 @@
 //! before updating the system clipboard so the watcher thread never echoes
 //! phone clipboard writes back to the phone.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::image::{self, Bitmap};
-
-/// Poll interval for the background Linux clipboard watcher thread.
-const POLL_INTERVAL: Duration = Duration::from_millis(450);
 
 /// Content fingerprint used to deduplicate clipboard updates and suppress
 /// echoing NectarLink's own writes back to connected phones.
@@ -155,6 +152,13 @@ pub(crate) fn is_kde_secret_value(bytes: &[u8]) -> bool {
     std::str::from_utf8(trimmed).ok().is_some_and(|s| s.trim().eq_ignore_ascii_case("secret"))
 }
 
+/// Records the fingerprint of whatever is currently on the clipboard so that
+/// pre-existing clipboard contents at app startup are never sent to the phone.
+pub(crate) fn seed_initial_clipboard() {
+    let initial = fingerprint(&read());
+    *LAST_REPORTED.lock().unwrap_or_else(|e| e.into_inner()) = initial;
+}
+
 /// Starts watching the Linux clipboard on a background thread (`"clipboard"`).
 /// Newly copied text or images that are not marked private and were not
 /// written by NectarLink are passed to `on_copy`.
@@ -168,15 +172,55 @@ where
     if !has_display_server() {
         return;
     }
+    seed_initial_clipboard();
+    if is_wayland() {
+        let _ = std::thread::Builder::new().name("clipboard-wl-watch".into()).spawn(wayland_watch_loop);
+    }
     let spawned = std::thread::Builder::new().name("clipboard".into()).spawn(watcher_loop);
     if let Err(e) = spawned {
         tracing::warn!(error = %e, "can't start Linux clipboard watcher");
     }
 }
 
+/// Runs `wl-paste --watch` on Wayland so clipboard changes while NectarLink is
+/// unfocused are detected on compositors that implement `wlr-data-control` or
+/// `ext-data-control`. If the compositor does not support data-control (for
+/// example GNOME Wayland), `wl-paste --watch` exits immediately and we do not
+/// respawn it, relying on `QClipboard::dataChanged` instead.
+fn wayland_watch_loop() {
+    let started = Instant::now();
+    let Ok(mut child) = Command::new("wl-paste")
+        .args(["--watch", "printf", "\\n"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return;
+    };
+    if let Some(stdout) = child.stdout.take() {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            if line.is_err() {
+                break;
+            }
+            crate::bridge::native::ffi::linux_clipboard_notify_external();
+        }
+    }
+    let _ = child.wait();
+    if started.elapsed() < Duration::from_secs(2) {
+        tracing::debug!("wl-paste --watch exited early; relying on QClipboard::dataChanged");
+    }
+}
+
 fn watcher_loop() {
+    let mut last_seq = crate::bridge::native::ffi::linux_clipboard_sequence();
     loop {
-        std::thread::sleep(POLL_INTERVAL);
+        let next_seq = crate::bridge::native::ffi::linux_clipboard_wait_change(last_seq, 2000);
+        if next_seq == last_seq {
+            continue;
+        }
+        last_seq = next_seq;
         let clip = read();
         if let Some(on_copy) = ON_COPY.get() {
             let _ = report_if_changed(clip, on_copy);
@@ -927,6 +971,15 @@ mod tests {
         let user_clip = Clip::Text { text: "copied on PC".into(), html: None, rtf: None };
         assert!(report_if_changed(user_clip.clone(), |c| reported.push(c)));
         assert!(!report_if_changed(user_clip, |c| reported.push(c)));
+        assert_eq!(reported.len(), 1);
+
+        // Pre-existing clipboard contents when start() runs must be seeded into
+        // LAST_REPORTED so the first clipboard event does not send stale content.
+        *LAST_CLIP.lock().unwrap_or_else(|e| e.into_inner()) =
+            Clip::Text { text: "already on clipboard before launch".into(), html: None, rtf: None };
+        *LAST_REPORTED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        seed_initial_clipboard();
+        assert!(!report_if_changed(read(), |c| reported.push(c)));
         assert_eq!(reported.len(), 1);
     }
 

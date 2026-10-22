@@ -67,11 +67,7 @@ pub fn write_desktop_file_to(
 ) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let desktop_path = dir.join("nectarlink.desktop");
-    let exe_str: String = exe
-        .to_string_lossy()
-        .chars()
-        .filter(|&c| c != '\n' && c != '\r' && c != '"' && !c.is_control())
-        .collect();
+    let exe_str = super::autostart::escape_desktop_exec_arg(&exe.to_string_lossy());
     let icon_str: String =
         icon_path.to_string_lossy().chars().filter(|&c| c != '\n' && c != '\r' && !c.is_control()).collect();
 
@@ -138,11 +134,7 @@ pub fn unregister() {
 pub fn build_task_arguments(action: &str, custom_data_dir: Option<&Path>) -> String {
     match custom_data_dir {
         Some(dir) => {
-            let clean: String = dir
-                .to_string_lossy()
-                .chars()
-                .filter(|&c| c != '\n' && c != '\r' && c != '"' && !c.is_control())
-                .collect();
+            let clean = super::autostart::escape_desktop_exec_arg(&dir.to_string_lossy());
             format!("--data-dir \"{clean}\" {ARG} {action}")
         }
         None => format!("{ARG} {action}"),

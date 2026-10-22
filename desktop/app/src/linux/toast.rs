@@ -4,10 +4,9 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 pub const AUMID: &str = "Nectarlink.Desktop";
 pub const CALL_ANSWER: &str = "answer";
@@ -448,47 +447,71 @@ fn compute_progress_percent(progress: &Progress) -> i32 {
     progress.value.map(|v| (v.clamp(0.0, 1.0) * 100.0).round() as i32).unwrap_or(0)
 }
 
-fn build_actions_gvariant(actions: &[(String, String)], reply: Option<&(String, String)>) -> String {
-    let mut items: Vec<String> = Vec::new();
-    items.push("'default'".to_string());
-    items.push("'Open'".to_string());
+fn build_actions_list(actions: &[(String, String)], reply: Option<&(String, String)>) -> Vec<String> {
+    let mut items = Vec::with_capacity(2 + actions.len() * 2 + 2);
+    items.push("default".to_string());
+    items.push("Open".to_string());
     for (id, label) in actions {
         if !id.trim().is_empty() {
-            items.push(escape_gvariant_string(id));
-            items.push(escape_gvariant_string(label));
+            items.push(id.clone());
+            items.push(label.clone());
         }
     }
     if let Some((_action_id, placeholder)) = reply {
         let label = if placeholder.trim().is_empty() { "Reply" } else { placeholder.trim() };
-        items.push("'inline-reply'".to_string());
-        items.push(escape_gvariant_string(label));
+        items.push("inline-reply".to_string());
+        items.push(label.to_string());
     }
-    format!("[{}]", items.join(", "))
+    items
 }
 
-fn build_hints_gvariant(progress: Option<&Progress>, silent: bool, call: bool) -> String {
-    let mut entries = Vec::new();
-    let urgency = if call {
+fn build_hints_map(
+    progress: Option<&Progress>,
+    silent: bool,
+    call: bool,
+) -> HashMap<&'static str, zbus::zvariant::Value<'static>> {
+    let mut hints = HashMap::new();
+    let urgency: u8 = if call {
         2
     } else if silent {
         0
     } else {
         1
     };
-    entries.push(format!("'urgency': <byte {urgency}>"));
+    hints.insert("urgency", zbus::zvariant::Value::U8(urgency));
     if silent && !call {
-        entries.push("'suppress-sound': <true>".to_string());
+        hints.insert("suppress-sound", zbus::zvariant::Value::Bool(true));
     }
     if let Some(prog) = progress {
         let pct = compute_progress_percent(prog);
-        entries.push(format!("'value': <int32 {pct}>"));
+        hints.insert("value", zbus::zvariant::Value::I32(pct));
     }
-    format!("{{{}}}", entries.join(", "))
+    hints
 }
 
-fn escape_gvariant_string(s: &str) -> String {
-    let escaped = s.replace('\\', "\\\\").replace('\'', "\\'");
-    format!("'{escaped}'")
+static DBUS_SESSION: OnceLock<Mutex<Option<zbus::blocking::Connection>>> = OnceLock::new();
+
+fn with_session_connection<T, F>(mut op: F) -> Option<T>
+where
+    F: FnMut(&zbus::blocking::Connection) -> zbus::Result<T>,
+{
+    let mutex = DBUS_SESSION.get_or_init(|| Mutex::new(None));
+    let mut guard = mutex.lock().ok()?;
+    if guard.is_none() {
+        *guard = zbus::blocking::Connection::session().ok();
+    }
+    if let Some(conn) = guard.as_ref() {
+        match op(conn) {
+            Ok(val) => return Some(val),
+            Err(_) => {
+                *guard = zbus::blocking::Connection::session().ok();
+                if let Some(retry_conn) = guard.as_ref() {
+                    return op(retry_conn).ok();
+                }
+            }
+        }
+    }
+    None
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -507,224 +530,105 @@ fn send_notification(
         return None;
     }
 
-    let actions_arg = build_actions_gvariant(actions, reply);
-    let hints_arg = build_hints_gvariant(progress, silent, call);
-    let expire_timeout = if call { "int32 0" } else { "int32 -1" };
+    let actions_list = build_actions_list(actions, reply);
+    let hints_map = build_hints_map(progress, silent, call);
+    let expire_timeout: i32 = if call { 0 } else { -1 };
 
-    if let Ok(output) = Command::new("gdbus")
-        .args([
-            "call",
-            "--session",
-            "--dest",
-            "org.freedesktop.Notifications",
-            "--object-path",
+    with_session_connection(|conn| {
+        let reply_msg = conn.call_method(
+            Some("org.freedesktop.Notifications"),
             "/org/freedesktop/Notifications",
-            "--method",
-            "org.freedesktop.Notifications.Notify",
-            "NectarLink",
-            &replaces_id.to_string(),
-            icon_path,
-            summary,
-            body,
-            &actions_arg,
-            &hints_arg,
-            expire_timeout,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        && output.status.success()
-    {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Some(id) = parse_notify_id(&stdout) {
-            return Some(id);
-        }
-    }
-
-    // Fallback to notify-send
-    let mut cmd = Command::new("notify-send");
-    cmd.arg("--app-name=NectarLink").arg("--print-id");
-    if replaces_id != 0 {
-        cmd.arg(format!("--replace-id={replaces_id}"));
-    }
-    if !icon_path.is_empty() {
-        cmd.arg(format!("--icon={icon_path}"));
-    }
-    if call {
-        cmd.arg("--urgency=critical");
-    } else if silent {
-        cmd.arg("--urgency=low");
-    }
-    if let Some(prog) = progress {
-        let pct = compute_progress_percent(prog);
-        cmd.arg(format!("--hint=int:value:{pct}"));
-    }
-    cmd.arg(summary);
-    if !body.is_empty() {
-        cmd.arg(body);
-    }
-    if let Ok(output) = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).output()
-        && output.status.success()
-    {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Some(id) = parse_notify_id(&stdout) {
-            return Some(id);
-        }
-    }
-
-    None
+            Some("org.freedesktop.Notifications"),
+            "Notify",
+            &("NectarLink", replaces_id, icon_path, summary, body, &actions_list, &hints_map, expire_timeout),
+        )?;
+        let msg_body = reply_msg.body();
+        msg_body.deserialize::<u32>().or_else(|_| msg_body.deserialize::<(u32,)>().map(|(id,)| id))
+    })
 }
 
 fn close_notification(id: u32) {
     if cfg!(test) || id == 0 {
         return;
     }
-    let _ = Command::new("gdbus")
-        .args([
-            "call",
-            "--session",
-            "--dest",
-            "org.freedesktop.Notifications",
-            "--object-path",
+    let _ = with_session_connection(|conn| {
+        conn.call_method(
+            Some("org.freedesktop.Notifications"),
             "/org/freedesktop/Notifications",
-            "--method",
-            "org.freedesktop.Notifications.CloseNotification",
-            &id.to_string(),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+            Some("org.freedesktop.Notifications"),
+            "CloseNotification",
+            &(id,),
+        )
+        .map(|_| ())
+    });
 }
 
 fn monitor_loop() {
-    let Ok(mut child) = Command::new("gdbus")
-        .args([
-            "monitor",
-            "--session",
-            "--dest",
-            "org.freedesktop.Notifications",
-            "--object-path",
-            "/org/freedesktop/Notifications",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return;
-    };
+    loop {
+        let Ok(conn) = zbus::blocking::Connection::session() else {
+            std::thread::sleep(Duration::from_secs(5));
+            continue;
+        };
+        let Ok(rule) = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface("org.freedesktop.Notifications")
+            .and_then(|b| b.path("/org/freedesktop/Notifications"))
+            .map(|b| b.build())
+        else {
+            return;
+        };
+        let Ok(iter) = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None) else {
+            std::thread::sleep(Duration::from_secs(5));
+            continue;
+        };
 
-    let Some(stdout) = child.stdout.take() else {
-        return;
-    };
-    let reader = BufReader::new(stdout);
-    for line in reader.lines().map_while(Result::ok) {
-        if let Some(signal) = parse_monitor_line(&line) {
-            let event_and_cb = TOASTER.get().and_then(|mutex| {
-                let mut guard = mutex.lock().ok()?;
-                let ev = guard.handle_signal(signal)?;
-                Some(ev)
-            });
-            if let Some(event) = event_and_cb
-                && let Some(mutex) = TOASTER.get()
-                && let Ok(guard) = mutex.lock()
-                && let Some(cb) = &guard.on_event
-            {
-                cb(event);
+        for msg in iter {
+            let Ok(msg) = msg else {
+                break;
+            };
+            if let Some(signal) = parse_dbus_signal(&msg) {
+                let event = TOASTER.get().and_then(|mutex| {
+                    let mut guard = mutex.lock().ok()?;
+                    guard.handle_signal(signal)
+                });
+                if let Some(event) = event
+                    && let Some(mutex) = TOASTER.get()
+                    && let Ok(guard) = mutex.lock()
+                    && let Some(cb) = &guard.on_event
+                {
+                    cb(event);
+                }
             }
         }
+        std::thread::sleep(Duration::from_secs(2));
     }
 }
 
-/// Parses the notification ID returned by `gdbus call ... Notify` (e.g. `(uint32 42,)`)
-/// or `notify-send --print-id` (e.g. `42`).
-pub fn parse_notify_id(output: &str) -> Option<u32> {
-    let trimmed = output.trim();
-    if trimmed.is_empty() {
+/// Deserializes a D-Bus signal from `org.freedesktop.Notifications` into a [`MonitorSignal`].
+pub fn parse_dbus_signal(msg: &zbus::message::Message) -> Option<MonitorSignal> {
+    let header = msg.header();
+    if header.message_type() != zbus::message::Type::Signal {
         return None;
     }
-    if let Ok(id) = trimmed.parse::<u32>() {
-        return Some(id);
-    }
-    if let Some(idx) = trimmed.find("uint32 ") {
-        let rest = &trimmed[idx + "uint32 ".len()..];
-        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if let Ok(id) = digits.parse::<u32>() {
-            return Some(id);
-        }
-    }
-    None
-}
-
-/// Parses a single line from `gdbus monitor --session --dest org.freedesktop.Notifications`.
-///
-/// Expected signal formats:
-/// - `/org/freedesktop/Notifications: org.freedesktop.Notifications.ActionInvoked (uint32 12, 'reply')`
-/// - `/org/freedesktop/Notifications: org.freedesktop.Notifications.NotificationReplied (uint32 12, 'Hello!')`
-/// - `/org/freedesktop/Notifications: org.freedesktop.Notifications.NotificationClosed (uint32 12, uint32 2)`
-pub fn parse_monitor_line(line: &str) -> Option<MonitorSignal> {
-    let trimmed = line.trim();
-    if let Some(idx) = trimmed.find("ActionInvoked") {
-        let args = &trimmed[idx + "ActionInvoked".len()..];
-        let (id, rest) = parse_first_uint32(args)?;
-        let action_key = parse_quoted_arg(rest)?;
-        return Some(MonitorSignal::ActionInvoked { id, action_key });
-    }
-    if let Some(idx) = trimmed.find("NotificationReplied") {
-        let args = &trimmed[idx + "NotificationReplied".len()..];
-        let (id, rest) = parse_first_uint32(args)?;
-        let text = parse_quoted_arg(rest)?;
-        return Some(MonitorSignal::NotificationReplied { id, text });
-    }
-    if let Some(idx) = trimmed.find("NotificationClosed") {
-        let args = &trimmed[idx + "NotificationClosed".len()..];
-        let (id, rest) = parse_first_uint32(args)?;
-        let (reason, _) = parse_first_uint32(rest).unwrap_or((0, ""));
-        return Some(MonitorSignal::NotificationClosed { id, reason });
-    }
-    None
-}
-
-fn parse_first_uint32(s: &str) -> Option<(u32, &str)> {
-    let start = s.find(|c: char| c.is_ascii_digit())?;
-    let after_prefix = &s[start..];
-    // Skip the `32` in `uint32 ` if `start` landed on `32`
-    let after_uint = if start >= 4 && &s[start - 4..start + 2] == "uint32" {
-        let rest_after_type = &s[start + 2..];
-        let num_start = rest_after_type.find(|c: char| c.is_ascii_digit())?;
-        &rest_after_type[num_start..]
-    } else {
-        after_prefix
-    };
-    let end = after_uint.find(|c: char| !c.is_ascii_digit()).unwrap_or(after_uint.len());
-    let val = after_uint[..end].parse::<u32>().ok()?;
-    Some((val, &after_uint[end..]))
-}
-
-fn parse_quoted_arg(s: &str) -> Option<String> {
-    let comma = s.find(',')?;
-    let after_comma = s[comma + 1..].trim();
-    let quote_char = after_comma.chars().next()?;
-    if quote_char != '\'' && quote_char != '"' {
+    if header.interface().map(|i| i.as_str()) != Some("org.freedesktop.Notifications") {
         return None;
     }
-    let content = &after_comma[quote_char.len_utf8()..];
-    let mut out = String::new();
-    let mut chars = content.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(next) = chars.next() {
-                out.push(next);
-            }
-        } else if ch == quote_char {
-            return Some(out);
-        } else {
-            out.push(ch);
+    let member = header.member()?.as_str();
+    match member {
+        "ActionInvoked" => {
+            let (id, action_key) = msg.body().deserialize::<(u32, String)>().ok()?;
+            Some(MonitorSignal::ActionInvoked { id, action_key })
         }
+        "NotificationReplied" => {
+            let (id, text) = msg.body().deserialize::<(u32, String)>().ok()?;
+            Some(MonitorSignal::NotificationReplied { id, text })
+        }
+        "NotificationClosed" => {
+            let (id, reason) = msg.body().deserialize::<(u32, u32)>().ok()?;
+            Some(MonitorSignal::NotificationClosed { id, reason })
+        }
+        _ => None,
     }
-    None
 }
 
 #[cfg(test)]
@@ -732,30 +636,63 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_notify_ids_from_gdbus_and_notify_send() {
-        assert_eq!(parse_notify_id("(uint32 42,)\n"), Some(42));
-        assert_eq!(parse_notify_id("(uint32 108,)"), Some(108));
-        assert_eq!(parse_notify_id("73\n"), Some(73));
-        assert_eq!(parse_notify_id(""), None);
+    fn builds_actions_and_hints_without_gvariant_text_mangling() {
+        let actions = vec![("mark_read".to_string(), "Mark 'read' [1]".to_string())];
+        let reply = ("direct_reply".to_string(), "Reply \"now\"".to_string());
+        let list = build_actions_list(&actions, Some(&reply));
+        assert_eq!(
+            list,
+            vec!["default", "Open", "mark_read", "Mark 'read' [1]", "inline-reply", "Reply \"now\""]
+        );
+
+        let prog = Progress { status: "Transferring".to_string(), value: Some(0.42), label: String::new() };
+        let hints = build_hints_map(Some(&prog), true, false);
+        assert_eq!(hints.get("urgency"), Some(&zbus::zvariant::Value::U8(0)));
+        assert_eq!(hints.get("suppress-sound"), Some(&zbus::zvariant::Value::Bool(true)));
+        assert_eq!(hints.get("value"), Some(&zbus::zvariant::Value::I32(42)));
     }
 
     #[test]
-    fn parses_gdbus_monitor_signals() {
-        let action_line = "/org/freedesktop/Notifications: org.freedesktop.Notifications.ActionInvoked (uint32 15, 'mark_read')";
+    fn parses_zbus_notification_signals() {
+        let action_msg = zbus::message::Message::signal(
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+            "ActionInvoked",
+        )
+        .unwrap()
+        .build(&(15u32, "mark_read"))
+        .unwrap();
         assert_eq!(
-            parse_monitor_line(action_line),
+            parse_dbus_signal(&action_msg),
             Some(MonitorSignal::ActionInvoked { id: 15, action_key: "mark_read".to_string() })
         );
 
-        let reply_line = "/org/freedesktop/Notifications: org.freedesktop.Notifications.NotificationReplied (uint32 15, 'Sounds good\\'s!')";
+        let reply_msg = zbus::message::Message::signal(
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+            "NotificationReplied",
+        )
+        .unwrap()
+        .build(&(15u32, "Sounds good's!\nLine 2 [true]"))
+        .unwrap();
         assert_eq!(
-            parse_monitor_line(reply_line),
-            Some(MonitorSignal::NotificationReplied { id: 15, text: "Sounds good's!".to_string() })
+            parse_dbus_signal(&reply_msg),
+            Some(MonitorSignal::NotificationReplied {
+                id: 15,
+                text: "Sounds good's!\nLine 2 [true]".to_string(),
+            })
         );
 
-        let closed_line = "/org/freedesktop/Notifications: org.freedesktop.Notifications.NotificationClosed (uint32 15, uint32 2)";
+        let closed_msg = zbus::message::Message::signal(
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+            "NotificationClosed",
+        )
+        .unwrap()
+        .build(&(15u32, 2u32))
+        .unwrap();
         assert_eq!(
-            parse_monitor_line(closed_line),
+            parse_dbus_signal(&closed_msg),
             Some(MonitorSignal::NotificationClosed { id: 15, reason: 2 })
         );
     }

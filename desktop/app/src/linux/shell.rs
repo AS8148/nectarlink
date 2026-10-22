@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Opening URLs, files, folders, and power actions (lock, sleep) on Linux via
-//! `xdg-open`, `dbus-send`, `loginctl`, and `systemctl`.
+//! `xdg-open`, D-Bus (`org.freedesktop.FileManager1`), `loginctl`, and `systemctl`.
 
 use std::{
     fs,
@@ -87,23 +87,17 @@ pub fn open_folder(path: &Path) -> Result<(), String> {
 pub fn select_in_explorer(path: &Path) -> Result<(), String> {
     let abs = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let file_uri = format!("file://{}", abs.to_string_lossy());
-    let array_arg = format!("array:string:{file_uri}");
-    let dbus_ok = Command::new("dbus-send")
-        .args([
-            "--session",
-            "--dest=org.freedesktop.FileManager1",
-            "--type=method_call",
-            "/org/freedesktop/FileManager1",
-            "org.freedesktop.FileManager1.ShowItems",
-            &array_arg,
-            "string:",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-    if dbus_ok {
+    if let Ok(conn) = zbus::blocking::Connection::session()
+        && conn
+            .call_method(
+                Some("org.freedesktop.FileManager1"),
+                "/org/freedesktop/FileManager1",
+                Some("org.freedesktop.FileManager1"),
+                "ShowItems",
+                &(vec![file_uri.as_str()], ""),
+            )
+            .is_ok()
+    {
         return Ok(());
     }
     let folder = abs.parent().unwrap_or(&abs);

@@ -430,6 +430,9 @@ fn run_setup_window(mode: setup::Mode) -> ExitCode {
     }
     bridge::setup::set_mode(mode);
     bridge::native::ffi::prepare_qt_without_log();
+    #[cfg(target_os = "linux")]
+    let mut app = bridge::native::ffi::create_qt_app();
+    #[cfg(not(target_os = "linux"))]
     let mut app = QGuiApplication::new();
     if let Some(mut app) = app.as_mut() {
         app.as_mut().set_application_name(&QString::from("NectarLink Setup"));
@@ -627,6 +630,9 @@ fn main() -> ExitCode {
     } else {
         bridge::native::ffi::prepare_qt();
     }
+    #[cfg(target_os = "linux")]
+    let mut app = bridge::native::ffi::create_qt_app();
+    #[cfg(not(target_os = "linux"))]
     let mut app = QGuiApplication::new();
     if let Some(mut app) = app.as_mut() {
         app.as_mut().set_application_name(&QString::from("Nectarlink"));

@@ -365,8 +365,11 @@ fn main() {
     let module = QmlModule::new("app.nectarlink")
         .qml_files(QML.iter().map(|f| QmlFile::from(*f)))
         .qml_files(QML_SINGLETONS.iter().map(|f| QmlFile::from(*f).singleton(true)));
-    CxxQtBuilder::new_qml_module(module)
-        .qt_module("Quick")
+    let mut builder = CxxQtBuilder::new_qml_module(module).qt_module("Quick");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        builder = builder.qt_module("Widgets");
+    }
+    builder
         .include_dir("cpp")
         .cpp_files([
             "cpp/app_helpers.cpp",
@@ -407,6 +410,7 @@ fn main() {
         println!("cargo:rustc-link-lib=user32");
     } else if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         println!("cargo:rustc-link-lib=Qt6Quick");
+        println!("cargo:rustc-link-lib=Qt6Widgets");
         println!(
             "cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN:$ORIGIN/lib:$ORIGIN/../lib:$ORIGIN/../lib/nectarlink/lib"
         );
