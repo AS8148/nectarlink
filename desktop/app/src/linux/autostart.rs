@@ -8,9 +8,29 @@ use std::{
 
 const DESKTOP_FILE_NAME: &str = "nectarlink.desktop";
 
+/// Escapes a single argument for placement inside double quotes (`"..."`) on a
+/// FreeDesktop `.desktop` `Exec=` line (`\`, `"`, `` ` ``, `$`, and literal `%`).
+pub(crate) fn escape_desktop_exec_arg(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        if c == '\n' || c == '\r' || c.is_control() {
+            continue;
+        }
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '`' => out.push_str("\\`"),
+            '$' => out.push_str("\\$"),
+            '%' => out.push_str("%%"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// The command line written into the autostart entry's `Exec=` line.
 pub fn command(exe: &Path) -> String {
-    format!("\"{}\" --minimized", exe.display())
+    format!("\"{}\" --minimized", escape_desktop_exec_arg(&exe.to_string_lossy()))
 }
 
 fn autostart_file_path_in(config_dir: &Path) -> PathBuf {
@@ -131,5 +151,14 @@ mod tests {
         assert!(is_installed(Path::new("/opt/nectarlink/nectarlink-desktop")));
         assert!(!is_installed(Path::new("/home/user/repo/target/debug/nectarlink-desktop")));
         assert!(!is_installed(Path::new("/home/user/repo/target/release/nectarlink-desktop")));
+    }
+
+    #[test]
+    fn command_escapes_desktop_entry_special_characters() {
+        let exe = Path::new("/opt/my \"quoted\" $dir`1`\\bin%20/nectarlink-desktop");
+        assert_eq!(
+            command(exe),
+            r#""/opt/my \"quoted\" \$dir\`1\`\\bin%%20/nectarlink-desktop" --minimized"#
+        );
     }
 }

@@ -33,6 +33,20 @@
 #include <malloc.h>
 #endif
 
+#ifdef __linux__
+#include <QtCore/QMetaObject>
+#include <QtCore/QThread>
+#include <QtGui/QAction>
+#include <QtGui/QClipboard>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QMenu>
+#include <QtWidgets/QSystemTrayIcon>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#endif
+
 namespace {
 QIcon &appIcon()
 {
@@ -537,4 +551,264 @@ uint64_t mac_free_space(rust::Str path, bool &ok)
         return 0;
     ok = true;
     return static_cast<uint64_t>(available);
+}
+
+#ifdef __linux__
+namespace {
+struct LinuxClipboardWatch {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::atomic<uint64_t> seq { 1 };
+};
+
+LinuxClipboardWatch &linuxClipboardWatch()
+{
+    static LinuxClipboardWatch watch;
+    return watch;
+}
+
+struct LinuxTrayState {
+    QPointer<QSystemTrayIcon> icon;
+    QPointer<QMenu> menu;
+    QPointer<QAction> findPhoneAction;
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::string> actions;
+};
+
+LinuxTrayState &linuxTray()
+{
+    static LinuxTrayState state;
+    return state;
+}
+
+void pushTrayAction(const char *action)
+{
+    auto &st = linuxTray();
+    {
+        std::lock_guard<std::mutex> lock(st.mutex);
+        st.actions.emplace_back(action);
+    }
+    st.cv.notify_all();
+}
+
+template <typename F>
+void runOnQtMainThread(F &&fn)
+{
+    QCoreApplication *app = QCoreApplication::instance();
+    if (!app)
+        return;
+    if (QThread::currentThread() == app->thread()) {
+        fn();
+    } else {
+        QMetaObject::invokeMethod(app, std::forward<F>(fn), Qt::QueuedConnection);
+    }
+}
+} // namespace
+#endif
+
+std::unique_ptr<QGuiApplication> create_qt_app()
+{
+    static int s_argc = 1;
+    static char s_arg0[] = "nectarlink";
+    static char *s_argv[] = { s_arg0, nullptr };
+#ifdef __linux__
+    auto app = std::unique_ptr<QGuiApplication>(new QApplication(s_argc, s_argv));
+    if (QClipboard *cb = QGuiApplication::clipboard()) {
+        QObject::connect(cb, &QClipboard::dataChanged, cb, []() {
+            linux_clipboard_notify_external();
+        });
+    }
+    return app;
+#else
+    return std::make_unique<QGuiApplication>(s_argc, s_argv);
+#endif
+}
+
+void linux_tray_setup(
+    rust::Str icon_path,
+    rust::Str tooltip,
+    rust::Str open_label,
+    rust::Str command_palette_label,
+    rust::Str shelf_label,
+    rust::Str take_photo_label,
+    rust::Str scan_document_label,
+    rust::Str find_phone_label,
+    rust::Str open_link_label,
+    rust::Str quit_label)
+{
+#ifdef __linux__
+    const QString iconPath = QString::fromUtf8(icon_path.data(), static_cast<qsizetype>(icon_path.size()));
+    const QString tooltipStr = QString::fromUtf8(tooltip.data(), static_cast<qsizetype>(tooltip.size()));
+    const QString openStr = QString::fromUtf8(open_label.data(), static_cast<qsizetype>(open_label.size()));
+    const QString paletteStr = QString::fromUtf8(command_palette_label.data(), static_cast<qsizetype>(command_palette_label.size()));
+    const QString shelfStr = QString::fromUtf8(shelf_label.data(), static_cast<qsizetype>(shelf_label.size()));
+    const QString photoStr = QString::fromUtf8(take_photo_label.data(), static_cast<qsizetype>(take_photo_label.size()));
+    const QString scanStr = QString::fromUtf8(scan_document_label.data(), static_cast<qsizetype>(scan_document_label.size()));
+    const QString findPhoneStr = QString::fromUtf8(find_phone_label.data(), static_cast<qsizetype>(find_phone_label.size()));
+    const QString openLinkStr = QString::fromUtf8(open_link_label.data(), static_cast<qsizetype>(open_link_label.size()));
+    const QString quitStr = QString::fromUtf8(quit_label.data(), static_cast<qsizetype>(quit_label.size()));
+
+    runOnQtMainThread([=]() {
+        if (!qobject_cast<QApplication *>(QCoreApplication::instance()))
+            return;
+        auto &st = linuxTray();
+        if (st.icon) {
+            st.icon->hide();
+            delete st.icon.data();
+        }
+        if (st.menu) {
+            delete st.menu.data();
+        }
+        {
+            std::lock_guard<std::mutex> lock(st.mutex);
+            st.actions.clear();
+        }
+
+        auto *menu = new QMenu();
+        QObject::connect(menu->addAction(openStr), &QAction::triggered, menu, []() { pushTrayAction("OPEN"); });
+        QObject::connect(menu->addAction(paletteStr), &QAction::triggered, menu, []() { pushTrayAction("COMMAND_PALETTE"); });
+        QObject::connect(menu->addAction(shelfStr), &QAction::triggered, menu, []() { pushTrayAction("SHELF"); });
+        menu->addSeparator();
+        QObject::connect(menu->addAction(photoStr), &QAction::triggered, menu, []() { pushTrayAction("TAKE_PHOTO"); });
+        QObject::connect(menu->addAction(scanStr), &QAction::triggered, menu, []() { pushTrayAction("SCAN_DOCUMENT"); });
+        QAction *findPhone = menu->addAction(findPhoneStr);
+        findPhone->setEnabled(false);
+        QObject::connect(findPhone, &QAction::triggered, menu, []() { pushTrayAction("FIND_PHONE"); });
+        QObject::connect(menu->addAction(openLinkStr), &QAction::triggered, menu, []() { pushTrayAction("OPEN_LINK"); });
+        menu->addSeparator();
+        QObject::connect(menu->addAction(quitStr), &QAction::triggered, menu, []() { pushTrayAction("QUIT"); });
+
+        auto *tray = new QSystemTrayIcon(QCoreApplication::instance());
+        QIcon icon = appIcon();
+        if (icon.isNull() && !iconPath.isEmpty())
+            icon = QIcon(iconPath);
+        tray->setIcon(icon);
+        tray->setToolTip(tooltipStr);
+        tray->setContextMenu(menu);
+        QObject::connect(tray, &QSystemTrayIcon::activated, tray, [](QSystemTrayIcon::ActivationReason reason) {
+            if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
+                pushTrayAction("OPEN");
+        });
+        tray->show();
+
+        st.icon = tray;
+        st.menu = menu;
+        st.findPhoneAction = findPhone;
+    });
+#else
+    (void)icon_path;
+    (void)tooltip;
+    (void)open_label;
+    (void)command_palette_label;
+    (void)shelf_label;
+    (void)take_photo_label;
+    (void)scan_document_label;
+    (void)find_phone_label;
+    (void)open_link_label;
+    (void)quit_label;
+#endif
+}
+
+void linux_tray_set_tooltip(rust::Str tooltip)
+{
+#ifdef __linux__
+    const QString tooltipStr = QString::fromUtf8(tooltip.data(), static_cast<qsizetype>(tooltip.size()));
+    runOnQtMainThread([tooltipStr]() {
+        if (auto *icon = linuxTray().icon.data())
+            icon->setToolTip(tooltipStr);
+    });
+#else
+    (void)tooltip;
+#endif
+}
+
+void linux_tray_set_find_phone_enabled(bool enabled)
+{
+#ifdef __linux__
+    runOnQtMainThread([enabled]() {
+        if (auto *act = linuxTray().findPhoneAction.data())
+            act->setEnabled(enabled);
+    });
+#else
+    (void)enabled;
+#endif
+}
+
+void linux_tray_teardown()
+{
+#ifdef __linux__
+    auto &st = linuxTray();
+    st.cv.notify_all();
+    runOnQtMainThread([]() {
+        auto &s = linuxTray();
+        if (s.icon) {
+            s.icon->hide();
+            delete s.icon.data();
+        }
+        if (s.menu) {
+            delete s.menu.data();
+        }
+        s.findPhoneAction = nullptr;
+    });
+#endif
+}
+
+rust::String linux_tray_wait_action(uint32_t timeout_ms)
+{
+#ifdef __linux__
+    auto &st = linuxTray();
+    std::unique_lock<std::mutex> lock(st.mutex);
+    if (st.actions.empty() && timeout_ms > 0) {
+        st.cv.wait_for(lock, std::chrono::milliseconds(timeout_ms));
+    }
+    if (!st.actions.empty()) {
+        std::string next = std::move(st.actions.front());
+        st.actions.pop_front();
+        return rust::String(next);
+    }
+#else
+    (void)timeout_ms;
+#endif
+    return rust::String();
+}
+
+uint64_t linux_clipboard_sequence()
+{
+#ifdef __linux__
+    return linuxClipboardWatch().seq.load(std::memory_order_acquire);
+#else
+    return 0;
+#endif
+}
+
+uint64_t linux_clipboard_wait_change(uint64_t last_seq, uint32_t timeout_ms)
+{
+#ifdef __linux__
+    auto &w = linuxClipboardWatch();
+    uint64_t cur = w.seq.load(std::memory_order_acquire);
+    if (cur != last_seq || timeout_ms == 0)
+        return cur;
+    std::unique_lock<std::mutex> lock(w.mutex);
+    w.cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&w, last_seq]() {
+        return w.seq.load(std::memory_order_acquire) != last_seq;
+    });
+    return w.seq.load(std::memory_order_acquire);
+#else
+    (void)last_seq;
+    (void)timeout_ms;
+    return 0;
+#endif
+}
+
+void linux_clipboard_notify_external()
+{
+#ifdef __linux__
+    auto &w = linuxClipboardWatch();
+    {
+        std::lock_guard<std::mutex> lock(w.mutex);
+        w.seq.fetch_add(1, std::memory_order_release);
+    }
+    w.cv.notify_all();
+#endif
 }

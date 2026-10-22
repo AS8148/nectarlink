@@ -4,6 +4,13 @@
 #include <rust/cxx.h>
 
 #include <cstdint>
+#include <memory>
+
+class QGuiApplication;
+
+// Creates the Qt application instance (`QApplication` on Linux so
+// `QSystemTrayIcon` and `QMenu` work; `QGuiApplication` elsewhere).
+std::unique_ptr<QGuiApplication> create_qt_app();
 
 // Qt setup that must happen before QGuiApplication is created.
 void prepare_qt();
@@ -62,3 +69,24 @@ bool mac_clipboard_write_text(rust::Str text, bool is_private);
 
 int64_t mac_local_offset_ms(int64_t at_ms);
 uint64_t mac_free_space(rust::Str path, bool &ok);
+
+// Linux QSystemTrayIcon + QMenu and QClipboard change notifications.
+void linux_tray_setup(
+    rust::Str icon_path,
+    rust::Str tooltip,
+    rust::Str open_label,
+    rust::Str command_palette_label,
+    rust::Str shelf_label,
+    rust::Str take_photo_label,
+    rust::Str scan_document_label,
+    rust::Str find_phone_label,
+    rust::Str open_link_label,
+    rust::Str quit_label);
+void linux_tray_set_tooltip(rust::Str tooltip);
+void linux_tray_set_find_phone_enabled(bool enabled);
+void linux_tray_teardown();
+rust::String linux_tray_wait_action(uint32_t timeout_ms);
+
+uint64_t linux_clipboard_sequence();
+uint64_t linux_clipboard_wait_change(uint64_t last_seq, uint32_t timeout_ms);
+void linux_clipboard_notify_external();

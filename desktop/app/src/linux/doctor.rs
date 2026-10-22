@@ -235,11 +235,45 @@ pub fn adapters() -> Adapters {
     Adapters { local_address, vpn }
 }
 
+/// Returns the names of optional session-relevant helper commands that are not
+/// currently installed on `PATH` (`wl-copy`/`wl-paste` on Wayland,
+/// `xclip`/`xdotool` on X11, and `xdg-open`, `nmcli`, `bluetoothctl`, `pkexec`).
+pub fn missing_tools() -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty()) {
+        for tool in ["wl-copy", "wl-paste"] {
+            if !has_command(tool) {
+                missing.push(tool);
+            }
+        }
+    }
+    if std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty()) {
+        for tool in ["xclip", "xdotool"] {
+            if !has_command(tool) {
+                missing.push(tool);
+            }
+        }
+    }
+    for tool in ["xdg-open", "nmcli", "bluetoothctl", "pkexec"] {
+        if !has_command(tool) {
+            missing.push(tool);
+        }
+    }
+    missing
+}
+
 pub fn fix_firewall(_exe: &Path) -> Result<bool> {
     if is_service_active("ufw") || has_command("ufw") {
         let status = super::elevated::run_elevated(
             Path::new("sh"),
-            &["-c", "ufw allow 7718/tcp && ufw allow 7718/udp && ufw allow 5353/udp"],
+            &[
+                "-c",
+                "for cidr in 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 fe80::/10; do \
+                   ufw allow from \"$cidr\" to any port 7718 proto tcp && \
+                   ufw allow from \"$cidr\" to any port 7718 proto udp && \
+                   ufw allow from \"$cidr\" to any port 5353 proto udp || exit 1; \
+                 done",
+            ],
         );
         return Ok(matches!(status, Ok(0)));
     }
@@ -253,17 +287,7 @@ pub fn fix_firewall(_exe: &Path) -> Result<bool> {
         );
         return Ok(matches!(status, Ok(0)));
     }
-    if is_service_active("nftables") {
-        let status = super::elevated::run_elevated(
-            Path::new("sh"),
-            &[
-                "-c",
-                "nft add rule inet filter input tcp dport 7718 accept; nft add rule inet filter input udp dport { 5353, 7718 } accept",
-            ],
-        );
-        return Ok(matches!(status, Ok(0)));
-    }
-    Ok(true)
+    Ok(false)
 }
 
 pub fn open_firewall_settings() -> bool {
@@ -309,6 +333,20 @@ To                         Action      From
 ";
         assert_eq!(
             parse_ufw_status(combined_allowed_output),
+            Some(Firewall { on: true, allowed: true, blocked: false })
+        );
+
+        let subnet_scoped_allowed_output = "\
+Status: active
+
+To                         Action      From
+--                         ------      ----
+7718/tcp                   ALLOW       192.168.0.0/16
+7718/udp                   ALLOW       192.168.0.0/16
+5353/udp                   ALLOW       192.168.0.0/16
+";
+        assert_eq!(
+            parse_ufw_status(subnet_scoped_allowed_output),
             Some(Firewall { on: true, allowed: true, blocked: false })
         );
 

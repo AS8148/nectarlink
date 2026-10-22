@@ -86,7 +86,8 @@ pub fn write(path: &Path, shortcut: &Shortcut) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let target = sanitize_single_line(&shortcut.target.to_string_lossy());
+    let raw_target = sanitize_single_line(&shortcut.target.to_string_lossy());
+    let exec_target = super::autostart::escape_desktop_exec_arg(&shortcut.target.to_string_lossy());
     let args = sanitize_single_line(&shortcut.arguments);
     let desc = sanitize_single_line(&shortcut.description);
 
@@ -95,10 +96,10 @@ pub fn write(path: &Path, shortcut: &Shortcut) -> Result<()> {
          Type=Application\n\
          Name=NectarLink\n\
          Comment={desc}\n\
-         Exec=\"{target}\" {args}\n\
+         Exec=\"{exec_target}\" {args}\n\
          Icon=nectarlink\n\
          Terminal=false\n\
-         X-NectarLink-Target={target}\n\
+         X-NectarLink-Target={raw_target}\n\
          X-NectarLink-Args={args}\n\
          X-NectarLink-Comment={desc}\n",
     );
@@ -263,7 +264,8 @@ pub fn write_file_manager_integrations(
         desired_nautilus.insert(label.clone());
         desired_desktop.insert(desktop_filename.clone());
 
-        let target = sanitize_shell_path(&sc.target.to_string_lossy());
+        let shell_target = sanitize_shell_path(&sc.target.to_string_lossy());
+        let exec_target = super::autostart::escape_desktop_exec_arg(&sc.target.to_string_lossy());
         let args = sanitize_exec_args(&sc.arguments);
         let comment = sanitize_single_line(&sc.description);
 
@@ -275,9 +277,9 @@ pub fn write_file_manager_integrations(
              if [ -n \"${{NAUTILUS_SCRIPT_SELECTED_FILE_PATHS:-}}\" ]; then\n\
                  IFS='\n'\n\
                  set -f\n\
-                 exec \"{target}\" {args} $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS\n\
+                 exec \"{shell_target}\" {args} $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS\n\
              else\n\
-                 exec \"{target}\" {args} \"$@\"\n\
+                 exec \"{shell_target}\" {args} \"$@\"\n\
              fi\n",
         );
         write_file_nofollow(&nautilus_path, &script, 0o755)?;
@@ -294,7 +296,7 @@ pub fn write_file_manager_integrations(
              [Desktop Action NectarLinkSend_{dev_id}]\n\
              Name={label}\n\
              Icon=nectarlink\n\
-             Exec=\"{target}\" {args} %F\n"
+             Exec=\"{exec_target}\" {args} %F\n"
         );
         write_file_nofollow(&kio_path, &kio_content, 0o644)?;
 
@@ -310,7 +312,7 @@ pub fn write_file_manager_integrations(
              \n\
              [X-Action-Profile profile-zero]\n\
              MimeTypes=all/allfiles;\n\
-             Exec=\"{target}\" {args} %F\n\
+             Exec=\"{exec_target}\" {args} %F\n\
              Name=Default profile\n",
         );
         write_file_nofollow(&action_path, &action_content, 0o644)?;

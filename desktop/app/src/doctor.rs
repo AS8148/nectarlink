@@ -55,6 +55,9 @@ pub struct Facts {
     pub firewall: Option<windows_checks::Firewall>,
     /// Paired devices: link and discovery diagnostics.
     pub devices: Vec<DeviceFact>,
+    /// Optional helper tools missing from `PATH` on Linux.
+    #[cfg(target_os = "linux")]
+    pub missing_tools: Vec<&'static str>,
 }
 
 /// Asks Windows and the core (blocking; call on a worker thread).
@@ -81,7 +84,15 @@ pub fn gather() -> Facts {
             })
             .collect()
     });
-    Facts { local_address: adapters.local_address, vpn: adapters.vpn, networks, firewall, devices }
+    Facts {
+        local_address: adapters.local_address,
+        vpn: adapters.vpn,
+        networks,
+        firewall,
+        devices,
+        #[cfg(target_os = "linux")]
+        missing_tools: windows_checks::missing_tools(),
+    }
 }
 
 /// A network's name as people say it. While Windows is still identifying
@@ -263,6 +274,20 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         ));
     }
 
+    #[cfg(target_os = "linux")]
+    if !facts.missing_tools.is_empty() {
+        let list = facts.missing_tools.join(", ");
+        checks.push(check(
+            "linux-tools",
+            Outcome::Warn,
+            format!("Optional helper tools not found: {list}"),
+            format!(
+                "Install {list} with your package manager for full clipboard, window focus, Wi-Fi hotspot, BLE discovery, and firewall setup support."
+            ),
+            None,
+        ));
+    }
+
     // Each phone.
     for (i, d) in facts.devices.iter().enumerate() {
         let name = &d.name;
@@ -428,6 +453,8 @@ mod tests {
             networks: vec![("Home".into(), true)],
             firewall: Some(windows_checks::Firewall { on: true, allowed: true, blocked: false }),
             devices: vec![device_fact("Pixel", LinkState::Online { path: ConnectionPath::Lan, rtt_ms: 4 })],
+            #[cfg(target_os = "linux")]
+            missing_tools: Vec::new(),
         }
     }
 

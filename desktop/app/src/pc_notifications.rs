@@ -4,11 +4,7 @@
 //! Settings (default `false`, privacy-first).
 
 #[cfg(target_os = "linux")]
-use std::{
-    io::{BufRead, BufReader},
-    process::{Command, Stdio},
-    sync::OnceLock,
-};
+use std::sync::OnceLock;
 use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
@@ -165,7 +161,42 @@ pub fn forward_to_phones(app_name: &str, title: &str, text: &str) -> bool {
     true
 }
 
-/// Starts a background listener for desktop notifications on Linux via `dbus-monitor`.
+/// Deserializes a Freedesktop `org.freedesktop.Notifications.Notify` D-Bus method call
+/// message into `(app_name, summary, body)`, preserving multi-line notification bodies.
+#[cfg(any(target_os = "linux", test))]
+pub fn extract_notify_call(msg: &zbus::message::Message) -> Option<(String, String, String)> {
+    let header = msg.header();
+    if header.message_type() != zbus::message::Type::MethodCall {
+        return None;
+    }
+    if header.interface().map(|i| i.as_str()) != Some("org.freedesktop.Notifications") {
+        return None;
+    }
+    if header.member().map(|m| m.as_str()) != Some("Notify") {
+        return None;
+    }
+    type NotifyBody = (
+        String,
+        u32,
+        String,
+        String,
+        String,
+        Vec<String>,
+        std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+        i32,
+    );
+    let (app_name, _replaces_id, _app_icon, summary, body, _actions, _hints, _timeout) =
+        msg.body().deserialize::<NotifyBody>().ok()?;
+    let app_name = app_name.trim().to_string();
+    let summary = summary.trim().to_string();
+    let body = body.trim().to_string();
+    if summary.is_empty() && body.is_empty() {
+        return None;
+    }
+    Some((app_name, summary, body))
+}
+
+/// Starts a background listener for desktop notifications on Linux via `zbus`.
 #[cfg(target_os = "linux")]
 pub fn start_listener() {
     LISTENER_STARTED.get_or_init(|| {
@@ -177,61 +208,49 @@ pub fn start_listener() {
 
 #[cfg(target_os = "linux")]
 fn dbus_monitor_loop() {
-    let Ok(mut child) = Command::new("dbus-monitor")
-        .args(["--session", "type='method_call',interface='org.freedesktop.Notifications',member='Notify'"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return;
-    };
+    use std::time::Duration;
 
-    let Some(stdout) = child.stdout.take() else {
-        return;
-    };
-
-    let reader = BufReader::new(stdout);
-    let mut current_block = String::new();
-    let mut in_notify = false;
-    let mut string_count = 0usize;
-
-    for line in reader.lines().map_while(Result::ok) {
-        let trimmed = line.trim();
-        if trimmed.contains("member=Notify") {
-            if in_notify && let Some((app, title, body)) = parse_dbus_notify_line(&current_block) {
-                let _ = forward_pc_toast(&app, &title, &body);
-            }
-            current_block.clear();
-            in_notify = true;
-            string_count = 0;
-            current_block.push_str(trimmed);
-            current_block.push(' ');
+    loop {
+        if !settings::forward_pc_notifications_to_phone() {
+            std::thread::sleep(Duration::from_secs(1));
             continue;
         }
 
-        if in_notify {
-            if trimmed.starts_with("string \"") {
-                current_block.push_str(trimmed);
-                current_block.push(' ');
-                string_count += 1;
-                if string_count >= 4 {
-                    if let Some((app, title, body)) = parse_dbus_notify_line(&current_block) {
+        let Ok(conn) = zbus::blocking::Connection::session() else {
+            std::thread::sleep(Duration::from_secs(5));
+            continue;
+        };
+
+        let rules = vec!["type='method_call',interface='org.freedesktop.Notifications',member='Notify'"];
+        if conn
+            .call_method(
+                Some("org.freedesktop.DBus"),
+                "/org/freedesktop/DBus",
+                Some("org.freedesktop.DBus.Monitoring"),
+                "BecomeMonitor",
+                &(rules, 0u32),
+            )
+            .is_err()
+        {
+            std::thread::sleep(Duration::from_secs(5));
+            continue;
+        }
+
+        for msg in zbus::blocking::MessageIterator::from(conn) {
+            if !settings::forward_pc_notifications_to_phone() {
+                break;
+            }
+            match msg {
+                Ok(msg) => {
+                    if let Some((app, title, body)) = extract_notify_call(&msg) {
                         let _ = forward_pc_toast(&app, &title, &body);
                     }
-                    current_block.clear();
-                    in_notify = false;
-                    string_count = 0;
                 }
-            } else if trimmed.starts_with("method call") || trimmed.starts_with("signal ") {
-                if let Some((app, title, body)) = parse_dbus_notify_line(&current_block) {
-                    let _ = forward_pc_toast(&app, &title, &body);
-                }
-                current_block.clear();
-                in_notify = false;
-                string_count = 0;
+                Err(_) => break,
             }
         }
+
+        std::thread::sleep(Duration::from_secs(2));
     }
 }
 
@@ -284,5 +303,39 @@ mod tests {
     fn forward_pc_toast_ignores_self_and_empty() {
         assert!(!forward_pc_toast("NectarLink", "Connected", "Pixel 9"));
         assert!(!forward_pc_toast("Firefox", "   ", ""));
+    }
+
+    #[test]
+    fn extract_notify_call_preserves_multiline_body() {
+        let hints: std::collections::HashMap<&str, zbus::zvariant::Value<'_>> =
+            std::collections::HashMap::new();
+        let actions: Vec<&str> = vec!["default", "Open"];
+        let msg = zbus::message::Message::method_call("/org/freedesktop/Notifications", "Notify")
+            .unwrap()
+            .interface("org.freedesktop.Notifications")
+            .unwrap()
+            .destination("org.freedesktop.Notifications")
+            .unwrap()
+            .build(&(
+                "Signal Desktop",
+                0u32,
+                "signal-desktop",
+                "Alice",
+                "Hey there!\nAre we still on for 7pm?\nLet me know.",
+                actions,
+                hints,
+                -1i32,
+            ))
+            .unwrap();
+
+        let extracted = extract_notify_call(&msg);
+        assert_eq!(
+            extracted,
+            Some((
+                "Signal Desktop".to_string(),
+                "Alice".to_string(),
+                "Hey there!\nAre we still on for 7pm?\nLet me know.".to_string(),
+            ))
+        );
     }
 }

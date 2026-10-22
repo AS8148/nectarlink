@@ -134,13 +134,18 @@ fn stop_bluetoothctl_advertisement(child: Option<Child>) {
 }
 
 fn is_adapter_powered() -> bool {
-    if let Ok(out) = Command::new("busctl")
-        .args(["--system", "get-property", "org.bluez", "/org/bluez/hci0", "org.bluez.Adapter1", "Powered"])
-        .output()
-        && out.status.success()
+    if let Ok(conn) = zbus::blocking::Connection::system()
+        && let Ok(reply) = conn.call_method(
+            Some("org.bluez"),
+            "/org/bluez/hci0",
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &("org.bluez.Adapter1", "Powered"),
+        )
+        && let Ok(val) = reply.body().deserialize::<zbus::zvariant::OwnedValue>()
+        && let Ok(powered) = bool::try_from(val)
     {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        return stdout.trim().ends_with("true");
+        return powered;
     }
     if let Ok(out) = Command::new("bluetoothctl").arg("show").output()
         && out.status.success()
