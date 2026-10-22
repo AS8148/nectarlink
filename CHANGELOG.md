@@ -4,10 +4,30 @@ All notable changes to NectarLink. Versions follow
 [semantic versioning](https://semver.org); before 1.0, a minor version may
 change things that need a step from you, and its notes say so.
 
-## Unreleased
+## 0.1.5 (2026-10-23)
+
+Play on phone, the phone as a microphone, photo backup, pairing a phone
+with a tablet, German and a language setting on both apps, and the first
+Windows installer for ARM64 PCs. The PC app also builds on macOS, as a preview.
+
+### Downloads
+
+| Download | For | Needs |
+|---|---|---|
+| [Nectarlink-0.1.5-x64-setup.exe](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-x64-setup.exe) | Windows on Intel or AMD | Windows 11, 64-bit (Windows 10 works, without Phone as webcam) |
+| [Nectarlink-0.1.5-arm64-setup.exe](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-arm64-setup.exe) | Windows on ARM | Windows 11 on ARM (Snapdragon) |
+| [Nectarlink-0.1.5-android.apk](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-android.apk) | Android | Android 8.0 or newer |
+
+All three are listed with their SHA-256 hashes in [SHA256SUMS.txt](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/SHA256SUMS.txt).
+Installed copies update themselves.
 
 ### New
 
+- **A Windows installer for ARM64 PCs**, so Snapdragon PCs run NectarLink
+  natively instead of through emulation. Both installers update
+  themselves to their own kind. Thanks to
+  [@HosseinDianati](https://github.com/HosseinDianati)
+  ([#14](https://github.com/thtbee/nectarlink/pull/14)).
 - **The PC app on macOS, as a preview.** It builds and runs on macOS 14
   and later with pairing, files and folders, the photos browser,
   Continuity Camera, calls and SMS, the phone's toggles and volume,
@@ -27,7 +47,8 @@ change things that need a step from you, and its notes say so.
   browsers. A video file playing in VLC, Media Player or another desktop
   player plays on the phone itself, read from the PC at its full quality,
   from where the PC was; the PC pauses. Tap the notification on the phone
-  to watch.
+  to watch; the phone's player has play and pause, back and forward 10
+  seconds, and a seek bar.
   The PC mutes its speakers while you watch and turns them back on after
   (**Settings › Camera & Audio** to keep them on).
   Scripts can do the same through the local API
@@ -44,9 +65,9 @@ change things that need a step from you, and its notes say so.
   with Start and Not now, so it's seen with notifications off; Not now
   tells the PC, which stops waiting, and so does a request left unanswered
   for two minutes. It can also be started from the phone: **Use phone as
-microphone** sits under Use phone as speaker on Home. While it's on, Home
-has a Stop button. Choosing another
-  output on the PC moves the sound there right away, and **Use this phone
+  microphone** sits under Use phone as speaker on Home. While it's on, Home
+  has a Stop button. Choosing another output on the PC moves the sound
+  there right away, and **Use this phone
   as a microphone** in the phone's Settings, for each PC, turns asking off
   for that PC. Thanks to Jochen Kirstätter for finding the gaps.
 - **Photo backup.** In **Settings › Files & Sync**, turn on Photo backup
@@ -79,6 +100,13 @@ has a Stop button. Choosing another
   Features guide are translated too, with the timeline's wording from
   [@zzz1465720680](https://github.com/zzz1465720680)
   ([#18](https://github.com/thtbee/nectarlink/pull/18)).
+- **Pick the app's language** on the PC in **Settings › General ›
+  Language**, and on the phone in **Settings › Appearance › Language**
+  (Android 13 and newer; the phone's own Settings › Apps › NectarLink ›
+  Language works too). Both follow the system until you pick one.
+- **Both apps speak German.** Dates, file sizes and speeds also follow
+  the language's own formats now, in every language. Thanks to Jochen
+  Kirstätter ([#40](https://github.com/thtbee/nectarlink/pull/40)).
 
 ### Changed
 
@@ -95,8 +123,33 @@ has a Stop button. Choosing another
   monitor, at the same size and place, and maximized if it was. If that
   monitor is gone or smaller, it fits the window on screen. Thanks to
   Jochen Kirstätter ([#26](https://github.com/thtbee/nectarlink/issues/26)).
+- **App windows show a small badge while the phone's sound is muted**,
+  instead of keeping their whole toolbar over the picture.
+- **Groundwork for the PC app on Linux.** It builds and packages there,
+  with more of it coming in the next releases; there's no Linux download
+  yet. Thanks to Jochen Kirstätter
+  ([#34](https://github.com/thtbee/nectarlink/pull/34)).
 
 ### Fixed
+
+- Certificate checks on the connections to relays and for DNS could
+  trust certificates that were distrusted (RUSTSEC-2026-0381, 0382 and
+  0383). Pairing and the connection between your devices use their own
+  keys and weren't affected.
+- The phone couldn't read its network's DNS servers and used public ones,
+  which some networks block, so connecting away from home could fail
+  there.
+- LocalSend devices that went away stayed in the list until LocalSend was
+  turned off. Now a device that stops answering drops off within about a
+  minute.
+- The phone's notification for a running transfer updated a few times a
+  second, so it and the status bar chip flickered. It now updates about
+  once a second.
+- On Android 14 and newer, the connection notification could be swiped
+  away and then didn't come back, so its Send files and Send clipboard
+  buttons were gone. Opening the app now brings it back.
+- A transfer on the phone's Home now has its progress bar and details at
+  full width under the name and buttons, with the percentage at the end.
 
 - With NectarLink in two profiles on one phone (a work profile, or a
   cloned app), only one of them could connect over USB, and the PC kept
@@ -137,6 +190,18 @@ has a Stop button. Choosing another
 - The "sharing your screen" bar had no background.
 - The PC's log filled with network adapter warnings and kept only a few
   hours.
+
+### Thanks
+
+To [@zzz1465720680](https://github.com/zzz1465720680) for the Windows
+translation and the timeline's wording,
+[@saivinay1805](https://github.com/saivinay1805) for the macOS preview,
+[@jochenkirstaetter](https://github.com/jochenkirstaetter) for the German
+translation, the Linux groundwork, the USB and clipboard fixes, the window position and the
+Timeline thumbnails, [@Abinanthan-CG](https://github.com/Abinanthan-CG)
+for turning off the background connection,
+[@HosseinDianati](https://github.com/HosseinDianati) for the ARM64
+installer, and everyone who tested and reported problems.
 
 ## 0.1.4 (2026-10-17)
 
