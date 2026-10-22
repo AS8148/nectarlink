@@ -70,10 +70,12 @@ Item {
         const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)
         if (date.toDateString() === today.toDateString()) return qsTr("Today")
         if (date.toDateString() === yesterday.toDateString()) return qsTr("Yesterday")
-        return date.toLocaleDateString(
-            Qt.locale(),
-            date.getFullYear() === today.getFullYear() ? "dddd, d MMMM" : Locale.LongFormat
-        )
+        const locale = Qt.locale()
+        if (date.getFullYear() !== today.getFullYear())
+            return date.toLocaleDateString(locale, Locale.LongFormat)
+        const pattern = locale.dateFormat(Locale.LongFormat)
+            .replace(/\s*yyyy\s*(?:'年'|年)\s*|[,\s]+yyyy\b|\byyyy[,\s]+/g, "")
+        return date.toLocaleDateString(locale, pattern)
     }
 
     function shortDayLabel(ms) {
@@ -83,10 +85,13 @@ Item {
         const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)
         if (date.toDateString() === today.toDateString()) return qsTr("Today")
         if (date.toDateString() === yesterday.toDateString()) return qsTr("Yesterday")
-        return date.toLocaleDateString(
-            Qt.locale(),
-            date.getFullYear() === today.getFullYear() ? "d MMM" : "d MMM yyyy"
-        )
+        const locale = Qt.locale()
+        let pattern = locale.dateFormat(Locale.LongFormat)
+            .replace(/dddd[,\s]*|[,\s]*dddd/g, "")
+            .replace(/MMMM/g, "MMM")
+        if (date.getFullYear() === today.getFullYear())
+            pattern = pattern.replace(/\s*yyyy\s*(?:'年'|年)\s*|[,\s]+yyyy\b|\byyyy[,\s]+/g, "")
+        return date.toLocaleDateString(locale, pattern)
     }
 
     function formatVideoDuration(ms) {
