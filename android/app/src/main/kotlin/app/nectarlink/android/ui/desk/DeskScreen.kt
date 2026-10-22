@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -72,7 +73,6 @@ import app.nectarlink.core.Link
 import app.nectarlink.core.MediaAction
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -508,7 +508,7 @@ private fun DeskClockDisplay() {
         }
     }
 
-    val locale = Locale.getDefault()
+    val locale = LocalLocale.current.platformLocale
     val timeFormat = remember(locale) { SimpleDateFormat("HH:mm", locale) }
     val secFormat = remember(locale) { SimpleDateFormat(":ss", locale) }
     val dateFormat = remember(locale) {
