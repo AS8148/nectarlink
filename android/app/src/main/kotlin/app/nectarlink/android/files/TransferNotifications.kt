@@ -40,7 +40,7 @@ internal object TransferNotifications {
         )
     }
 
-    private val lastPosted = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Int>>()
+    private val throttle = ProgressThrottle()
 
     private fun idOf(transfer: Transfer) = transfer.id.hashCode()
 
@@ -52,7 +52,7 @@ internal object TransferNotifications {
         val manager = NotificationManagerCompat.from(context)
         val status = transfer.status
         if (status !is TransferStatus.Running && status !is TransferStatus.Waiting && status !is TransferStatus.Paused) {
-            lastPosted.remove(transfer.id)
+            throttle.forget(transfer.id)
             manager.cancel(idOf(transfer))
             if (status is TransferStatus.Failed) failed(context, transfer, pcName)
             if (status is TransferStatus.Done && transfer.direction == TransferDirection.OUTGOING && !transfer.recording) {
@@ -67,13 +67,9 @@ internal object TransferNotifications {
         }
         val now = android.os.SystemClock.elapsedRealtime()
         if (status is TransferStatus.Running) {
-            val prev = lastPosted[transfer.id]
-            if (prev != null && (now - prev.first) < 250L && (percent == prev.second || (now - prev.first) < 180L)) {
-                return
-            }
-            lastPosted[transfer.id] = now to percent
+            if (!throttle.shouldPost(transfer.id, percent, now)) return
         } else {
-            lastPosted.remove(transfer.id)
+            throttle.forget(transfer.id)
         }
         val incoming = transfer.direction == TransferDirection.INCOMING
         val sizeProgress = if (transfer.total > 0uL) {
@@ -214,6 +210,35 @@ internal object TransferNotifications {
             return
         }
         NotificationManagerCompat.from(context).notify(id, notification)
+    }
+
+    /**
+     * When a running transfer's notification is worth posting again. Each post
+     * redraws it, and on Android 16 the status bar chip too, so posting a few
+     * times a second makes both flicker; Android also drops posts past about
+     * five a second. A changed percent posts at most once a second, and an
+     * unchanged one every few seconds so the sizes stay current.
+     */
+    internal class ProgressThrottle(
+        private val minGapMs: Long = 1_000L,
+        private val refreshMs: Long = 5_000L,
+    ) {
+        private val last = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Int>>()
+
+        /** Whether [id] at [percent] should be posted at [nowMs]; records it if so. */
+        fun shouldPost(id: String, percent: Int, nowMs: Long): Boolean {
+            val prev = last[id]
+            if (prev != null) {
+                val gap = nowMs - prev.first
+                if (gap < minGapMs || (percent == prev.second && gap < refreshMs)) return false
+            }
+            last[id] = nowMs to percent
+            return true
+        }
+
+        fun forget(id: String) {
+            last.remove(id)
+        }
     }
 
     /** "Cancel" on a progress notification. */
