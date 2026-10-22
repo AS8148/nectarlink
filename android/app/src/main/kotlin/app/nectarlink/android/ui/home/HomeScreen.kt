@@ -2798,36 +2798,59 @@ private fun TransferRow(
             else -> stringResource(R.string.transfer_failed)
         }
     }
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val active = status is TransferStatus.Running || status is TransferStatus.Waiting || status is TransferStatus.Paused
+    // Title and buttons share a row; the bar and the detail line below run
+    // the card's full width, so they line up from one transfer to the next.
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (status is TransferStatus.Running || status is TransferStatus.Waiting || status is TransferStatus.Paused) {
-                    Spacer(Modifier.height(6.dp))
-                    val reducedMotion = LocalReducedMotion.current
-                    val progress = if (transfer.total == 0uL) {
-                        if (status is TransferStatus.Paused) 0f else if (reducedMotion) 0.5f else 1f
-                    } else {
-                        (transfer.done.toDouble() / transfer.total.toDouble()).toFloat()
-                    }
-                    val isPaused = status is TransferStatus.Paused
-                    val barAlpha = if (isPaused) 0.5f else 1f
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = barAlpha),
-                        trackColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = barAlpha),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
             if (status is TransferStatus.Running || status is TransferStatus.Waiting) {
                 TextButton(onClick = { onPause(transfer.id) }) { Text(stringResource(R.string.transfer_pause)) }
                 TextButton(onClick = { onCancel(transfer.id) }) { Text(stringResource(R.string.action_cancel)) }
             } else if (status is TransferStatus.Paused) {
                 TextButton(onClick = { onResume(transfer.id) }) { Text(stringResource(R.string.transfer_resume)) }
                 TextButton(onClick = { onCancel(transfer.id) }) { Text(stringResource(R.string.action_cancel)) }
+            }
+        }
+        val known = transfer.total > 0uL
+        if (active) {
+            val reducedMotion = LocalReducedMotion.current
+            val progress = if (!known) {
+                if (status is TransferStatus.Paused) 0f else if (reducedMotion) 0.5f else 1f
+            } else {
+                (transfer.done.toDouble() / transfer.total.toDouble()).toFloat().coerceIn(0f, 1f)
+            }
+            val barAlpha = if (status is TransferStatus.Paused) 0.5f else 1f
+            LinearProgressIndicator(
+                progress = { progress },
+                color = MaterialTheme.colorScheme.primary.copy(alpha = barAlpha),
+                trackColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = barAlpha),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (active && known) {
+                val percent = (transfer.done.toDouble() / transfer.total.toDouble() * 100).toInt().coerceIn(0, 100)
+                Text(
+                    "$percent%",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 12.dp),
+                )
             }
         }
         if (status is TransferStatus.Requested) {
