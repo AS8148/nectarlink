@@ -29,7 +29,7 @@ Item {
         let value = bytes / 1024
         let unit = 0
         while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++ }
-        return units[unit].arg(value < 10 ? value.toFixed(1) : Math.round(value))
+        return units[unit].arg(value < 10 ? Qt.locale().toString(value, "f", 1) : Math.round(value))
     }
 
     function detail() {
