@@ -54,7 +54,16 @@ mkdir -p \
     "${PKG_ROOT}/usr/share/icons/hicolor/scalable/apps"
 
 install -m 0755 "${BIN_PATH}" "${PKG_ROOT}/usr/lib/nectarlink/nectarlink-desktop"
-ln -sf ../lib/nectarlink/nectarlink-desktop "${PKG_ROOT}/usr/bin/nectarlink-desktop"
+cat > "${PKG_ROOT}/usr/bin/nectarlink-desktop" <<'EOF'
+#!/usr/bin/env sh
+if [ -d /usr/lib/nectarlink/lib ]; then
+    export LD_LIBRARY_PATH="/usr/lib/nectarlink/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    export QT_PLUGIN_PATH="/usr/lib/nectarlink/plugins${QT_PLUGIN_PATH:+:${QT_PLUGIN_PATH}}"
+    export QML2_IMPORT_PATH="/usr/lib/nectarlink/qml${QML2_IMPORT_PATH:+:${QML2_IMPORT_PATH}}"
+fi
+exec /usr/lib/nectarlink/nectarlink-desktop "$@"
+EOF
+chmod 0755 "${PKG_ROOT}/usr/bin/nectarlink-desktop"
 
 for qm in "$(dirname "${BIN_PATH}")"/nectarlink_*.qm; do
     if [[ -f "${qm}" ]]; then
@@ -77,7 +86,7 @@ QT_DEPENDS=""
 bundle_private_qt_if_needed() {
     local qmake_bin="${QMAKE:-}"
     if [[ -z "${qmake_bin}" || ! -x "${qmake_bin}" ]]; then
-        QT_DEPENDS=", libqt6core6t64 | libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6network6, libqt6opengl6, libqt6dbus6, libqt6svg6, qml6-module-qtquick, qml6-module-qtquick-Window, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtqml-workerscript"
+        QT_DEPENDS=", libqt6core6t64 | libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6network6, libqt6opengl6, libqt6dbus6, libqt6svg6, qml6-module-qtquick, qml6-module-qtquick-window, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtqml-workerscript"
         return 0
     fi
     local qt_libs qt_plugins qt_qml
@@ -165,7 +174,7 @@ Priority: optional
 Architecture: ${DEB_ARCH}
 Installed-Size: ${INSTALLED_SIZE}
 Depends: libc6, libgcc-s1, libstdc++6, libgl1, libx11-6, libxcb1, libxkbcommon0, libwayland-client0, libfontconfig1, libfreetype6, libdbus-1-3${QT_DEPENDS}
-Recommends: ffmpeg, libopenh264-7 | libopenh264-6, pulseaudio-utils, pipewire, wl-clipboard, xclip, xdotool, xdg-utils, network-manager, avahi-daemon, bluez, v4l2loopback-dkms, policykit-1 | pkexec
+Recommends: fuse3, curl | wget, ffmpeg, gstreamer1.0-tools, gstreamer1.0-pipewire, gstreamer1.0-plugins-base, libopenh264-8 | libopenh264-7 | libopenh264-6 | libavcodec62 | libavcodec61 | libavcodec60, pipewire-bin | pulseaudio-utils, pipewire, wl-clipboard, xclip, xdg-utils, avahi-daemon, bluez, v4l2loopback-dkms, policykit-1 | pkexec
 Maintainer: thtbee <https://github.com/thtbee/nectarlink>
 Homepage: https://github.com/thtbee/nectarlink
 Description: Connect your Android phone and Linux PC over LAN

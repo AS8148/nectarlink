@@ -6,11 +6,12 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 static RINGING: AtomicBool = AtomicBool::new(false);
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 static ACTIVE_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 
 const MAX_RING_DURATION: Duration = Duration::from_secs(60);
@@ -128,9 +129,12 @@ pub fn start_ringing() {
     if RINGING.swap(true, Ordering::SeqCst) {
         return;
     }
-    let _ = thread::Builder::new().name("nectarlink-alarm".into()).spawn(|| {
+    let my_gen = GENERATION.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    let _ = thread::Builder::new().name("nectarlink-alarm".into()).spawn(move || {
         let Some(wav_path) = alarm_wav_path() else {
-            RINGING.store(false, Ordering::SeqCst);
+            if GENERATION.load(Ordering::SeqCst) == my_gen {
+                RINGING.store(false, Ordering::SeqCst);
+            }
             return;
         };
         let wav_bytes = generate_alarm_wav(1000, 48_000);
@@ -150,19 +154,49 @@ pub fn start_ringing() {
         }
 
         let started = Instant::now();
-        while RINGING.load(Ordering::SeqCst) && started.elapsed() < MAX_RING_DURATION {
-            if let Some(child) = spawn_alarm_player(&wav_path) {
-                if let Ok(mut guard) = ACTIVE_CHILD.lock() {
-                    *guard = Some(child);
+        while RINGING.load(Ordering::SeqCst)
+            && GENERATION.load(Ordering::SeqCst) == my_gen
+            && started.elapsed() < MAX_RING_DURATION
+        {
+            if let Some(mut child) = spawn_alarm_player(&wav_path) {
+                let stored = if let Ok(mut guard) = ACTIVE_CHILD.lock() {
+                    if let Some(mut prev) = guard.take() {
+                        let _ = prev.kill();
+                        let _ = prev.wait();
+                    }
+                    if RINGING.load(Ordering::SeqCst) && GENERATION.load(Ordering::SeqCst) == my_gen {
+                        *guard = Some(child);
+                        true
+                    } else {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        false
+                    }
+                } else {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    false
+                };
+                if !stored {
+                    break;
                 }
                 loop {
-                    if !RINGING.load(Ordering::SeqCst) || started.elapsed() >= MAX_RING_DURATION {
+                    if !RINGING.load(Ordering::SeqCst)
+                        || GENERATION.load(Ordering::SeqCst) != my_gen
+                        || started.elapsed() >= MAX_RING_DURATION
+                    {
                         kill_active_child();
                         break;
                     }
                     let finished = if let Ok(mut guard) = ACTIVE_CHILD.lock() {
                         if let Some(c) = guard.as_mut() {
-                            matches!(c.try_wait(), Ok(Some(_)) | Err(_))
+                            match c.try_wait() {
+                                Ok(Some(_)) | Err(_) => {
+                                    let _ = guard.take();
+                                    true
+                                }
+                                Ok(None) => false,
+                            }
                         } else {
                             true
                         }
@@ -178,20 +212,43 @@ pub fn start_ringing() {
 
             let step = Duration::from_millis(50);
             let mut waited = Duration::ZERO;
-            while waited < RING_PAUSE && RINGING.load(Ordering::SeqCst) {
+            while waited < RING_PAUSE
+                && RINGING.load(Ordering::SeqCst)
+                && GENERATION.load(Ordering::SeqCst) == my_gen
+            {
                 thread::sleep(step);
                 waited += step;
             }
         }
-        kill_active_child();
-        let _ = std::fs::remove_file(&wav_path);
-        RINGING.store(false, Ordering::SeqCst);
+        if GENERATION.load(Ordering::SeqCst) == my_gen {
+            kill_active_child();
+            let _ = std::fs::remove_file(&wav_path);
+            RINGING.store(false, Ordering::SeqCst);
+        }
     });
 }
 
 pub fn stop_ringing() {
     RINGING.store(false, Ordering::SeqCst);
+    GENERATION.fetch_add(1, Ordering::SeqCst);
     kill_active_child();
+}
+
+/// Plays a short non-blocking notification chime on a background thread and
+/// reaps the player process so no zombie child is left behind.
+#[allow(dead_code)]
+pub fn play_chime() {
+    let _ = thread::Builder::new().name("nectarlink-chime".into()).spawn(|| {
+        if let Ok(mut child) = Command::new("canberra-gtk-play")
+            .args(["-i", "message-new-instant"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            let _ = child.wait();
+        }
+    });
 }
 
 #[cfg(test)]

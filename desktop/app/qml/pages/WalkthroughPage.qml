@@ -189,7 +189,9 @@ FocusScope {
         if (AppController.doctorBusy)
             return "Checking firewall and local network..."
         if (parsedDoctorChecks.length === 0)
-            return "Run a quick check to verify Windows Firewall and local discovery."
+            return Qt.platform.os === "linux"
+                ? "Run a quick check to verify your firewall and local discovery."
+                : "Run a quick check to verify Windows Firewall and local discovery."
         let problems = 0
         for (let i = 0; i < parsedDoctorChecks.length; i++) {
             if (parsedDoctorChecks[i].status !== "ok")
@@ -1461,15 +1463,19 @@ FocusScope {
 
                                         Txt {
                                             Layout.fillWidth: true
-                                            text: qsTr("Windows notifications")
+                                            text: Qt.platform.os === "linux" ? qsTr("Desktop notifications") : qsTr("Windows notifications")
                                             role: "title"
                                         }
 
                                         Txt {
                                             Layout.fillWidth: true
                                             text: AppController.toastsEnabled
-                                                ? "Enabled in Windows Settings."
-                                                : "Notifications are off for NectarLink in Windows Settings."
+                                                ? (Qt.platform.os === "linux"
+                                                    ? "Enabled in desktop notification settings."
+                                                    : "Enabled in Windows Settings.")
+                                                : (Qt.platform.os === "linux"
+                                                    ? "Notifications are muted or Do Not Disturb is active."
+                                                    : "Notifications are off for NectarLink in Windows Settings.")
                                             role: "caption"
                                             color: Theme.surfaceContentVariant
                                             wrapMode: Text.WordWrap
@@ -1483,7 +1489,7 @@ FocusScope {
                                             text: qsTr("Windows Settings")
                                             variant: "tonal"
                                             size: "sm"
-                                            visible: !AppController.toastsEnabled
+                                            visible: !AppController.toastsEnabled && Qt.platform.os === "windows"
                                             Accessible.name: "Open Windows notification settings"
                                             onClicked: Qt.openUrlExternally("ms-settings:notifications")
                                         }
@@ -1493,7 +1499,7 @@ FocusScope {
                                             iconPath: Icons.refresh
                                             variant: "text"
                                             size: "sm"
-                                            Accessible.name: "Recheck Windows notification status"
+                                            Accessible.name: "Recheck notification status"
                                             onClicked: AppController.refreshToastsEnabled()
                                         }
                                     }
@@ -1539,7 +1545,7 @@ FocusScope {
 
                                         Txt {
                                             Layout.fillWidth: true
-                                            text: qsTr("Start with Windows")
+                                            text: Qt.platform.os === "linux" ? qsTr("Start at login") : qsTr("Start with Windows")
                                             role: "title"
                                         }
 
@@ -1553,7 +1559,7 @@ FocusScope {
                                     }
 
                                     Toggle {
-                                        label: qsTr("Start with Windows")
+                                        label: Qt.platform.os === "linux" ? qsTr("Start at login") : qsTr("Start with Windows")
                                         checked: Preferences.startWithWindows
                                         onToggled: next => Preferences.startWithWindows = next
                                     }

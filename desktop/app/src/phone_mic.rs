@@ -69,7 +69,9 @@ pub fn phase() -> Phase {
 /// Reads the chosen output from the settings.
 pub fn init(settings: &crate::settings::Settings) {
     #[cfg(target_os = "linux")]
-    crate::win::vmic::cleanup_stale_sources();
+    let _ = std::thread::Builder::new()
+        .name("vmic-cleanup".into())
+        .spawn(crate::win::vmic::cleanup_stale_sources);
     *OUTPUT.lock().unwrap_or_else(|e| e.into_inner()) = settings.phone_mic_output.clone();
     GAIN.store(settings.phone_mic_gain.clamp(MIN_GAIN, MAX_GAIN), Ordering::Relaxed);
 }
@@ -160,7 +162,7 @@ pub fn outputs() -> (Vec<AudioOutputDevice>, Option<String>) {
     #[allow(unused_mut)]
     let mut devices = crate::win::audio::output_devices();
     #[cfg(target_os = "linux")]
-    {
+    if crate::win::vmic::is_available() {
         if !devices.iter().any(|d| d.id == VIRTUAL_MIC_MONO_ID) {
             devices.insert(
                 0,
@@ -322,14 +324,20 @@ impl Sink {
             self.player.lock().unwrap_or_else(|e| e.into_inner()).take();
             let out_channels = if output.as_deref() == Some(VIRTUAL_MIC_MONO_ID) { 1 } else { 2 };
             let phone_name = core_host::host().hub.read(|s| s.name_of(&self.peer));
-            let vmic = crate::win::vmic::VirtualMic::new_for_phone_with_channels(
+            match crate::win::vmic::VirtualMic::open_with_label(
                 config.rate,
                 config.channels,
                 out_channels,
                 phone_name.as_deref(),
-            );
-            *self.vmic.lock().unwrap_or_else(|e| e.into_inner()) = Some(vmic);
-            return;
+            ) {
+                Ok(vmic) => {
+                    *self.vmic.lock().unwrap_or_else(|e| e.into_inner()) = Some(vmic);
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "can't create virtual microphone; falling back to speaker output");
+                }
+            }
         }
         #[cfg(target_os = "linux")]
         self.vmic.lock().unwrap_or_else(|e| e.into_inner()).take();

@@ -484,6 +484,7 @@ pub struct AppControllerRust {
 /// reach it.
 static CONTROLLER: OnceLock<Mutex<Option<CxxQtThread<qobject::AppController>>>> = OnceLock::new();
 static SHELF_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static QUIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
 enum ToastAction {
@@ -599,9 +600,16 @@ fn controller() -> Option<CxxQtThread<qobject::AppController>> {
 
 /// Asks the app to quit (from any thread), as Quit in the tray does.
 pub fn request_quit() {
+    QUIT_REQUESTED.store(true, Ordering::Release);
     if let Some(qt) = controller() {
         let _ = qt.queue(|object| object.quit_requested());
     }
+}
+
+/// Whether [`request_quit`] has already been called (for example by a signal
+/// arriving while the QML engine is still loading).
+pub fn is_quit_requested() -> bool {
+    QUIT_REQUESTED.load(Ordering::Acquire)
 }
 
 /// Asks the UI to show the main window (from any thread).
@@ -750,6 +758,9 @@ impl cxx_qt::Initialize for qobject::AppController {
         self.as_mut().refresh_localsend_state();
         let qt = self.qt_thread();
         *CONTROLLER.get_or_init(Mutex::default).lock().unwrap_or_else(|e| e.into_inner()) = Some(qt.clone());
+        if QUIT_REQUESTED.load(Ordering::Acquire) {
+            let _ = qt.queue(|object| object.quit_requested());
+        }
         if let Some(task) = PENDING_JUMP_TASK.lock().unwrap_or_else(|e| e.into_inner()).take() {
             dispatch_jump_task(&qt, task);
         }
@@ -2222,7 +2233,7 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
             tr!("Guide", "Install and first-time setup"),
             tr!(
                 "Guide",
-                "1. Install NectarLink on your Windows 11 PC and your Android phone (Android 8.0 or newer).\n\
+                "1. Install NectarLink on your PC (Windows 11 or Linux) and your Android phone (Android 8.0 or newer).\n\
              2. Connect both devices to the same Wi-Fi network, or plug your phone into your PC with a USB cable.\n\
              3. Open the Pair step in the setup walkthrough, or click + (Pair a new device) at the bottom of the left rail.\n\
              4. Scan the QR code from the NectarLink Android app, or select your phone from the nearby devices list and confirm that the 6-digit code matches on both screens.\n\

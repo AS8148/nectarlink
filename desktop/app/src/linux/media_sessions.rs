@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! What plays on this PC, for paired phones (`docs/protocol/media.md`): active
-//! MPRIS2 media sessions on Linux (via session D-Bus `org.mpris.MediaPlayer2.*`
-//! with a `playerctl` fallback), artwork resolution/caching, and remote
-//! transport commands.
+//! MPRIS2 media sessions on Linux via native in-process `zbus` D-Bus queries
+//! and signal subscriptions (`PropertiesChanged`, `Seeked`, `NameOwnerChanged`),
+//! artwork resolution/caching, and remote transport commands.
 //!
 //! NectarLink's own MPRIS session (`org.mpris.MediaPlayer2.nectarlink`) is
 //! excluded so a phone never gets its own music echoed back.
@@ -11,14 +11,17 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
 use nectarlink_core::{MediaAction, MediaError, MediaPlayer};
+use zbus::zvariant::{ObjectPath, OwnedValue};
 
 /// Maximum inline artwork payload (256 KiB); larger covers are scaled and JPEG-encoded.
 const ART_BYTES: u64 = 256 * 1024;
-const POLL_INTERVAL: Duration = Duration::from_secs(2);
+const ACTIVE_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+const IDLE_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+const SIGNAL_COALESCE_WINDOW: Duration = Duration::from_millis(60);
 const CALL_PAUSE_TTL: Duration = Duration::from_secs(60 * 30);
 
 const PLAYERCTL_FORMAT: &str = "{{playerName}}\t{{status}}\t{{mpris:trackid}}\t{{xesam:title}}\t{{xesam:artist}}\t{{xesam:album}}\t{{mpris:length}}\t{{position}}\t{{mpris:artUrl}}";
@@ -185,10 +188,14 @@ where
 }
 
 fn run(on_change: &OnChange) {
+    let (wake_tx, wake_rx) = mpsc::channel::<()>();
+    spawn_dbus_signal_watchers(wake_tx);
+
     let mut art_cache = ArtCache::default();
     let mut last: Option<(Vec<MediaPlayer>, Instant)> = None;
     loop {
         let players = snapshot(&mut art_cache);
+        let any_playing = players.iter().any(|p| p.playing);
         let should_emit = match &last {
             None => true,
             Some((prev, prev_at)) => players_meaningfully_changed(prev, &players, prev_at.elapsed()),
@@ -197,8 +204,76 @@ fn run(on_change: &OnChange) {
             on_change(players.clone());
             last = Some((players, Instant::now()));
         }
-        std::thread::sleep(POLL_INTERVAL);
+        let wait_timeout = if any_playing { ACTIVE_REFRESH_INTERVAL } else { IDLE_REFRESH_INTERVAL };
+        if wake_rx.recv_timeout(wait_timeout).is_ok() {
+            while wake_rx.recv_timeout(SIGNAL_COALESCE_WINDOW).is_ok() {}
+        }
     }
+}
+
+fn spawn_dbus_signal_watchers(wake_tx: mpsc::Sender<()>) {
+    let tx_props = wake_tx.clone();
+    let _ = std::thread::Builder::new().name("mpris-props-watch".into()).spawn(move || {
+        loop {
+            let Ok(conn) = zbus::blocking::Connection::session() else {
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+            let Ok(rule) = zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .path("/org/mpris/MediaPlayer2")
+                .map(|b| b.build())
+            else {
+                return;
+            };
+            let Ok(iter) = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None) else {
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+            for msg in iter {
+                let Ok(msg) = msg else { break };
+                let hdr = msg.header();
+                let member = hdr.member().map(|m| m.as_str()).unwrap_or("");
+                if matches!(member, "PropertiesChanged" | "Seeked") && tx_props.send(()).is_err() {
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    });
+
+    let _ = std::thread::Builder::new().name("mpris-owner-watch".into()).spawn(move || {
+        loop {
+            let Ok(conn) = zbus::blocking::Connection::session() else {
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+            let Ok(rule) = zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .interface("org.freedesktop.DBus")
+                .and_then(|b| b.member("NameOwnerChanged"))
+                .map(|b| b.build())
+            else {
+                return;
+            };
+            let Ok(iter) = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None) else {
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+            for msg in iter {
+                let Ok(msg) = msg else { break };
+                if let Ok((name, _old_owner, _new_owner)) =
+                    msg.body().deserialize::<(String, String, String)>()
+                    && let Some(suffix) = name.strip_prefix("org.mpris.MediaPlayer2.")
+                    && !is_excluded_player(suffix)
+                    && wake_tx.send(()).is_err()
+                {
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    });
 }
 
 /// Compares two snapshots of [`MediaPlayer`]s while ignoring normal linear playback
@@ -275,10 +350,210 @@ fn snapshot(art_cache: &mut ArtCache) -> Vec<MediaPlayer> {
 }
 
 fn query_raw_players() -> Vec<RawMprisPlayer> {
-    if let Some(players) = query_via_dbus() {
+    if let Some(players) = query_via_zbus() {
         return players;
     }
-    query_via_playerctl().unwrap_or_default()
+    if let Some(players) = query_via_playerctl() {
+        return players;
+    }
+    query_via_gdbus().unwrap_or_default()
+}
+
+fn deserialize_string_list(msg: &zbus::message::Message) -> Option<Vec<String>> {
+    let body = msg.body();
+    body.deserialize::<Vec<String>>().ok().or_else(|| body.deserialize::<(Vec<String>,)>().ok().map(|(v,)| v))
+}
+
+fn deserialize_properties_map(msg: &zbus::message::Message) -> Option<HashMap<String, OwnedValue>> {
+    let body = msg.body();
+    body.deserialize::<HashMap<String, OwnedValue>>()
+        .ok()
+        .or_else(|| body.deserialize::<(HashMap<String, OwnedValue>,)>().ok().map(|(m,)| m))
+}
+
+fn deserialize_property_value(msg: &zbus::message::Message) -> Option<OwnedValue> {
+    let body = msg.body();
+    body.deserialize::<OwnedValue>().ok().or_else(|| body.deserialize::<(OwnedValue,)>().ok().map(|(v,)| v))
+}
+
+fn val_as_str(v: &OwnedValue) -> Option<String> {
+    if let Ok(s) = <&str>::try_from(v) {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+    if let Ok(op) = <ObjectPath<'_>>::try_from(&**v) {
+        let s = op.as_str().trim();
+        if !s.is_empty() {
+            return Some(s.to_owned());
+        }
+    }
+    None
+}
+
+fn val_as_artist(v: &OwnedValue) -> Option<String> {
+    if let Some(s) = val_as_str(v) {
+        return Some(s);
+    }
+    if let Ok(cloned) = v.try_clone()
+        && let Ok(list) = Vec::<String>::try_from(cloned)
+    {
+        let joined: Vec<&str> =
+            list.iter().map(String::as_str).map(str::trim).filter(|s| !s.is_empty()).collect();
+        if !joined.is_empty() {
+            return Some(joined.join(", "));
+        }
+    }
+    None
+}
+
+fn val_as_i64(v: &OwnedValue) -> Option<i64> {
+    i64::try_from(v)
+        .ok()
+        .or_else(|| u64::try_from(v).ok().and_then(|u| i64::try_from(u).ok()))
+        .or_else(|| i32::try_from(v).ok().map(i64::from))
+        .or_else(|| u32::try_from(v).ok().map(i64::from))
+        .or_else(|| f64::try_from(v).ok().filter(|f| f.is_finite()).map(|f| f as i64))
+}
+
+fn val_as_bool(v: &OwnedValue) -> Option<bool> {
+    bool::try_from(v).ok()
+}
+
+fn val_as_dict(v: &OwnedValue) -> Option<HashMap<String, OwnedValue>> {
+    let cloned = v.try_clone().ok()?;
+    HashMap::<String, OwnedValue>::try_from(cloned).ok()
+}
+
+pub(crate) fn parse_zbus_player_properties(
+    bus_name: &str,
+    root_props: Option<&HashMap<String, OwnedValue>>,
+    player_props: &HashMap<String, OwnedValue>,
+) -> Option<RawMprisPlayer> {
+    let short_id = bus_name.strip_prefix("org.mpris.MediaPlayer2.").unwrap_or(bus_name);
+    if is_excluded_player(short_id) {
+        return None;
+    }
+
+    let metadata = player_props.get("Metadata").and_then(val_as_dict)?;
+    let raw_title = metadata.get("xesam:title").and_then(val_as_str)?;
+    let status = player_props.get("PlaybackStatus").and_then(val_as_str).unwrap_or_default();
+    let artist = metadata.get("xesam:artist").and_then(val_as_artist);
+    let album = metadata.get("xesam:album").and_then(val_as_str);
+    let art_url = metadata.get("mpris:artUrl").and_then(val_as_str);
+    let duration_us = metadata.get("mpris:length").and_then(val_as_i64).filter(|&v| v > 0);
+    let position_us = player_props.get("Position").and_then(val_as_i64).filter(|&v| v >= 0);
+
+    let duration = duration_us.map(|us| (us as u64) / 1000).filter(|&ms| ms > 0);
+    let position = position_us.map(|us| {
+        let ms = (us as u64) / 1000;
+        duration.map_or(ms, |d| ms.min(d))
+    });
+
+    let identity = root_props.and_then(|r| {
+        r.get("Identity").and_then(val_as_str).or_else(|| r.get("DesktopEntry").and_then(val_as_str))
+    });
+    let mut app = identity.unwrap_or_else(|| readable_player_app(short_id));
+    let mut title = raw_title;
+    if (says_video(short_id) || says_video(&app))
+        && let Some((clean, site)) = title.rsplit_once(" on ")
+    {
+        let site = site.trim();
+        let clean = clean.trim();
+        if !site.is_empty() && !clean.is_empty() && site.len() <= 28 {
+            app = site.to_owned();
+            title = clean.to_owned();
+        }
+    }
+
+    let mut actions = Vec::new();
+    if player_props.get("CanPlay").and_then(val_as_bool).unwrap_or(true) {
+        actions.push("play".to_owned());
+    }
+    if player_props.get("CanPause").and_then(val_as_bool).unwrap_or(true) {
+        actions.push("pause".to_owned());
+    }
+    if player_props.get("CanGoNext").and_then(val_as_bool).unwrap_or(true) {
+        actions.push("next".to_owned());
+    }
+    if player_props.get("CanGoPrevious").and_then(val_as_bool).unwrap_or(true) {
+        actions.push("previous".to_owned());
+    }
+    if player_props.get("CanSeek").and_then(val_as_bool).unwrap_or(duration.is_some()) {
+        actions.push("seek".to_owned());
+    }
+
+    Some(RawMprisPlayer {
+        id: short_id.to_owned(),
+        app,
+        title,
+        artist,
+        album,
+        playing: status.eq_ignore_ascii_case("Playing"),
+        duration,
+        position,
+        actions,
+        art_url,
+    })
+}
+
+fn list_zbus_mpris_buses(conn: &zbus::blocking::Connection) -> Option<Vec<String>> {
+    let reply = conn
+        .call_method(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus"),
+            "ListNames",
+            &(),
+        )
+        .ok()?;
+    let all_names = deserialize_string_list(&reply)?;
+    let mut buses = Vec::new();
+    for name in all_names {
+        let trimmed = name.trim();
+        if let Some(suffix) = trimmed.strip_prefix("org.mpris.MediaPlayer2.")
+            && !is_excluded_player(suffix)
+            && !buses.iter().any(|existing| existing == trimmed)
+        {
+            buses.push(trimmed.to_owned());
+        }
+    }
+    Some(buses)
+}
+
+fn query_via_zbus() -> Option<Vec<RawMprisPlayer>> {
+    let conn = zbus::blocking::Connection::session().ok()?;
+    let buses = list_zbus_mpris_buses(&conn)?;
+    let mut players = Vec::new();
+    for bus in buses {
+        let root_props = conn
+            .call_method(
+                Some(bus.as_str()),
+                "/org/mpris/MediaPlayer2",
+                Some("org.freedesktop.DBus.Properties"),
+                "GetAll",
+                &("org.mpris.MediaPlayer2",),
+            )
+            .ok()
+            .and_then(|msg| deserialize_properties_map(&msg));
+        let Ok(player_msg) = conn.call_method(
+            Some(bus.as_str()),
+            "/org/mpris/MediaPlayer2",
+            Some("org.freedesktop.DBus.Properties"),
+            "GetAll",
+            &("org.mpris.MediaPlayer2.Player",),
+        ) else {
+            continue;
+        };
+        let Some(player_props) = deserialize_properties_map(&player_msg) else {
+            continue;
+        };
+        if let Some(player) = parse_zbus_player_properties(&bus, root_props.as_ref(), &player_props) {
+            players.push(player);
+        }
+    }
+    Some(players)
 }
 
 fn query_via_playerctl() -> Option<Vec<RawMprisPlayer>> {
@@ -402,7 +677,6 @@ pub(crate) fn parse_playerctl_line(line: &str) -> Option<RawMprisPlayer> {
 
 /// Extracts `org.mpris.MediaPlayer2.*` bus names from `gdbus ListNames` output,
 /// excluding `org.mpris.MediaPlayer2.nectarlink` and `playerctld`.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse_mpris_bus_names(gdbus_output: &str) -> Vec<String> {
     let mut names = Vec::new();
     for token in gdbus_output.split(|c: char| {
@@ -419,7 +693,6 @@ pub(crate) fn parse_mpris_bus_names(gdbus_output: &str) -> Vec<String> {
     names
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn extract_gvariant_string(text: &str, key: &str) -> Option<String> {
     let pattern = format!("'{key}':");
     let start = text.find(&pattern)? + pattern.len();
@@ -438,7 +711,6 @@ fn extract_gvariant_string(text: &str, key: &str) -> Option<String> {
     if val.is_empty() { None } else { Some(val.to_owned()) }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn extract_gvariant_i64(text: &str, key: &str) -> Option<i64> {
     let pattern = format!("'{key}':");
     let start = text.find(&pattern)? + pattern.len();
@@ -450,7 +722,6 @@ fn extract_gvariant_i64(text: &str, key: &str) -> Option<i64> {
     num_str.parse::<i64>().ok()
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn extract_gvariant_bool(text: &str, key: &str) -> Option<bool> {
     let pattern = format!("'{key}':");
     let start = text.find(&pattern)? + pattern.len();
@@ -464,7 +735,6 @@ fn extract_gvariant_bool(text: &str, key: &str) -> Option<bool> {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse_gdbus_player_properties(bus_name: &str, gdbus_output: &str) -> Option<RawMprisPlayer> {
     let short_id = bus_name.strip_prefix("org.mpris.MediaPlayer2.").unwrap_or(bus_name);
     if is_excluded_player(short_id) {
@@ -515,172 +785,49 @@ pub(crate) fn parse_gdbus_player_properties(bus_name: &str, gdbus_output: &str) 
     })
 }
 
-fn value_as_string(val: &zbus::zvariant::Value<'_>) -> Option<String> {
-    use zbus::zvariant::Value;
-    match val {
-        Value::Str(s) => {
-            let trimmed = s.as_str().trim();
-            if trimmed.is_empty() { None } else { Some(trimmed.to_owned()) }
-        }
-        Value::Value(inner) => value_as_string(inner),
-        Value::Array(arr) => arr.iter().find_map(value_as_string),
-        _ => None,
-    }
-}
-
-fn value_as_i64(val: &zbus::zvariant::Value<'_>) -> Option<i64> {
-    use zbus::zvariant::Value;
-    match val {
-        Value::I64(v) => Some(*v),
-        Value::U64(v) => i64::try_from(*v).ok(),
-        Value::I32(v) => Some(i64::from(*v)),
-        Value::U32(v) => Some(i64::from(*v)),
-        Value::Value(inner) => value_as_i64(inner),
-        _ => None,
-    }
-}
-
-fn value_as_bool(val: &zbus::zvariant::Value<'_>) -> Option<bool> {
-    use zbus::zvariant::Value;
-    match val {
-        Value::Bool(b) => Some(*b),
-        Value::Value(inner) => value_as_bool(inner),
-        _ => None,
-    }
-}
-
-fn parse_zbus_player_properties(
-    bus_name: &str,
-    props: &HashMap<String, zbus::zvariant::OwnedValue>,
-) -> Option<RawMprisPlayer> {
-    use zbus::zvariant::Value;
-
-    let short_id = bus_name.strip_prefix("org.mpris.MediaPlayer2.").unwrap_or(bus_name);
-    if is_excluded_player(short_id) {
+fn list_gdbus_mpris_buses() -> Option<Vec<String>> {
+    let out = Command::new("gdbus")
+        .args([
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.DBus",
+            "--object-path",
+            "/org/freedesktop/DBus",
+            "--method",
+            "org.freedesktop.DBus.ListNames",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
         return None;
     }
-
-    let status = props.get("PlaybackStatus").and_then(|v| value_as_string(v)).unwrap_or_default();
-    let position_us = props.get("Position").and_then(|v| value_as_i64(v)).filter(|&v| v >= 0);
-
-    let mut raw_title: Option<String> = None;
-    let mut artist: Option<String> = None;
-    let mut album: Option<String> = None;
-    let mut art_url: Option<String> = None;
-    let mut duration_us: Option<i64> = None;
-
-    if let Some(meta_owned) = props.get("Metadata") {
-        let mut meta_val: &Value<'_> = meta_owned;
-        while let Value::Value(inner) = meta_val {
-            meta_val = inner;
-        }
-        if let Value::Dict(dict) = meta_val {
-            for (k, v) in dict.iter() {
-                let Some(key) = value_as_string(k) else {
-                    continue;
-                };
-                match key.as_str() {
-                    "xesam:title" => raw_title = value_as_string(v),
-                    "xesam:artist" => artist = value_as_string(v),
-                    "xesam:album" => album = value_as_string(v),
-                    "mpris:artUrl" => art_url = value_as_string(v),
-                    "mpris:length" => duration_us = value_as_i64(v).filter(|&n| n > 0),
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    let raw_title = raw_title?;
-    let duration = duration_us.map(|us| (us as u64) / 1000).filter(|&ms| ms > 0);
-    let position = position_us.map(|us| {
-        let ms = (us as u64) / 1000;
-        duration.map_or(ms, |d| ms.min(d))
-    });
-
-    let mut app = readable_player_app(short_id);
-    let mut title = raw_title;
-    if matches!(app.as_str(), "Firefox" | "Chrome" | "Chromium" | "Brave" | "Edge")
-        && let Some((clean, site)) = title.rsplit_once(" on ")
-    {
-        let site = site.trim();
-        let clean = clean.trim();
-        if !site.is_empty() && !clean.is_empty() && site.len() <= 28 {
-            app = site.to_owned();
-            title = clean.to_owned();
-        }
-    }
-
-    let mut actions = Vec::new();
-    if props.get("CanPlay").and_then(|v| value_as_bool(v)).unwrap_or(true) {
-        actions.push("play".to_owned());
-    }
-    if props.get("CanPause").and_then(|v| value_as_bool(v)).unwrap_or(true) {
-        actions.push("pause".to_owned());
-    }
-    if props.get("CanGoNext").and_then(|v| value_as_bool(v)).unwrap_or(true) {
-        actions.push("next".to_owned());
-    }
-    if props.get("CanGoPrevious").and_then(|v| value_as_bool(v)).unwrap_or(true) {
-        actions.push("previous".to_owned());
-    }
-    if props.get("CanSeek").and_then(|v| value_as_bool(v)).unwrap_or(duration.is_some()) {
-        actions.push("seek".to_owned());
-    }
-
-    Some(RawMprisPlayer {
-        id: short_id.to_owned(),
-        app,
-        title,
-        artist,
-        album,
-        playing: status.eq_ignore_ascii_case("Playing"),
-        duration,
-        position,
-        actions,
-        art_url,
-    })
+    Some(parse_mpris_bus_names(&String::from_utf8_lossy(&out.stdout)))
 }
 
-fn list_dbus_mpris_buses(conn: &zbus::blocking::Connection) -> Option<Vec<String>> {
-    let reply = conn
-        .call_method(
-            Some("org.freedesktop.DBus"),
-            "/org/freedesktop/DBus",
-            Some("org.freedesktop.DBus"),
-            "ListNames",
-            &(),
-        )
-        .ok()?;
-    let names: Vec<String> = reply.body().deserialize().ok()?;
-    let mut buses = Vec::new();
-    for name in names {
-        let trimmed = name.trim();
-        if let Some(suffix) = trimmed.strip_prefix("org.mpris.MediaPlayer2.")
-            && !is_excluded_player(suffix)
-            && !buses.iter().any(|existing| existing == trimmed)
-        {
-            buses.push(trimmed.to_owned());
-        }
-    }
-    Some(buses)
-}
-
-fn query_via_dbus() -> Option<Vec<RawMprisPlayer>> {
-    let conn = zbus::blocking::Connection::session().ok()?;
-    let buses = list_dbus_mpris_buses(&conn)?;
+fn query_via_gdbus() -> Option<Vec<RawMprisPlayer>> {
+    let buses = list_gdbus_mpris_buses()?;
     let mut players = Vec::new();
     for bus in buses {
-        if let Ok(reply) = conn.call_method(
-            Some(bus.as_str()),
-            "/org/mpris/MediaPlayer2",
-            Some("org.freedesktop.DBus.Properties"),
-            "GetAll",
-            &("org.mpris.MediaPlayer2.Player",),
-        ) && let Ok(props) = reply.body().deserialize::<HashMap<String, zbus::zvariant::OwnedValue>>()
-            && let Some(player) = parse_zbus_player_properties(&bus, &props)
+        if let Ok(out) = Command::new("gdbus")
+            .args([
+                "call",
+                "--session",
+                "--dest",
+                &bus,
+                "--object-path",
+                "/org/mpris/MediaPlayer2",
+                "--method",
+                "org.freedesktop.DBus.Properties.GetAll",
+                "org.mpris.MediaPlayer2.Player",
+            ])
+            .output()
+            && out.status.success()
         {
-            players.push(player);
+            let text = String::from_utf8_lossy(&out.stdout);
+            if let Some(player) = parse_gdbus_player_properties(&bus, &text) {
+                players.push(player);
+            }
         }
     }
     Some(players)
@@ -695,45 +842,137 @@ fn mpris_bus_name(player: &str) -> String {
     }
 }
 
-fn dbus_player_call(bus_name: &str, method: &str) -> bool {
-    let Ok(conn) = zbus::blocking::Connection::session() else {
-        return false;
-    };
-    conn.call_method(
-        Some(bus_name),
+fn gdbus_player_call(bus_name: &str, method: &str, extra_args: &[&str]) -> bool {
+    let method_full = format!("org.mpris.MediaPlayer2.Player.{method}");
+    let mut cmd = Command::new("gdbus");
+    cmd.args([
+        "call",
+        "--session",
+        "--dest",
+        bus_name,
+        "--object-path",
         "/org/mpris/MediaPlayer2",
-        Some("org.mpris.MediaPlayer2.Player"),
-        method,
-        &(),
-    )
-    .is_ok()
+        "--method",
+        &method_full,
+    ]);
+    cmd.args(extra_args);
+    cmd.output().is_ok_and(|o| o.status.success())
 }
 
-fn dbus_player_seek_to(bus_name: &str, target_us: i64) -> bool {
-    let Ok(conn) = zbus::blocking::Connection::session() else {
-        return false;
-    };
-    let current_us = conn
-        .call_method(
-            Some(bus_name),
-            "/org/mpris/MediaPlayer2",
-            Some("org.freedesktop.DBus.Properties"),
-            "Get",
-            &("org.mpris.MediaPlayer2.Player", "Position"),
-        )
-        .ok()
-        .and_then(|reply| reply.body().deserialize::<zbus::zvariant::OwnedValue>().ok())
-        .and_then(|v| value_as_i64(&v))
-        .unwrap_or(0);
-    let offset_us = target_us.saturating_sub(current_us);
-    conn.call_method(
-        Some(bus_name),
-        "/org/mpris/MediaPlayer2",
-        Some("org.mpris.MediaPlayer2.Player"),
-        "Seek",
-        &(offset_us,),
-    )
-    .is_ok()
+/// Computes the relative MPRIS2 `Seek(Offset: x)` delta in microseconds from a
+/// target position (`target_us`) and current position (`current_us`).
+pub(crate) fn compute_seek_offset_us(target_us: i64, current_us: i64) -> i64 {
+    target_us.saturating_sub(current_us)
+}
+
+fn resolve_zbus_target_bus(conn: &zbus::blocking::Connection, player: &str) -> Option<String> {
+    let trimmed = player.trim();
+    let buses = list_zbus_mpris_buses(conn).unwrap_or_default();
+    if trimmed.is_empty() {
+        return buses.into_iter().next();
+    }
+    let exact = mpris_bus_name(trimmed);
+    if buses.iter().any(|b| b == &exact) {
+        return Some(exact);
+    }
+    let prefix = format!("{exact}.");
+    if let Some(found) = buses.into_iter().find(|b| b.starts_with(&prefix)) {
+        return Some(found);
+    }
+    Some(exact)
+}
+
+fn zbus_player_command(
+    conn: &zbus::blocking::Connection,
+    bus_name: &str,
+    action: MediaAction,
+    position: Option<u64>,
+) -> bool {
+    match action {
+        MediaAction::Play => conn
+            .call_method(
+                Some(bus_name),
+                "/org/mpris/MediaPlayer2",
+                Some("org.mpris.MediaPlayer2.Player"),
+                "Play",
+                &(),
+            )
+            .is_ok(),
+        MediaAction::Pause => conn
+            .call_method(
+                Some(bus_name),
+                "/org/mpris/MediaPlayer2",
+                Some("org.mpris.MediaPlayer2.Player"),
+                "Pause",
+                &(),
+            )
+            .is_ok(),
+        MediaAction::Next => conn
+            .call_method(
+                Some(bus_name),
+                "/org/mpris/MediaPlayer2",
+                Some("org.mpris.MediaPlayer2.Player"),
+                "Next",
+                &(),
+            )
+            .is_ok(),
+        MediaAction::Previous => conn
+            .call_method(
+                Some(bus_name),
+                "/org/mpris/MediaPlayer2",
+                Some("org.mpris.MediaPlayer2.Player"),
+                "Previous",
+                &(),
+            )
+            .is_ok(),
+        MediaAction::Seek => {
+            let pos_us = i64::try_from(position.unwrap_or(0)).unwrap_or(0).saturating_mul(1000);
+            if let Ok(meta_msg) = conn.call_method(
+                Some(bus_name),
+                "/org/mpris/MediaPlayer2",
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.mpris.MediaPlayer2.Player", "Metadata"),
+            ) && let Some(meta_val) = deserialize_property_value(&meta_msg)
+                && let Some(meta_dict) = val_as_dict(&meta_val)
+                && let Some(track_id_str) = meta_dict.get("mpris:trackid").and_then(val_as_str)
+                && let Ok(track_id) = ObjectPath::try_from(track_id_str.as_str())
+                && conn
+                    .call_method(
+                        Some(bus_name),
+                        "/org/mpris/MediaPlayer2",
+                        Some("org.mpris.MediaPlayer2.Player"),
+                        "SetPosition",
+                        &(track_id, pos_us),
+                    )
+                    .is_ok()
+            {
+                return true;
+            }
+
+            let cur_us = conn
+                .call_method(
+                    Some(bus_name),
+                    "/org/mpris/MediaPlayer2",
+                    Some("org.freedesktop.DBus.Properties"),
+                    "Get",
+                    &("org.mpris.MediaPlayer2.Player", "Position"),
+                )
+                .ok()
+                .and_then(|msg| deserialize_property_value(&msg))
+                .and_then(|v| val_as_i64(&v))
+                .unwrap_or(0);
+            let offset_us = compute_seek_offset_us(pos_us, cur_us);
+            conn.call_method(
+                Some(bus_name),
+                "/org/mpris/MediaPlayer2",
+                Some("org.mpris.MediaPlayer2.Player"),
+                "Seek",
+                &(offset_us,),
+            )
+            .is_ok()
+        }
+    }
 }
 
 pub fn command(player: &str, action: MediaAction, position: Option<u64>) -> Result<(), MediaError> {
@@ -742,32 +981,18 @@ pub fn command(player: &str, action: MediaAction, position: Option<u64>) -> Resu
         return Err(MediaError::Failed("invalid player identifier".into()));
     }
 
-    let target_bus = if trimmed.is_empty() {
-        zbus::blocking::Connection::session()
-            .ok()
-            .and_then(|conn| list_dbus_mpris_buses(&conn))
-            .and_then(|mut b| b.drain(..).next())
-    } else {
-        Some(mpris_bus_name(trimmed))
-    };
-
-    if let Some(ref bus) = target_bus {
-        let ok = match action {
-            MediaAction::Play => dbus_player_call(bus, "Play"),
-            MediaAction::Pause => dbus_player_call(bus, "Pause"),
-            MediaAction::Next => dbus_player_call(bus, "Next"),
-            MediaAction::Previous => dbus_player_call(bus, "Previous"),
-            MediaAction::Seek => {
-                let target_us = i64::try_from(position.unwrap_or(0)).unwrap_or(0).saturating_mul(1000);
-                dbus_player_seek_to(bus, target_us)
-            }
+    if super::non_tokio(|| {
+        let Ok(conn) = zbus::blocking::Connection::session() else {
+            return false;
         };
-        if ok {
-            return Ok(());
-        }
+        let Some(target_bus) = resolve_zbus_target_bus(&conn, trimmed) else {
+            return false;
+        };
+        zbus_player_command(&conn, &target_bus, action, position)
+    }) {
+        return Ok(());
     }
 
-    // Fallback to `playerctl` when direct D-Bus transport command fails.
     let mut cmd = Command::new("playerctl");
     if !trimmed.is_empty() {
         cmd.args(["--player", trimmed]);
@@ -791,25 +1016,71 @@ pub fn command(player: &str, action: MediaAction, position: Option<u64>) -> Resu
         }
     }
     if cmd.status().is_ok_and(|s| s.success()) {
-        Ok(())
-    } else if target_bus.is_none() {
-        Err(MediaError::NotFound)
+        return Ok(());
+    }
+
+    // Fallback to direct `gdbus` MPRIS2 call when D-Bus session or `playerctl` fails.
+    let target_bus = if trimmed.is_empty() {
+        list_gdbus_mpris_buses().and_then(|mut b| b.drain(..).next()).ok_or(MediaError::NotFound)?
     } else {
-        Err(MediaError::Failed(format!("MPRIS command {action:?} failed for {trimmed}")))
+        mpris_bus_name(trimmed)
+    };
+
+    let ok = match action {
+        MediaAction::Play => gdbus_player_call(&target_bus, "Play", &[]),
+        MediaAction::Pause => gdbus_player_call(&target_bus, "Pause", &[]),
+        MediaAction::Next => gdbus_player_call(&target_bus, "Next", &[]),
+        MediaAction::Previous => gdbus_player_call(&target_bus, "Previous", &[]),
+        MediaAction::Seek => {
+            let target_us = i64::try_from(position.unwrap_or(0)).unwrap_or(0).saturating_mul(1000);
+            let offset_str = target_us.to_string();
+            gdbus_player_call(&target_bus, "Seek", &[&offset_str])
+        }
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(MediaError::Failed(format!("MPRIS command {action:?} failed for {target_bus}")))
     }
 }
 
 pub fn pause_for_call() {
+    let _ = std::thread::Builder::new().name("call-media-pause".into()).spawn(pause_for_call_blocking);
+}
+
+fn pause_for_call_blocking() {
     let _serial = CALL_MEDIA.lock().unwrap_or_else(|e| e.into_inner());
     let mut paused = Vec::new();
 
-    if let Some(players) = query_via_dbus() {
-        for p in players {
-            if p.playing {
-                let bus = mpris_bus_name(&p.id);
-                if dbus_player_call(&bus, "Pause") {
-                    paused.push(p.id);
-                }
+    if let Ok(conn) = zbus::blocking::Connection::session()
+        && let Some(buses) = list_zbus_mpris_buses(&conn)
+    {
+        for bus in buses {
+            let is_playing = conn
+                .call_method(
+                    Some(bus.as_str()),
+                    "/org/mpris/MediaPlayer2",
+                    Some("org.freedesktop.DBus.Properties"),
+                    "Get",
+                    &("org.mpris.MediaPlayer2.Player", "PlaybackStatus"),
+                )
+                .ok()
+                .and_then(|msg| deserialize_property_value(&msg))
+                .and_then(|v| val_as_str(&v))
+                .is_some_and(|s| s.eq_ignore_ascii_case("Playing"));
+            if is_playing
+                && conn
+                    .call_method(
+                        Some(bus.as_str()),
+                        "/org/mpris/MediaPlayer2",
+                        Some("org.mpris.MediaPlayer2.Player"),
+                        "Pause",
+                        &(),
+                    )
+                    .is_ok()
+            {
+                let short_id = bus.strip_prefix("org.mpris.MediaPlayer2.").unwrap_or(&bus).to_owned();
+                paused.push(short_id);
             }
         }
     } else if let Ok(out) = Command::new("playerctl")
@@ -827,6 +1098,15 @@ pub fn pause_for_call() {
                 }
             }
         }
+    } else if let Some(players) = query_via_gdbus() {
+        for p in players {
+            if p.playing {
+                let bus = mpris_bus_name(&p.id);
+                if gdbus_player_call(&bus, "Pause", &[]) {
+                    paused.push(p.id);
+                }
+            }
+        }
     }
 
     if !paused.is_empty()
@@ -837,16 +1117,40 @@ pub fn pause_for_call() {
 }
 
 pub fn resume_after_call() {
+    let _ = std::thread::Builder::new().name("call-media-resume".into()).spawn(resume_after_call_blocking);
+}
+
+fn resume_after_call_blocking() {
     let _serial = CALL_MEDIA.lock().unwrap_or_else(|e| e.into_inner());
     let players = PAUSED_FOR_CALL
         .lock()
         .ok()
         .and_then(|mut g| g.as_mut().map(|p| p.take_valid(Instant::now())))
         .unwrap_or_default();
+    if players.is_empty() {
+        return;
+    }
+    let conn = zbus::blocking::Connection::session().ok();
     for player in players {
         let bus = mpris_bus_name(&player);
-        if !dbus_player_call(&bus, "Play") {
-            let _ = Command::new("playerctl").args(["--player", &player, "play"]).status();
+        let resumed_via_zbus = conn.as_ref().is_some_and(|c| {
+            c.call_method(
+                Some(bus.as_str()),
+                "/org/mpris/MediaPlayer2",
+                Some("org.mpris.MediaPlayer2.Player"),
+                "Play",
+                &(),
+            )
+            .is_ok()
+        });
+        if !resumed_via_zbus {
+            let ok = Command::new("playerctl")
+                .args(["--player", &player, "play"])
+                .status()
+                .is_ok_and(|s| s.success());
+            if !ok {
+                let _ = gdbus_player_call(&bus, "Play", &[]);
+            }
         }
     }
 }
@@ -952,6 +1256,43 @@ mod tests {
         let mut state = PausedForCall { players: vec!["spotify".to_string()], paused_at: start };
         let expired = state.take_valid(start + CALL_PAUSE_TTL + Duration::from_secs(1));
         assert!(expired.is_empty());
+    }
+
+    #[test]
+    fn parses_zbus_getall_player_properties_and_seek_offset() {
+        use zbus::zvariant::Value;
+
+        let mut meta: HashMap<&str, Value<'_>> = HashMap::new();
+        meta.insert("xesam:title", Value::from("Instant Crush"));
+        meta.insert("xesam:artist", Value::from(vec!["Daft Punk", "Julian Casablancas"]));
+        meta.insert("xesam:album", Value::from("Random Access Memories"));
+        meta.insert("mpris:length", Value::from(337_000_000_i64));
+        meta.insert("mpris:artUrl", Value::from("file:///tmp/ram.jpg"));
+
+        let mut player_props: HashMap<String, OwnedValue> = HashMap::new();
+        player_props
+            .insert("PlaybackStatus".to_owned(), OwnedValue::try_from(Value::from("Playing")).unwrap());
+        player_props
+            .insert("Position".to_owned(), OwnedValue::try_from(Value::from(45_000_000_i64)).unwrap());
+        player_props.insert("Metadata".to_owned(), OwnedValue::try_from(Value::from(meta)).unwrap());
+        player_props.insert("CanPlay".to_owned(), OwnedValue::try_from(Value::from(true)).unwrap());
+        player_props.insert("CanPause".to_owned(), OwnedValue::try_from(Value::from(true)).unwrap());
+        player_props.insert("CanSeek".to_owned(), OwnedValue::try_from(Value::from(true)).unwrap());
+
+        let parsed =
+            parse_zbus_player_properties("org.mpris.MediaPlayer2.spotify", None, &player_props).unwrap();
+        assert_eq!(parsed.id, "spotify");
+        assert_eq!(parsed.app, "Spotify");
+        assert_eq!(parsed.title, "Instant Crush");
+        assert_eq!(parsed.artist.as_deref(), Some("Daft Punk, Julian Casablancas"));
+        assert_eq!(parsed.album.as_deref(), Some("Random Access Memories"));
+        assert!(parsed.playing);
+        assert_eq!(parsed.duration, Some(337_000));
+        assert_eq!(parsed.position, Some(45_000));
+        assert_eq!(parsed.art_url.as_deref(), Some("file:///tmp/ram.jpg"));
+
+        assert_eq!(compute_seek_offset_us(60_000_000, 45_000_000), 15_000_000);
+        assert_eq!(compute_seek_offset_us(10_000_000, 45_000_000), -35_000_000);
     }
 
     #[test]

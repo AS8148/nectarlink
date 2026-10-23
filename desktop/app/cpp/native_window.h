@@ -63,6 +63,10 @@ public:
     // Releases scene-graph/D3D resources, destroys the native HWND, and
     // schedules deletion when closing to the tray.
     Q_INVOKABLE void releaseAndTeardown();
+    // Captures the rendered window contents to an image file on disk.
+    Q_INVOKABLE bool grabToFile(const QString &path);
+
+    bool isCaptionHoleAt(const QPointF &scenePoint) const;
 
 
 signals:
