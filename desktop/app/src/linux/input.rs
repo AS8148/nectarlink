@@ -3,20 +3,552 @@
 //! a touchpad, keyboard, or presentation remote (`docs/protocol/remote.md`),
 //! as well as reverse PC mirror touch injection.
 //!
-//! On X11 / XWayland (`DISPLAY` set), pointer and button events are injected
-//! in-process through a persistent `libX11.so.6` + `libXtst.so.6` (`XTest`)
-//! display connection so 60 Hz mouse/touch streams do not fork a child process
-//! per event. When `libXtst.so.6` is unavailable or running on pure Wayland,
-//! falls back to `ydotool` / `wtype` / `xdotool`.
+//! Input backends are tried in order of lowest overhead and broadest display-server
+//! support:
+//! 1. In-process `/dev/uinput` virtual input device (works on both X11 and Wayland).
+//! 2. On Wayland: in-process `org.freedesktop.portal.RemoteDesktop` D-Bus session.
+//! 3. On X11 / XWayland: in-process `libX11.so.6` + `libXtst.so.6` (`XTest`).
+//! 4. Subprocess fallbacks (`ydotool`, `wtype`, `xdotool`), piping text via stdin
+//!    so typed strings never appear in `/proc/<pid>/cmdline`.
 
 use std::{
+    collections::HashMap,
     ffi::{CStr, CString, c_char, c_int, c_uint, c_ulong, c_void},
+    io::Write,
     process::{Command, Stdio},
     sync::{Mutex, OnceLock},
 };
 
 use nectarlink_core::{ButtonAction, KeyMod, MouseButton, PowerAction, SlideAction, TouchAction};
 
+// ---- Linux `/dev/uinput` kernel ABI constants ----
+const EV_SYN: u16 = 0x00;
+const EV_KEY: u16 = 0x01;
+const EV_REL: u16 = 0x02;
+
+const SYN_REPORT: u16 = 0x00;
+
+const REL_X: u16 = 0x00;
+const REL_Y: u16 = 0x01;
+const REL_HWHEEL: u16 = 0x06;
+const REL_WHEEL: u16 = 0x08;
+
+const BTN_LEFT: u16 = 0x110;
+const BTN_RIGHT: u16 = 0x111;
+const BTN_MIDDLE: u16 = 0x112;
+
+const BUS_USB: u16 = 0x03;
+
+const UI_DEV_CREATE: c_ulong = 0x5501;
+const UI_DEV_DESTROY: c_ulong = 0x5502;
+const UI_DEV_SETUP: c_ulong = 0x405c_5503;
+const UI_SET_EVBIT: c_ulong = 0x4004_5564;
+const UI_SET_KEYBIT: c_ulong = 0x4004_5565;
+const UI_SET_RELBIT: c_ulong = 0x4004_5566;
+
+#[repr(C)]
+struct InputId {
+    bustype: u16,
+    vendor: u16,
+    product: u16,
+    version: u16,
+}
+
+#[repr(C)]
+struct UinputSetup {
+    id: InputId,
+    name: [u8; 80],
+    ff_effects_max: u32,
+}
+
+#[repr(C)]
+struct InputEvent {
+    tv_sec: libc::time_t,
+    tv_usec: libc::suseconds_t,
+    type_: u16,
+    code: u16,
+    value: i32,
+}
+
+struct UinputDevice {
+    fd: c_int,
+}
+
+impl UinputDevice {
+    fn open() -> Option<Self> {
+        let paths = [c"/dev/uinput", c"/dev/input/uinput"];
+        let mut fd = -1;
+        for path in paths {
+            // SAFETY: `path` is a valid null-terminated C string.
+            let opened =
+                unsafe { libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) };
+            if opened >= 0 {
+                fd = opened;
+                break;
+            }
+        }
+        if fd < 0 {
+            return None;
+        }
+
+        // SAFETY: `fd` is an open `/dev/uinput` descriptor; ioctl configures supported event bits.
+        unsafe {
+            if libc::ioctl(fd, UI_SET_EVBIT, c_int::from(EV_SYN)) < 0
+                || libc::ioctl(fd, UI_SET_EVBIT, c_int::from(EV_KEY)) < 0
+                || libc::ioctl(fd, UI_SET_EVBIT, c_int::from(EV_REL)) < 0
+            {
+                let _ = libc::close(fd);
+                return None;
+            }
+
+            for rel in [REL_X, REL_Y, REL_WHEEL, REL_HWHEEL] {
+                if libc::ioctl(fd, UI_SET_RELBIT, c_int::from(rel)) < 0 {
+                    let _ = libc::close(fd);
+                    return None;
+                }
+            }
+
+            for btn in [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE] {
+                if libc::ioctl(fd, UI_SET_KEYBIT, c_int::from(btn)) < 0 {
+                    let _ = libc::close(fd);
+                    return None;
+                }
+            }
+
+            for key in 1..=248 {
+                let _ = libc::ioctl(fd, UI_SET_KEYBIT, key as c_int);
+            }
+
+            let mut setup = UinputSetup {
+                id: InputId { bustype: BUS_USB, vendor: 0x1d6b, product: 0x0104, version: 1 },
+                name: [0u8; 80],
+                ff_effects_max: 0,
+            };
+            let dev_name = b"NectarLink Virtual Input";
+            setup.name[..dev_name.len()].copy_from_slice(dev_name);
+
+            if libc::ioctl(fd, UI_DEV_SETUP, &setup) < 0 || libc::ioctl(fd, UI_DEV_CREATE) < 0 {
+                let _ = libc::close(fd);
+                return None;
+            }
+        }
+
+        Some(Self { fd })
+    }
+
+    fn emit(&self, type_: u16, code: u16, value: i32) -> bool {
+        let ev = InputEvent { tv_sec: 0, tv_usec: 0, type_, code, value };
+        let size = std::mem::size_of::<InputEvent>();
+        // SAFETY: `ev` is a repr(C) `input_event` struct written atomically to `self.fd`.
+        let written = unsafe { libc::write(self.fd, (&raw const ev).cast::<c_void>(), size) };
+        written == size as isize
+    }
+
+    fn syn(&self) -> bool {
+        self.emit(EV_SYN, SYN_REPORT, 0)
+    }
+
+    fn move_relative(&self, dx: i32, dy: i32) -> bool {
+        let mut ok = true;
+        if dx != 0 {
+            ok &= self.emit(EV_REL, REL_X, dx);
+        }
+        if dy != 0 {
+            ok &= self.emit(EV_REL, REL_Y, dy);
+        }
+        ok && self.syn()
+    }
+
+    fn button(&self, btn: u16, down: bool) -> bool {
+        self.emit(EV_KEY, btn, i32::from(down)) && self.syn()
+    }
+
+    fn scroll(&self, nx: i32, ny: i32) -> bool {
+        let mut ok = true;
+        if ny != 0 {
+            // In evdev, positive REL_WHEEL is scroll up; our `ny > 0` is scroll down.
+            ok &= self.emit(EV_REL, REL_WHEEL, -ny);
+        }
+        if nx != 0 {
+            ok &= self.emit(EV_REL, REL_HWHEEL, nx);
+        }
+        ok && self.syn()
+    }
+
+    fn key_combo(&self, keycode: u16, mods: &[u16]) -> bool {
+        let mut ok = true;
+        for &m in mods {
+            ok &= self.emit(EV_KEY, m, 1);
+        }
+        ok &= self.emit(EV_KEY, keycode, 1);
+        ok &= self.syn();
+        ok &= self.emit(EV_KEY, keycode, 0);
+        for &m in mods.iter().rev() {
+            ok &= self.emit(EV_KEY, m, 0);
+        }
+        ok && self.syn()
+    }
+}
+
+impl Drop for UinputDevice {
+    fn drop(&mut self) {
+        if self.fd >= 0 {
+            // SAFETY: `self.fd` is a valid uinput descriptor owned by `self`.
+            unsafe {
+                let _ = libc::ioctl(self.fd, UI_DEV_DESTROY);
+                let _ = libc::close(self.fd);
+            }
+        }
+    }
+}
+
+fn with_uinput<F: FnOnce(&UinputDevice) -> bool>(f: F) -> bool {
+    static UINPUT: OnceLock<Mutex<Option<UinputDevice>>> = OnceLock::new();
+    let mutex = UINPUT.get_or_init(|| Mutex::new(UinputDevice::open()));
+    let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().is_some_and(f)
+}
+
+fn evdev_button_code(button: MouseButton) -> u16 {
+    match button {
+        MouseButton::Left => BTN_LEFT,
+        MouseButton::Right => BTN_RIGHT,
+        MouseButton::Middle => BTN_MIDDLE,
+    }
+}
+
+pub(crate) fn evdev_key_for_mod(m: KeyMod) -> u16 {
+    match m {
+        KeyMod::Ctrl => 29,  // KEY_LEFTCTRL
+        KeyMod::Shift => 42, // KEY_LEFTSHIFT
+        KeyMod::Alt => 56,   // KEY_LEFTALT
+        KeyMod::Win => 125,  // KEY_LEFTMETA
+    }
+}
+
+/// Maps a named X11 keysym (as returned by [`resolve_key`]) to a Linux evdev `KEY_*` code.
+/// Letters and digits aren't here: where they are depends on the layout ([`key_code_for_sym`]).
+pub(crate) fn evdev_key_for_sym(sym: &str) -> Option<u16> {
+    let code = match sym {
+        "Escape" => 1,
+        "BackSpace" => 14,
+        "Tab" => 15,
+        "Return" => 28,
+        "space" => 57,
+        "F1" => 59,
+        "F2" => 60,
+        "F3" => 61,
+        "F4" => 62,
+        "F5" => 63,
+        "F6" => 64,
+        "F7" => 65,
+        "F8" => 66,
+        "F9" => 67,
+        "F10" => 68,
+        "F11" => 87,
+        "F12" => 88,
+        "Print" => 99,
+        "Home" => 102,
+        "Up" => 103,
+        "Prior" => 104,
+        "Left" => 105,
+        "Right" => 106,
+        "End" => 107,
+        "Down" => 108,
+        "Next" => 109,
+        "Insert" => 110,
+        "Delete" => 111,
+        "XF86AudioMute" => 113,
+        "XF86AudioLowerVolume" => 114,
+        "XF86AudioRaiseVolume" => 115,
+        "XF86AudioNext" => 163,
+        "XF86AudioPlay" => 164,
+        "XF86AudioPrev" => 165,
+        _ => return None,
+    };
+    Some(code)
+}
+
+/// The modifier keys a [`KeyPress`](super::keymap::KeyPress) needs held.
+fn press_mods(press: &super::keymap::KeyPress) -> Vec<u16> {
+    let mut mods = Vec::with_capacity(2);
+    if press.shift {
+        mods.push(evdev_key_for_mod(KeyMod::Shift));
+    }
+    if press.altgr {
+        mods.push(super::keymap::KEY_RIGHTALT);
+    }
+    mods
+}
+
+/// The evdev key for a shortcut's key name. Named keys (arrows, F-keys,
+/// Enter) are in the same place on every layout; a letter isn't (Z is
+/// where Y is on a German keyboard), so letters go through the user's
+/// layout, and without a known layout there is no key code to send.
+fn key_code_for_sym(sym: &str) -> Option<u16> {
+    let mut chars = sym.chars();
+    match (chars.next(), chars.next()) {
+        (Some(ch), None) => {
+            super::keymap::current()?.press_for(ch).filter(|p| !p.shift && !p.altgr).map(|p| p.code)
+        }
+        _ => evdev_key_for_sym(sym),
+    }
+}
+
+/// Converts a Unicode character to its X11 keysym (`XK_*` or `0x0100_0000 | codepoint`).
+pub(crate) fn char_to_x11_keysym(ch: char) -> u32 {
+    match ch {
+        '\n' => 0xff0d,     // XK_Return
+        '\t' => 0xff09,     // XK_Tab
+        '\u{08}' => 0xff08, // XK_BackSpace
+        '\u{1b}' => 0xff1b, // XK_Escape
+        ' '..='~' | '\u{a0}'..='\u{ff}' => ch as u32,
+        c => 0x0100_0000 | (c as u32),
+    }
+}
+
+// ---- Wayland `org.freedesktop.portal.RemoteDesktop` backend ----
+struct RemoteDesktopPortal {
+    conn: zbus::blocking::Connection,
+    session_path: zbus::zvariant::OwnedObjectPath,
+}
+
+impl RemoteDesktopPortal {
+    fn connect() -> Option<Self> {
+        let conn = zbus::blocking::Connection::session().ok()?;
+        if !super::dbus_name_has_owner(&conn, "org.freedesktop.portal.Desktop") {
+            return None;
+        }
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface("org.freedesktop.portal.Request")
+            .and_then(|b| b.member("Response"))
+            .map(|b| b.build())
+            .ok()?;
+        let mut iter = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None).ok()?;
+
+        let pid = std::process::id();
+        let session_token = format!("nectarlink_rd_sess_{pid}");
+        let create_token = format!("nectarlink_rd_create_{pid}");
+
+        let mut create_opts: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+        create_opts.insert("handle_token", zbus::zvariant::Value::from(create_token));
+        create_opts.insert("session_handle_token", zbus::zvariant::Value::from(session_token));
+
+        let create_reply = conn
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.RemoteDesktop"),
+                "CreateSession",
+                &(&create_opts,),
+            )
+            .ok()?;
+        let create_req_path =
+            create_reply.body().deserialize::<zbus::zvariant::OwnedObjectPath>().ok().map(|p| p.to_string());
+        let create_results = Self::wait_portal_response(&mut iter, create_req_path.as_deref())?;
+        let session_str =
+            create_results.get("session_handle").and_then(|v| <&str>::try_from(v).ok())?.to_owned();
+        let session_path = zbus::zvariant::OwnedObjectPath::try_from(session_str).ok()?;
+
+        // SelectDevices: types = 3 (1 = KEYBOARD | 2 = POINTER).
+        let select_token = format!("nectarlink_rd_select_{pid}");
+        let mut select_opts: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+        select_opts.insert("handle_token", zbus::zvariant::Value::from(select_token));
+        select_opts.insert("types", zbus::zvariant::Value::U32(3));
+
+        let select_reply = conn
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.RemoteDesktop"),
+                "SelectDevices",
+                &(&session_path, &select_opts),
+            )
+            .ok()?;
+        let select_req_path =
+            select_reply.body().deserialize::<zbus::zvariant::OwnedObjectPath>().ok().map(|p| p.to_string());
+        Self::wait_portal_response(&mut iter, select_req_path.as_deref())?;
+
+        // Start session.
+        let start_token = format!("nectarlink_rd_start_{pid}");
+        let mut start_opts: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+        start_opts.insert("handle_token", zbus::zvariant::Value::from(start_token));
+
+        let start_reply = conn
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.RemoteDesktop"),
+                "Start",
+                &(&session_path, "", &start_opts),
+            )
+            .ok()?;
+        let start_req_path =
+            start_reply.body().deserialize::<zbus::zvariant::OwnedObjectPath>().ok().map(|p| p.to_string());
+        Self::wait_portal_response(&mut iter, start_req_path.as_deref())?;
+
+        Some(Self { conn, session_path })
+    }
+
+    fn wait_portal_response(
+        iter: &mut zbus::blocking::MessageIterator,
+        expected_path: Option<&str>,
+    ) -> Option<HashMap<String, zbus::zvariant::OwnedValue>> {
+        for msg in iter.take(32) {
+            let msg = msg.ok()?;
+            if let Some(expected) = expected_path
+                && msg.header().path().map(|p| p.as_str()) != Some(expected)
+            {
+                continue;
+            }
+            if let Ok((code, results)) =
+                msg.body().deserialize::<(u32, HashMap<String, zbus::zvariant::OwnedValue>)>()
+            {
+                return (code == 0).then_some(results);
+            }
+        }
+        None
+    }
+
+    fn move_relative(&self, dx: f64, dy: f64) -> bool {
+        let opts: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+        self.conn
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.RemoteDesktop"),
+                "NotifyPointerMotion",
+                &(&self.session_path, &opts, dx, dy),
+            )
+            .is_ok()
+    }
+
+    fn move_absolute(&self, x: f64, y: f64) -> bool {
+        let opts: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+        self.conn
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.RemoteDesktop"),
+                "NotifyPointerMotionAbsolute",
+                &(&self.session_path, &opts, 0u32, x, y),
+            )
+            .is_ok()
+    }
+
+    fn button(&self, evdev_btn: i32, down: bool) -> bool {
+        let opts: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+        let state: u32 = u32::from(down);
+        self.conn
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.RemoteDesktop"),
+                "NotifyPointerButton",
+                &(&self.session_path, &opts, evdev_btn, state),
+            )
+            .is_ok()
+    }
+
+    fn scroll(&self, nx: i32, ny: i32) -> bool {
+        let opts: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+        let mut ok = true;
+        if ny != 0 {
+            ok &= self
+                .conn
+                .call_method(
+                    Some("org.freedesktop.portal.Desktop"),
+                    "/org/freedesktop/portal/desktop",
+                    Some("org.freedesktop.portal.RemoteDesktop"),
+                    "NotifyPointerAxisDiscrete",
+                    &(&self.session_path, &opts, 0u32, ny),
+                )
+                .is_ok();
+        }
+        if nx != 0 {
+            ok &= self
+                .conn
+                .call_method(
+                    Some("org.freedesktop.portal.Desktop"),
+                    "/org/freedesktop/portal/desktop",
+                    Some("org.freedesktop.portal.RemoteDesktop"),
+                    "NotifyPointerAxisDiscrete",
+                    &(&self.session_path, &opts, 1u32, nx),
+                )
+                .is_ok();
+        }
+        ok
+    }
+
+    fn keycode(&self, evdev_key: i32, down: bool) -> bool {
+        let opts: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+        let state: u32 = u32::from(down);
+        self.conn
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.RemoteDesktop"),
+                "NotifyKeyboardKeycode",
+                &(&self.session_path, &opts, evdev_key, state),
+            )
+            .is_ok()
+    }
+
+    fn keysym(&self, keysym: i32, down: bool) -> bool {
+        let opts: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+        let state: u32 = u32::from(down);
+        self.conn
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.RemoteDesktop"),
+                "NotifyKeyboardKeysym",
+                &(&self.session_path, &opts, keysym, state),
+            )
+            .is_ok()
+    }
+}
+
+fn with_wayland_portal<F: FnOnce(&RemoteDesktopPortal) -> bool + Send>(f: F) -> bool {
+    if !has_wayland_display() {
+        return false;
+    }
+    super::non_tokio(|| {
+        static PORTAL: OnceLock<Mutex<Option<RemoteDesktopPortal>>> = OnceLock::new();
+        let mutex = PORTAL.get_or_init(|| Mutex::new(RemoteDesktopPortal::connect()));
+        let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().is_some_and(f)
+    })
+}
+
+fn has_remote_desktop_portal() -> bool {
+    super::non_tokio(|| {
+        let Ok(conn) = zbus::blocking::Connection::session() else {
+            return false;
+        };
+        if !super::dbus_name_has_owner(&conn, "org.freedesktop.portal.Desktop") {
+            return false;
+        }
+        let Ok(msg) = conn.call_method(
+            Some("org.freedesktop.portal.Desktop"),
+            "/org/freedesktop/portal/desktop",
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &("org.freedesktop.portal.RemoteDesktop", "AvailableDeviceTypes"),
+        ) else {
+            return false;
+        };
+        if let Ok(val) = msg.body().deserialize::<zbus::zvariant::OwnedValue>()
+            && let Ok(types) = u32::try_from(val)
+        {
+            return types != 0;
+        }
+        true
+    })
+}
+
+// ---- X11 `libX11.so.6` + `libXtst.so.6` (`XTest`) backend ----
 struct X11TestApi {
     _x11_lib: *mut c_void,
     _xtst_lib: *mut c_void,
@@ -24,6 +556,7 @@ struct X11TestApi {
     flush: unsafe extern "C" fn(*mut c_void) -> c_int,
     string_to_keysym: unsafe extern "C" fn(*const c_char) -> c_ulong,
     keysym_to_keycode: unsafe extern "C" fn(*mut c_void, c_ulong) -> u8,
+    keycode_to_keysym: Option<unsafe extern "C" fn(*mut c_void, u8, c_int) -> c_ulong>,
     query_extension:
         unsafe extern "C" fn(*mut c_void, *mut c_int, *mut c_int, *mut c_int, *mut c_int) -> c_int,
     fake_motion: unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int, c_ulong) -> c_int,
@@ -68,6 +601,7 @@ fn x11_test_api() -> Option<&'static X11TestApi> {
             flush: load_sym(x11_lib, c"XFlush")?,
             string_to_keysym: load_sym(x11_lib, c"XStringToKeysym")?,
             keysym_to_keycode: load_sym(x11_lib, c"XKeysymToKeycode")?,
+            keycode_to_keysym: load_sym(x11_lib, c"XKeycodeToKeysym"),
             query_extension: load_sym(xtst_lib, c"XTestQueryExtension")?,
             fake_motion: load_sym(xtst_lib, c"XTestFakeMotionEvent")?,
             fake_relative_motion: load_sym(xtst_lib, c"XTestFakeRelativeMotionEvent")?,
@@ -117,12 +651,24 @@ fn with_xtest<F: FnOnce(&X11TestApi, *mut c_void)>(f: F) -> bool {
     }
 }
 
+fn uinput_writable() -> bool {
+    std::fs::OpenOptions::new().write(true).open("/dev/uinput").is_ok()
+        || std::fs::OpenOptions::new().write(true).open("/dev/input/uinput").is_ok()
+}
+
 /// Returns `true` when input synthesis is supported in the current desktop session.
 pub fn is_available() -> bool {
-    if has_wayland_display() && (has_executable_in_path("ydotool") || has_executable_in_path("wtype")) {
+    if uinput_writable() {
         return true;
     }
     if has_x11_display() && (x11_test_api().is_some() || has_executable_in_path("xdotool")) {
+        return true;
+    }
+    if has_wayland_display()
+        && (has_executable_in_path("ydotool")
+            || has_executable_in_path("wtype")
+            || has_remote_desktop_portal())
+    {
         return true;
     }
     false
@@ -224,7 +770,40 @@ fn run_quiet(program: &str, args: &[&str]) -> bool {
         .is_ok_and(|s| s.success())
 }
 
+fn run_with_stdin(program: &str, args: &[&str], input: &[u8]) -> bool {
+    if !has_display_env() {
+        return false;
+    }
+    let Ok(mut child) = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    if let Some(mut stdin) = child.stdin.take()
+        && stdin.write_all(input).is_err()
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return false;
+    }
+    child.wait().is_ok_and(|s| s.success())
+}
+
 fn display_dimensions() -> (i32, i32) {
+    let mut sx = 0;
+    let mut sy = 0;
+    let mut sw = 0;
+    let mut sh = 0;
+    if crate::bridge::native::ffi::linux_screen_geometry(&mut sx, &mut sy, &mut sw, &mut sh)
+        && sw > 0
+        && sh > 0
+    {
+        return (sw, sh);
+    }
     if let Some((x, y, w, h)) = super::work_area() {
         let total_w = (x.max(0) + w).max(1);
         let total_h = (y.max(0) + h).max(1);
@@ -273,6 +852,12 @@ pub fn move_relative(dx: f32, dy: f32) {
     if ix == 0 && iy == 0 {
         return;
     }
+    if with_uinput(|u| u.move_relative(ix, iy)) {
+        return;
+    }
+    if with_wayland_portal(|p| p.move_relative(f64::from(ix), f64::from(iy))) {
+        return;
+    }
     let sx = ix.to_string();
     let sy = iy.to_string();
     if has_wayland_display() && run_quiet("ydotool", &["mousemove", "-x", &sx, "-y", &sy]) {
@@ -296,6 +881,9 @@ pub fn move_absolute(x: f32, y: f32) {
     }
     let (w, h) = display_dimensions();
     let (px, py) = normalized_to_pixels(x, y, w, h);
+    if with_wayland_portal(|p| p.move_absolute(f64::from(px), f64::from(py))) {
+        return;
+    }
     let sx = px.to_string();
     let sy = py.to_string();
     if has_wayland_display() && run_quiet("ydotool", &["mousemove", "--absolute", "-x", &sx, "-y", &sy]) {
@@ -388,6 +976,21 @@ pub fn mouse_button(button: MouseButton, action: ButtonAction) {
         let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
         s.record_button(button, action);
     }
+    let evdev_btn = evdev_button_code(button);
+    if with_uinput(|u| match action {
+        ButtonAction::Click => u.button(evdev_btn, true) && u.button(evdev_btn, false),
+        ButtonAction::Down => u.button(evdev_btn, true),
+        ButtonAction::Up => u.button(evdev_btn, false),
+    }) {
+        return;
+    }
+    if with_wayland_portal(|p| match action {
+        ButtonAction::Click => p.button(i32::from(evdev_btn), true) && p.button(i32::from(evdev_btn), false),
+        ButtonAction::Down => p.button(i32::from(evdev_btn), true),
+        ButtonAction::Up => p.button(i32::from(evdev_btn), false),
+    }) {
+        return;
+    }
     let ydo_code = match (button, action) {
         (MouseButton::Left, ButtonAction::Click) => "0xC0",
         (MouseButton::Left, ButtonAction::Down) => "0x40",
@@ -437,6 +1040,36 @@ pub fn release_held_buttons() {
         s.take_held_and_reset()
     };
     if !left && !right && !middle {
+        return;
+    }
+    if with_uinput(|u| {
+        let mut ok = true;
+        if left {
+            ok &= u.button(BTN_LEFT, false);
+        }
+        if middle {
+            ok &= u.button(BTN_MIDDLE, false);
+        }
+        if right {
+            ok &= u.button(BTN_RIGHT, false);
+        }
+        ok
+    }) {
+        return;
+    }
+    if with_wayland_portal(|p| {
+        let mut ok = true;
+        if left {
+            ok &= p.button(i32::from(BTN_LEFT), false);
+        }
+        if middle {
+            ok &= p.button(i32::from(BTN_MIDDLE), false);
+        }
+        if right {
+            ok &= p.button(i32::from(BTN_RIGHT), false);
+        }
+        ok
+    }) {
         return;
     }
     if has_wayland_display() {
@@ -492,6 +1125,12 @@ pub fn scroll(dx: f32, dy: f32) {
     if nx == 0 && ny == 0 {
         return;
     }
+    if with_uinput(|u| u.scroll(nx, ny)) {
+        return;
+    }
+    if with_wayland_portal(|p| p.scroll(nx, ny)) {
+        return;
+    }
     if has_wayland_display() {
         let mut ydo_ok = true;
         if ny != 0 {
@@ -544,17 +1183,105 @@ pub fn scroll(dx: f32, dy: f32) {
     }
 }
 
-/// Types arbitrary Unicode text (filtering carriage returns `\r`).
+/// Types arbitrary Unicode text (filtering carriage returns `\r`) without
+/// exposing the text on any subprocess command line (`ps` / `/proc/<pid>/cmdline`).
 pub fn type_text(text: &str) {
     let cleaned: String = text.chars().filter(|&c| c != '\r').collect();
     if cleaned.is_empty() {
         return;
     }
-    if has_wayland_display() && run_quiet("wtype", &["--", &cleaned]) {
+
+    // 1. `/dev/uinput`, pressing the keys that type each character on the
+    //    user's layout. Without a known layout, skip it: a guessed layout
+    //    types the wrong characters.
+    let presses: Option<Vec<super::keymap::KeyPress>> =
+        super::keymap::current().and_then(|km| cleaned.chars().map(|ch| km.press_for(ch)).collect());
+    if let Some(ref presses) = presses
+        && with_uinput(|u| presses.iter().all(|p| u.key_combo(p.code, &press_mods(p))))
+    {
         return;
     }
-    if !run_quiet("xdotool", &["type", "--clearmodifiers", "--delay", "0", "--", &cleaned]) {
-        let _ = run_quiet("wtype", &["--", &cleaned]);
+
+    // 2. On Wayland, try `org.freedesktop.portal.RemoteDesktop.NotifyKeyboardKeysym`.
+    if with_wayland_portal(|p| {
+        cleaned.chars().all(|ch| {
+            let ks = char_to_x11_keysym(ch) as i32;
+            p.keysym(ks, true) && p.keysym(ks, false)
+        })
+    }) {
+        return;
+    }
+
+    // 3. On X11, try in-process XTest key injection when all characters map to keycodes.
+    let mut xtest_typed = false;
+    let _ = with_xtest(|api, dpy| unsafe {
+        let shift_ks = (api.string_to_keysym)(c"Shift_L".as_ptr());
+        let shift_kc = c_uint::from((api.keysym_to_keycode)(dpy, shift_ks));
+        let mut steps: Vec<(c_uint, bool)> = Vec::with_capacity(cleaned.len());
+        for ch in cleaned.chars() {
+            let ks = c_ulong::from(char_to_x11_keysym(ch));
+            let kc = (api.keysym_to_keycode)(dpy, ks);
+            if kc == 0 {
+                return;
+            }
+            let needs_shift = if let Some(kc_to_ks) = api.keycode_to_keysym {
+                let unshifted = kc_to_ks(dpy, kc, 0);
+                let shifted = kc_to_ks(dpy, kc, 1);
+                unshifted != ks && shifted == ks
+            } else {
+                ch.is_ascii_uppercase()
+                    || matches!(
+                        ch,
+                        '!' | '@'
+                            | '#'
+                            | '$'
+                            | '%'
+                            | '^'
+                            | '&'
+                            | '*'
+                            | '('
+                            | ')'
+                            | '_'
+                            | '+'
+                            | '{'
+                            | '}'
+                            | '|'
+                            | ':'
+                            | '"'
+                            | '<'
+                            | '>'
+                            | '?'
+                            | '~'
+                    )
+            };
+            steps.push((c_uint::from(kc), needs_shift));
+        }
+        for (kc, shift) in steps {
+            if shift && shift_kc != 0 {
+                let _ = (api.fake_key)(dpy, shift_kc, 1, 0);
+            }
+            let _ = (api.fake_key)(dpy, kc, 1, 0);
+            let _ = (api.fake_key)(dpy, kc, 0, 0);
+            if shift && shift_kc != 0 {
+                let _ = (api.fake_key)(dpy, shift_kc, 0, 0);
+            }
+        }
+        xtest_typed = true;
+    });
+    if xtest_typed {
+        return;
+    }
+
+    // 4. Pipe text over stdin (`wtype -` or `xdotool type --file -`) so it is never on argv.
+    if has_wayland_display() && run_with_stdin("wtype", &["-"], cleaned.as_bytes()) {
+        return;
+    }
+    if !run_with_stdin(
+        "xdotool",
+        &["type", "--clearmodifiers", "--delay", "0", "--file", "-"],
+        cleaned.as_bytes(),
+    ) {
+        let _ = run_with_stdin("wtype", &["-"], cleaned.as_bytes());
     }
 }
 
@@ -674,6 +1401,28 @@ pub fn press_key(key: &str, mods: &[KeyMod]) {
             all_mods.push(m);
         }
     }
+
+    if let Some(evdev_code) = key_code_for_sym(&sym) {
+        let mod_codes: Vec<u16> = all_mods.iter().map(|&m| evdev_key_for_mod(m)).collect();
+        if with_uinput(|u| u.key_combo(evdev_code, &mod_codes)) {
+            return;
+        }
+        if with_wayland_portal(|p| {
+            let mut ok = true;
+            for &mc in &mod_codes {
+                ok &= p.keycode(i32::from(mc), true);
+            }
+            ok &= p.keycode(i32::from(evdev_code), true);
+            ok &= p.keycode(i32::from(evdev_code), false);
+            for &mc in mod_codes.iter().rev() {
+                ok &= p.keycode(i32::from(mc), false);
+            }
+            ok
+        }) {
+            return;
+        }
+    }
+
     if has_wayland_display() {
         let mut wtype_args: Vec<String> = Vec::new();
         for &m in &all_mods {
@@ -753,7 +1502,6 @@ pub(crate) fn parse_idle_output_ms(raw: &str, is_seconds: bool) -> Option<u64> {
     if let Ok(val) = trimmed.parse::<u64>() {
         return Some(if is_seconds { val.saturating_mul(1000) } else { val });
     }
-    // Extract the first integer token from gdbus tuple output like "(uint64 8801,)" or "(uint32 12,)".
     for token in trimmed.split(|c: char| !c.is_ascii_digit()) {
         if !token.is_empty()
             && token != "64"
@@ -766,47 +1514,74 @@ pub(crate) fn parse_idle_output_ms(raw: &str, is_seconds: bool) -> Option<u64> {
     None
 }
 
-fn query_idle_ms_dbus() -> Option<u64> {
-    let conn = zbus::blocking::Connection::session().ok()?;
-    if let Ok(reply) = conn.call_method(
-        Some("org.gnome.Mutter.IdleMonitor"),
-        "/org/gnome/Mutter/IdleMonitor/Core",
-        Some("org.gnome.Mutter.IdleMonitor"),
-        "GetIdletime",
-        &(),
-    ) && let Ok(ms) = reply.body().deserialize::<u64>()
-    {
-        return Some(ms);
-    }
-    if let Ok(reply) = conn.call_method(
-        Some("org.freedesktop.ScreenSaver"),
-        "/org/freedesktop/ScreenSaver",
-        Some("org.freedesktop.ScreenSaver"),
-        "GetSessionIdleTime",
-        &(),
-    ) {
-        let body = reply.body();
-        if let Ok(val) = body.deserialize::<u32>() {
-            return Some(u64::from(val));
-        }
-        if let Ok(val) = body.deserialize::<u64>() {
-            return Some(val);
-        }
-    }
-    None
-}
-
 fn query_idle_ms() -> Option<u64> {
     if !has_display_env() {
         return None;
     }
-    if let Ok(out) = Command::new("xprintidle").stdin(Stdio::null()).stderr(Stdio::null()).output()
+
+    // 1. On X11, prefer `xprintidle` first (always returns milliseconds).
+    if has_x11_display()
+        && let Ok(out) = Command::new("xprintidle").stdin(Stdio::null()).stderr(Stdio::null()).output()
         && out.status.success()
         && let Some(ms) = parse_idle_output_ms(&String::from_utf8_lossy(&out.stdout), false)
     {
         return Some(ms);
     }
-    query_idle_ms_dbus()
+
+    // 2. Query D-Bus idle monitors in-process via `zbus::blocking::Connection::session()`.
+    if let Some(ms) = super::non_tokio(|| {
+        let conn = zbus::blocking::Connection::session().ok()?;
+        // GNOME Mutter IdleMonitor returns u64 milliseconds.
+        if super::dbus_name_has_owner(&conn, "org.gnome.Mutter.IdleMonitor")
+            && let Ok(reply) = conn.call_method(
+                Some("org.gnome.Mutter.IdleMonitor"),
+                "/org/gnome/Mutter/IdleMonitor/Core",
+                Some("org.gnome.Mutter.IdleMonitor"),
+                "GetIdletime",
+                &(),
+            )
+        {
+            let body = reply.body();
+            if let Ok(ms) = body.deserialize::<u64>().or_else(|_| body.deserialize::<(u64,)>().map(|(v,)| v))
+            {
+                return Some(ms);
+            }
+        }
+
+        // Freedesktop ScreenSaver (`GetSessionIdleTime` returns u32).
+        if super::dbus_name_has_owner(&conn, "org.freedesktop.ScreenSaver") {
+            for path in ["/org/freedesktop/ScreenSaver", "/ScreenSaver"] {
+                if let Ok(reply) = conn.call_method(
+                    Some("org.freedesktop.ScreenSaver"),
+                    path,
+                    Some("org.freedesktop.ScreenSaver"),
+                    "GetSessionIdleTime",
+                    &(),
+                ) {
+                    let body = reply.body();
+                    if let Ok(val) =
+                        body.deserialize::<u32>().or_else(|_| body.deserialize::<(u32,)>().map(|(v,)| v))
+                    {
+                        return Some(u64::from(val));
+                    }
+                }
+            }
+        }
+        None
+    }) {
+        return Some(ms);
+    }
+
+    // 3. Fallback to `xprintidle` on Wayland with XWayland if D-Bus idle monitors were unavailable.
+    if !has_x11_display()
+        && let Ok(out) = Command::new("xprintidle").stdin(Stdio::null()).stderr(Stdio::null()).output()
+        && out.status.success()
+        && let Some(ms) = parse_idle_output_ms(&String::from_utf8_lossy(&out.stdout), false)
+    {
+        return Some(ms);
+    }
+
+    None
 }
 
 /// Returns `true` when the user has moved the mouse or pressed a key on this PC
@@ -837,6 +1612,20 @@ mod tests {
         assert_eq!(resolve_key("volume_up"), Some(("XF86AudioRaiseVolume".to_owned(), &[][..])));
         assert_eq!(resolve_key("print"), Some(("Print".to_owned(), &[][..])));
         assert!(resolve_key("unknown_key").is_none());
+    }
+
+    #[test]
+    fn maps_evdev_keys_and_unicode_keysyms() {
+        assert_eq!(evdev_key_for_sym("Return"), Some(28));
+        assert_eq!(evdev_key_for_sym("Escape"), Some(1));
+        assert_eq!(evdev_key_for_sym("F5"), Some(63));
+        assert_eq!(evdev_key_for_sym("XF86AudioPlay"), Some(164));
+        assert_eq!(evdev_key_for_mod(KeyMod::Win), 125);
+
+        assert_eq!(char_to_x11_keysym('a'), 0x61);
+        assert_eq!(char_to_x11_keysym('\n'), 0xff0d);
+        assert_eq!(char_to_x11_keysym('é'), 0x00e9);
+        assert_eq!(char_to_x11_keysym('€'), 0x0100_20ac);
     }
 
     #[test]
@@ -883,6 +1672,7 @@ mod tests {
 
         assert_eq!(parse_idle_output_ms("8801\n", false), Some(8801));
         assert_eq!(parse_idle_output_ms("(uint64 4250,)", false), Some(4250));
+        assert_eq!(parse_idle_output_ms("(uint32 19,)", true), Some(19_000));
         assert_eq!(parse_idle_output_ms("12", true), Some(12_000));
     }
 }

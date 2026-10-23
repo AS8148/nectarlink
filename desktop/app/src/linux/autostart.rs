@@ -109,7 +109,7 @@ pub fn set_enabled(enabled: bool) -> Result<(), String> {
 
 /// Whether `exe` is installed in a standard Linux application location (rather
 /// than run directly from a `target/` build directory).
-pub fn is_installed(exe: &Path) -> bool {
+pub fn is_installed_location(exe: &Path) -> bool {
     if std::env::var_os("APPIMAGE").is_some() {
         return true;
     }
@@ -117,10 +117,24 @@ pub fn is_installed(exe: &Path) -> bool {
     if s.contains("/target/debug/") || s.contains("/target/release/") {
         return false;
     }
-    exe.starts_with("/usr/bin")
-        || exe.starts_with("/usr/local/bin")
+    exe.starts_with("/usr")
         || exe.starts_with("/opt")
-        || dirs::data_local_dir().is_some_and(|d| exe.starts_with(d))
+        || s.contains("/.local/share/nectarlink-app/")
+        || s.contains("/.local/bin/")
+        || dirs::data_local_dir()
+            .is_some_and(|d| exe.starts_with(&d) || exe.starts_with(d.join("nectarlink-app")))
+        || dirs::executable_dir().is_some_and(|d| exe.starts_with(d))
+        || dirs::home_dir().is_some_and(|h| {
+            exe.starts_with(h.join(".local/share/nectarlink-app"))
+                || exe.starts_with(h.join(".local/bin"))
+                || exe.starts_with(h.join(".local/share"))
+        })
+}
+
+/// Whether `exe` is installed in a standard Linux application location (rather
+/// than run directly from a `target/` build directory).
+pub fn is_installed(exe: &Path) -> bool {
+    is_installed_location(exe)
 }
 
 #[cfg(test)]
@@ -148,7 +162,12 @@ mod tests {
     #[test]
     fn detects_installed_vs_build_paths() {
         assert!(is_installed(Path::new("/usr/bin/nectarlink-desktop")));
+        assert!(is_installed(Path::new("/usr/local/bin/nectarlink-desktop")));
         assert!(is_installed(Path::new("/opt/nectarlink/nectarlink-desktop")));
+        assert!(is_installed_location(Path::new(
+            "/home/user/.local/share/nectarlink-app/nectarlink-desktop"
+        )));
+        assert!(is_installed_location(Path::new("/home/user/.local/bin/nectarlink-desktop")));
         assert!(!is_installed(Path::new("/home/user/repo/target/debug/nectarlink-desktop")));
         assert!(!is_installed(Path::new("/home/user/repo/target/release/nectarlink-desktop")));
     }

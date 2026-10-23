@@ -1815,6 +1815,10 @@ mod imp {
     pub fn on_event(_event: &NodeEvent) {}
 
     pub fn set_mute_while_watched(_on: bool) {}
+
+    pub fn pipewire_capture_installed() -> bool {
+        false
+    }
 }
 
 pub use imp::*;

@@ -164,6 +164,9 @@ data class Device(
         }
 }
 
+/** The output a PC's deck state lists while it plays its sound on this phone. */
+const val PHONE_SPEAKER_OUTPUT = "nectarlink:phone_speaker"
+
 private val deviceOrder: Comparator<Device> =
     compareByDescending<Device> { it.online }.thenBy { it.pairedAt }
 
@@ -249,6 +252,16 @@ data class CoreState(
     val activeMediaColor: UInt? = null,
 ) {
     fun device(id: String): Device? = devices.firstOrNull { it.id == id }
+
+    /**
+     * Whether a connected PC has "Phone as speaker" on: its deck state lists
+     * this phone as an output. The PC stops sending audio during silence, so
+     * this stays true across pauses where no frames arrive.
+     */
+    val pcSpeakerRelayOn: Boolean
+        get() = devices.any { d ->
+            d.online && d.deckState?.outputDevices?.any { it.id == PHONE_SPEAKER_OUTPUT } == true
+        }
 
     fun nameOf(id: String): String? =
         device(id)?.name

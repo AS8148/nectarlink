@@ -2,6 +2,7 @@
 #include "native_window.h"
 #include "app_helpers.h"
 
+#include <QtGui/QImage>
 #include <QtGui/QPlatformSurfaceEvent>
 #include <QtQml/QtQml>
 #include <QtQuick/QSGRendererInterface>
@@ -17,6 +18,7 @@
 #include <windowsx.h>
 #elif defined(__linux__)
 #include <QtGui/QCursor>
+#include <QtGui/QGuiApplication>
 #include <QtGui/QMouseEvent>
 #include <cstring>
 #include <dlfcn.h>
@@ -63,15 +65,25 @@ void trimD3DResources(QQuickWindow *)
 #endif
 
 #ifdef __linux__
+int ignoreX11Error(void *, void *)
+{
+    return 0;
+}
+
 void activateX11Window(WId winId)
 {
     if (!winId || qEnvironmentVariableIsEmpty("DISPLAY"))
+        return;
+    // On Wayland, QWindow::winId() is not an X11 Window ID even when XWayland sets DISPLAY.
+    if (QGuiApplication::platformName() != QLatin1String("xcb"))
         return;
 
     void *lib = dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
     if (!lib)
         return;
 
+    using XErrorHandlerFn = int (*)(void *, void *);
+    using XSetErrorHandlerFn = XErrorHandlerFn (*)(XErrorHandlerFn);
     using XOpenDisplayFn = void *(*)(const char *);
     using XCloseDisplayFn = int (*)(void *);
     using XDefaultRootWindowFn = unsigned long (*)(void *);
@@ -79,8 +91,10 @@ void activateX11Window(WId winId)
     using XSendEventFn = int (*)(void *, unsigned long, int, long, void *);
     using XMapRaisedFn = int (*)(void *, unsigned long);
     using XSetInputFocusFn = int (*)(void *, unsigned long, int, unsigned long);
+    using XSyncFn = int (*)(void *, int);
     using XFlushFn = int (*)(void *);
 
+    auto xSetErrorHandler = reinterpret_cast<XSetErrorHandlerFn>(dlsym(lib, "XSetErrorHandler"));
     auto xOpenDisplay = reinterpret_cast<XOpenDisplayFn>(dlsym(lib, "XOpenDisplay"));
     auto xCloseDisplay = reinterpret_cast<XCloseDisplayFn>(dlsym(lib, "XCloseDisplay"));
     auto xDefaultRootWindow = reinterpret_cast<XDefaultRootWindowFn>(dlsym(lib, "XDefaultRootWindow"));
@@ -88,10 +102,12 @@ void activateX11Window(WId winId)
     auto xSendEvent = reinterpret_cast<XSendEventFn>(dlsym(lib, "XSendEvent"));
     auto xMapRaised = reinterpret_cast<XMapRaisedFn>(dlsym(lib, "XMapRaised"));
     auto xSetInputFocus = reinterpret_cast<XSetInputFocusFn>(dlsym(lib, "XSetInputFocus"));
+    auto xSync = reinterpret_cast<XSyncFn>(dlsym(lib, "XSync"));
     auto xFlush = reinterpret_cast<XFlushFn>(dlsym(lib, "XFlush"));
 
     if (xOpenDisplay && xCloseDisplay && xDefaultRootWindow && xInternAtom && xSendEvent && xFlush) {
         if (void *dpy = xOpenDisplay(nullptr)) {
+            XErrorHandlerFn prevHandler = xSetErrorHandler ? xSetErrorHandler(ignoreX11Error) : nullptr;
             const unsigned long root = xDefaultRootWindow(dpy);
             const unsigned long window = static_cast<unsigned long>(winId);
             const unsigned long netActiveWindow = xInternAtom(dpy, "_NET_ACTIVE_WINDOW", 0);
@@ -127,7 +143,12 @@ void activateX11Window(WId winId)
             if (xSetInputFocus)
                 xSetInputFocus(dpy, window, 1 /* RevertToPointerRoot */, 0 /* CurrentTime */);
 
-            xFlush(dpy);
+            if (xSync)
+                xSync(dpy, 0);
+            else
+                xFlush(dpy);
+            if (xSetErrorHandler)
+                xSetErrorHandler(prevHandler);
             xCloseDisplay(dpy);
         }
     }
@@ -153,14 +174,32 @@ protected:
         case QEvent::MouseMove: {
             auto *me = static_cast<QMouseEvent *>(event);
             if (me->buttons() == Qt::NoButton) {
+                pendingMove_ = false;
+                manualMove_ = false;
                 const Qt::Edges edges = hitResizeEdges(me->position());
                 updateCursorForEdges(edges);
+            } else if (me->buttons() & Qt::LeftButton) {
+                if (pendingMove_) {
+                    if ((me->position() - pressPos_).manhattanLength() >= 4) {
+                        pendingMove_ = false;
+                        if (!window_->startSystemMove()) {
+                            manualMove_ = true;
+                        }
+                        return true;
+                    }
+                } else if (manualMove_) {
+                    const QPointF delta = me->globalPosition() - globalPressPos_;
+                    window_->setPosition(winStartPos_ + delta.toPoint());
+                    return true;
+                }
             }
             break;
         }
         case QEvent::MouseButtonPress: {
             auto *me = static_cast<QMouseEvent *>(event);
             if (me->button() == Qt::LeftButton) {
+                pendingMove_ = false;
+                manualMove_ = false;
                 const QPointF pos = me->position();
                 const Qt::Edges edges = hitResizeEdges(pos);
                 if (edges != Qt::Edges()) {
@@ -168,8 +207,23 @@ protected:
                     return true;
                 }
                 const qreal titleBarHeight = window_->captionHeight();
-                if (pos.y() < titleBarHeight && !hitInteractiveControl(window_->contentItem(), pos)) {
-                    window_->startSystemMove();
+                if (pos.y() < titleBarHeight
+                    && !window_->isCaptionHoleAt(pos)
+                    && !hitInteractiveControl(window_->contentItem(), pos)) {
+                    pendingMove_ = true;
+                    pressPos_ = pos;
+                    globalPressPos_ = me->globalPosition();
+                    winStartPos_ = window_->position();
+                }
+            }
+            break;
+        }
+        case QEvent::MouseButtonRelease: {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton) {
+                pendingMove_ = false;
+                if (manualMove_) {
+                    manualMove_ = false;
                     return true;
                 }
             }
@@ -178,10 +232,13 @@ protected:
         case QEvent::MouseButtonDblClick: {
             auto *me = static_cast<QMouseEvent *>(event);
             if (me->button() == Qt::LeftButton) {
+                pendingMove_ = false;
+                manualMove_ = false;
                 const QPointF pos = me->position();
                 const Qt::Edges edges = hitResizeEdges(pos);
                 const qreal titleBarHeight = window_->captionHeight();
                 if (edges == Qt::Edges() && pos.y() < titleBarHeight
+                    && !window_->isCaptionHoleAt(pos)
                     && !hitInteractiveControl(window_->contentItem(), pos)) {
                     window_->toggleMaximized();
                     return true;
@@ -208,7 +265,8 @@ private:
             || window_->minimumSize() == window_->maximumSize()) {
             return {};
         }
-        if (pos.y() < window_->captionHeight() && hitInteractiveControl(window_->contentItem(), pos)) {
+        if (pos.y() < window_->captionHeight()
+            && (window_->isCaptionHoleAt(pos) || hitInteractiveControl(window_->contentItem(), pos))) {
             return {};
         }
         const qreal w = window_->width();
@@ -272,6 +330,11 @@ private:
     NativeWindow *window_ = nullptr;
     int resizeBorderWidth_ = 6;
     bool borderCursorActive_ = false;
+    bool pendingMove_ = false;
+    bool manualMove_ = false;
+    QPointF pressPos_;
+    QPointF globalPressPos_;
+    QPoint winStartPos_;
 };
 #endif
 
@@ -382,8 +445,12 @@ void NativeWindow::toggleMaximized()
 
 void NativeWindow::bringToFront()
 {
-    if (visibility() == QWindow::Minimized || !isVisible())
+    if (visibility() == QWindow::Minimized) {
+        setWindowStates((windowStates() & ~Qt::WindowMinimized) | Qt::WindowActive);
+        show();
+    } else if (!isVisible()) {
         showNormal();
+    }
     raise();
     requestActivate();
 #ifdef _WIN32
@@ -434,6 +501,16 @@ void NativeWindow::releaseAndTeardown()
     hide();
     trimD3DResources(this);
     destroy();
+}
+
+bool NativeWindow::grabToFile(const QString &path)
+{
+    if (path.isEmpty())
+        return false;
+    const QImage image = grabWindow();
+    if (image.isNull())
+        return false;
+    return image.save(path);
 }
 
 bool NativeWindow::event(QEvent *event)
@@ -492,6 +569,17 @@ bool NativeWindow::itemContains(const QQuickItem *item, const QPointF &scenePoin
     if (!item || !item->isVisible())
         return false;
     return item->mapRectToScene(QRectF(0, 0, item->width(), item->height())).contains(scenePoint);
+}
+
+bool NativeWindow::isCaptionHoleAt(const QPointF &scenePoint) const
+{
+    if (itemContains(m_maximizeButton, scenePoint))
+        return true;
+    for (const auto &hole : m_holes) {
+        if (itemContains(hole, scenePoint))
+            return true;
+    }
+    return false;
 }
 
 long NativeWindow::hitTest(int screenX, int screenY) const

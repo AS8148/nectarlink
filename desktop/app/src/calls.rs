@@ -58,8 +58,11 @@ fn note_call_ended(device: DeviceId) {
     let all_done = ongoing_calls(|c| c.remove(&device) && c.is_empty());
     if all_done {
         crate::win::media_sessions::resume_after_call();
-        bt_hfp::disconnect_audio();
-        refresh_hfp_cache(None);
+        let _ = std::thread::Builder::new().name("hfp-disconnect".into()).spawn(|| {
+            bt_hfp::disconnect_audio();
+            refresh_hfp_cache(None);
+            page_changed();
+        });
     }
 }
 
@@ -604,7 +607,7 @@ pub fn open_device(device: DeviceId) {
         }
         same
     });
-    refresh_hfp_cache(Some(device));
+    refresh_hfp_cache_async(Some(device));
     if !same {
         page_changed();
     }
@@ -630,7 +633,7 @@ pub fn ensure_contacts(device: DeviceId) {
 
 pub fn reload() {
     let dev = page_state(|s| s.device);
-    refresh_hfp_cache(dev);
+    refresh_hfp_cache_async(dev);
     load_call_log(None);
     load_contacts();
 }
@@ -901,35 +904,52 @@ fn refresh_hfp_cache(device: Option<DeviceId>) -> bt_hfp::HfpStatus {
     status
 }
 
+fn refresh_hfp_cache_async(device: Option<DeviceId>) {
+    let target = device.or_else(|| page_state(|s| s.device));
+    let _ = std::thread::Builder::new().name("hfp-probe".into()).spawn(move || {
+        refresh_hfp_cache(target);
+        page_changed();
+    });
+}
+
 /// Returns the current Bluetooth HFP / PC audio status for `device`.
 pub fn hfp_status(device: Option<DeviceId>) -> bt_hfp::HfpStatus {
     let target = device.or_else(|| page_state(|s| s.device));
-    if let Ok(guard) = HFP_CACHE.lock()
-        && let Some((cached_dev, status)) = guard.as_ref()
-        && *cached_dev == target
-    {
-        return status.clone();
+    if let Ok(mut guard) = HFP_CACHE.lock() {
+        if let Some((cached_dev, status)) = guard.as_ref()
+            && *cached_dev == target
+        {
+            return status.clone();
+        }
+        let placeholder = bt_hfp::HfpStatus::default();
+        *guard = Some((target, placeholder.clone()));
+        drop(guard);
+        refresh_hfp_cache_async(target);
+        return placeholder;
     }
-    refresh_hfp_cache(target)
+    bt_hfp::HfpStatus::default()
 }
 
 /// Opens a Bluetooth connection to route call audio through this PC.
 pub fn connect_pc_audio(device: Option<DeviceId>) {
     let target = device.or_else(|| page_state(|s| s.device));
     let name = target.map(phone_name);
-    match bt_hfp::connect_audio(name.as_deref()) {
-        Ok(status) => {
-            if let Ok(mut guard) = HFP_CACHE.lock() {
-                *guard = Some((target, status));
+    let _ =
+        std::thread::Builder::new().name("hfp-connect".into()).spawn(move || {
+            match bt_hfp::connect_audio(name.as_deref()) {
+                Ok(status) => {
+                    if let Ok(mut guard) = HFP_CACHE.lock() {
+                        *guard = Some((target, status));
+                    }
+                    page_changed();
+                }
+                Err(err) => {
+                    refresh_hfp_cache(target);
+                    page_changed();
+                    show_message(err);
+                }
             }
-            page_changed();
-        }
-        Err(err) => {
-            refresh_hfp_cache(target);
-            page_changed();
-            show_message(err);
-        }
-    }
+        });
 }
 
 /// Opens Windows Bluetooth & devices settings (`ms-settings:bluetooth`).

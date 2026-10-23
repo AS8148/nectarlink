@@ -795,11 +795,15 @@ pub fn view() -> View {
                 })
                 .collect(),
         );
+        #[cfg(windows)]
+        const DEFAULT_SAVE_FOLDER: &str = r"Downloads\Nectarlink";
+        #[cfg(not(windows))]
+        const DEFAULT_SAVE_FOLDER: &str = "Downloads/Nectarlink";
         let save_folder = s
             .save_folder
             .as_deref()
             .map(folder_display_name)
-            .unwrap_or_else(|| r"Downloads\Nectarlink".to_owned());
+            .unwrap_or_else(|| DEFAULT_SAVE_FOLDER.to_owned());
         View {
             device: s.device,
             status: s.status,

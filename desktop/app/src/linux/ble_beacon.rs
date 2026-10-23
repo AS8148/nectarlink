@@ -1,25 +1,51 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+//! Linux BLE proximity RSSI monitor via BlueZ D-Bus (`org.freedesktop.DBus.ObjectManager`).
+//! Never spawns interactive `bluetoothctl` sessions or `scan on`, and matches only
+//! paired NectarLink phones (or devices advertising the NectarLink BLE UUID /
+//! manufacturer frame) when walk-away automation is enabled.
+
 use std::collections::HashMap;
-use std::process::{Child, Command, Stdio};
 use std::sync::{
-    Mutex,
+    Condvar, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use nectarlink_core::DeviceId;
+use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 pub const COMPANY_ID: u16 = 0xFFFF;
 pub const MAGIC: &[u8; 5] = b"NCTR\x01";
 pub const NEAR_RSSI_DBM: i16 = -72;
 pub const WALK_AWAY_RSSI_DBM: i16 = -85;
+pub const NECTARLINK_BLE_UUID: &str = "f81d4fae-7dec-11d0-a765-00a0c91e6bf6";
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
-const POLL_STEP: Duration = Duration::from_millis(100);
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+static STOP_MU: Mutex<bool> = Mutex::new(false);
+static STOP_CV: Condvar = Condvar::new();
 static WORKER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+
+type ManagedObjects = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairedPhone {
+    pub prefix: [u8; 8],
+    pub name: String,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BluezDeviceCandidate {
+    pub address: Option<String>,
+    pub name: Option<String>,
+    pub alias: Option<String>,
+    pub rssi: Option<i16>,
+    pub uuids: Vec<String>,
+    pub mfg_payload: Option<Vec<u8>>,
+}
 
 #[derive(Debug, Default)]
 pub struct RssiTracker {
@@ -84,6 +110,7 @@ pub fn start(device_id: DeviceId) {
     if RUNNING.swap(true, Ordering::SeqCst) {
         return;
     }
+    *STOP_MU.lock().unwrap_or_else(|e| e.into_inner()) = false;
     let handle = thread::Builder::new().name("ble-beacon".into()).spawn(move || run_worker(device_id)).ok();
     if let Ok(mut guard) = WORKER.lock() {
         *guard = handle;
@@ -92,6 +119,11 @@ pub fn start(device_id: DeviceId) {
 
 pub fn stop() {
     RUNNING.store(false, Ordering::SeqCst);
+    {
+        let mut stopped = STOP_MU.lock().unwrap_or_else(|e| e.into_inner());
+        *stopped = true;
+        STOP_CV.notify_all();
+    }
     let handle = WORKER.lock().ok().and_then(|mut guard| guard.take());
     if let Some(h) = handle {
         let _ = h.join();
@@ -103,59 +135,17 @@ fn walk_away_lock_enabled() -> bool {
     !crate::automations::matching_rules(&rules, crate::automations::TRIGGER_PHONE_WALKED_AWAY).is_empty()
 }
 
-fn start_bluetoothctl_advertisement(payload: &[u8; 13]) -> Option<Child> {
-    let hex_bytes = payload.iter().map(|b| format!("0x{b:02x}")).collect::<Vec<_>>().join(" ");
-    let mut child = Command::new("bluetoothctl")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        let script =
-            format!("advertise.manufacturer 0xffff {hex_bytes}\nadvertise.name off\nadvertise on\nscan on\n");
-        let _ = stdin.write_all(script.as_bytes());
-        let _ = stdin.flush();
-        child.stdin = Some(stdin);
-    }
-    Some(child)
-}
-
-fn stop_bluetoothctl_advertisement(child: Option<Child>) {
-    let Some(mut child) = child else { return };
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        let _ = stdin.write_all(b"scan off\nadvertise off\nquit\n");
-        let _ = stdin.flush();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-fn is_adapter_powered() -> bool {
-    if let Ok(conn) = zbus::blocking::Connection::system()
-        && let Ok(reply) = conn.call_method(
-            Some("org.bluez"),
-            "/org/bluez/hci0",
-            Some("org.freedesktop.DBus.Properties"),
-            "Get",
-            &("org.bluez.Adapter1", "Powered"),
-        )
-        && let Ok(val) = reply.body().deserialize::<zbus::zvariant::OwnedValue>()
-        && let Ok(powered) = bool::try_from(val)
-    {
-        return powered;
-    }
-    if let Ok(out) = Command::new("bluetoothctl").arg("show").output()
-        && out.status.success()
-    {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        return stdout.lines().any(|l| {
-            l.trim().strip_prefix("Powered:").is_some_and(|v| v.trim().eq_ignore_ascii_case("yes"))
-        });
-    }
-    false
+fn paired_phones_from_hub() -> Vec<PairedPhone> {
+    crate::core_host::host().hub.read(|s| {
+        s.devices
+            .iter()
+            .map(|d| {
+                let mut prefix = [0u8; 8];
+                prefix.copy_from_slice(&d.id.as_bytes()[0..8]);
+                PairedPhone { prefix, name: d.info.name.clone(), model: d.info.model.clone() }
+            })
+            .collect()
+    })
 }
 
 fn fallback_peer_prefix(id_str: &str) -> [u8; 8] {
@@ -168,131 +158,205 @@ fn fallback_peer_prefix(id_str: &str) -> [u8; 8] {
     out
 }
 
-fn parse_rssi_from_info(info: &str) -> Option<i16> {
-    for line in info.lines() {
-        let trimmed = line.trim();
-        let Some(rest) = trimmed.strip_prefix("RSSI:") else {
-            continue;
-        };
-        let rest = rest.trim();
-        if let Some(open) = rest.find('(')
-            && let Some(close) = rest[open + 1..].find(')')
-            && let Ok(val) = rest[open + 1..open + 1 + close].trim().parse::<i16>()
-        {
-            return Some(val);
+fn names_match(candidate: &str, phone_name: &str) -> bool {
+    let c = candidate.trim();
+    let p = phone_name.trim();
+    !c.is_empty() && !p.is_empty() && c.eq_ignore_ascii_case(p)
+}
+
+/// Matches a BlueZ device candidate ONLY if:
+/// 1. It carries a valid `NCTR\x01` manufacturer payload (not our own prefix), OR
+/// 2. It advertises the NectarLink BLE service UUID (`f81d4fae-7dec-11d0-a765-00a0c91e6bf6`), OR
+/// 3. Its `Name` or `Alias` matches a paired phone in `hub`.
+///
+/// Arbitrary Bluetooth peripherals (headphones, mice, keyboards, etc.) never match.
+pub fn match_nectarlink_device(
+    candidate: &BluezDeviceCandidate,
+    own_prefix: &[u8; 8],
+    paired_phones: &[PairedPhone],
+) -> Option<[u8; 8]> {
+    if let Some(mfg_bytes) = &candidate.mfg_payload
+        && let Some(prefix) = parse_manufacturer_payload(mfg_bytes)
+    {
+        if &prefix == own_prefix {
+            return None;
         }
-        if let Some(tok) = rest.split_whitespace().next()
-            && let Ok(val) = tok.parse::<i16>()
-        {
-            return Some(val);
+        if paired_phones.is_empty() || paired_phones.iter().any(|p| p.prefix == prefix) {
+            return Some(prefix);
+        }
+    }
+
+    let find_matching_phone = || -> Option<&PairedPhone> {
+        paired_phones.iter().find(|phone| {
+            candidate.name.as_deref().is_some_and(|n| {
+                names_match(n, &phone.name) || phone.model.as_deref().is_some_and(|m| names_match(n, m))
+            }) || candidate.alias.as_deref().is_some_and(|a| {
+                names_match(a, &phone.name) || phone.model.as_deref().is_some_and(|m| names_match(a, m))
+            })
+        })
+    };
+
+    if candidate.uuids.iter().any(|u| u.eq_ignore_ascii_case(NECTARLINK_BLE_UUID)) {
+        if let Some(phone) = find_matching_phone() {
+            return Some(phone.prefix);
+        }
+        if let Some(first) = paired_phones.first() {
+            return Some(first.prefix);
+        }
+        if let Some(addr) = &candidate.address {
+            let prefix = fallback_peer_prefix(addr);
+            if &prefix != own_prefix {
+                return Some(prefix);
+            }
+        }
+        return None;
+    }
+
+    find_matching_phone().map(|p| p.prefix)
+}
+
+fn extract_string(val: &OwnedValue) -> Option<String> {
+    <&str>::try_from(val).ok().map(str::to_owned)
+}
+
+fn extract_i16(val: &OwnedValue) -> Option<i16> {
+    if let Ok(v) = i16::try_from(val) {
+        return Some(v);
+    }
+    if let Ok(v) = i32::try_from(val) {
+        return i16::try_from(v).ok();
+    }
+    None
+}
+
+fn extract_string_list(val: &OwnedValue) -> Vec<String> {
+    if let Ok(list) = Vec::<String>::try_from(val.clone()) {
+        return list;
+    }
+    let Value::Array(arr) = &**val else {
+        return Vec::new();
+    };
+    arr.iter().filter_map(|item| <&str>::try_from(item).ok().map(str::to_owned)).collect()
+}
+
+fn extract_mfg_ffff(val: &OwnedValue) -> Option<Vec<u8>> {
+    let Value::Dict(dict) = &**val else {
+        return None;
+    };
+    for (k, v) in dict.iter() {
+        let key_matches = u16::try_from(k).is_ok_and(|id| id == COMPANY_ID);
+        if !key_matches {
+            continue;
+        }
+        let inner = match v {
+            Value::Value(inner) => inner.as_ref(),
+            other => other,
+        };
+        if let Value::Array(bytes_arr) = inner {
+            let mut out = Vec::with_capacity(bytes_arr.len());
+            for item in bytes_arr.iter() {
+                out.push(u8::try_from(item).ok()?);
+            }
+            return Some(out);
         }
     }
     None
 }
 
-fn parse_manufacturer_from_info(info: &str) -> Option<Vec<u8>> {
-    let mut in_ffff_block = false;
-    let mut collected = Vec::new();
-    for line in info.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("ManufacturerData Key:") {
-            if !collected.is_empty() {
-                break;
-            }
-            let lower = rest.to_ascii_lowercase();
-            in_ffff_block = lower.contains("0xffff") || lower.contains("65535");
-            continue;
-        }
-        if in_ffff_block && let Some(rest) = trimmed.strip_prefix("ManufacturerData Value:") {
-            for tok in rest.split_whitespace() {
-                let hex = tok.strip_prefix("0x").unwrap_or(tok);
-                if hex.len() == 2
-                    && let Ok(b) = u8::from_str_radix(hex, 16)
-                {
-                    collected.push(b);
-                } else {
-                    break;
-                }
-            }
-        }
+fn is_adapter_powered(conn: &zbus::blocking::Connection) -> bool {
+    if !super::dbus_name_has_owner(conn, "org.bluez") {
+        return false;
     }
-    if collected.is_empty() { None } else { Some(collected) }
+    let Ok(reply) = conn.call_method(
+        Some("org.bluez"),
+        "/",
+        Some("org.freedesktop.DBus.ObjectManager"),
+        "GetManagedObjects",
+        &(),
+    ) else {
+        return false;
+    };
+    let Ok(objects) = reply.body().deserialize::<ManagedObjects>() else {
+        return false;
+    };
+    objects.values().any(|ifaces| {
+        ifaces
+            .get("org.bluez.Adapter1")
+            .and_then(|props| props.get("Powered"))
+            .and_then(|v| bool::try_from(v).ok())
+            .unwrap_or(false)
+    })
 }
 
-fn poll_bluez_devices(own_prefix: &[u8; 8], tracker: &mut RssiTracker) {
-    let Ok(out) = Command::new("bluetoothctl").arg("devices").output() else {
-        return;
-    };
-    if !out.status.success() {
+fn poll_bluez_devices(conn: &zbus::blocking::Connection, own_prefix: &[u8; 8], tracker: &mut RssiTracker) {
+    if !walk_away_lock_enabled() {
         return;
     }
-    let devices = super::bt_hfp::parse_bluetoothctl_devices(&String::from_utf8_lossy(&out.stdout));
-    for (mac, _) in devices {
-        let Ok(info_out) = Command::new("bluetoothctl").args(["info", &mac]).output() else {
-            continue;
-        };
-        if !info_out.status.success() {
-            continue;
-        }
-        let info = String::from_utf8_lossy(&info_out.stdout);
-        let Some(rssi) = parse_rssi_from_info(&info) else {
-            continue;
-        };
-        let connected = super::bt_hfp::parse_bluetoothctl_connected(&info);
-        let paired = info
-            .lines()
-            .any(|l| l.trim().strip_prefix("Paired:").is_some_and(|v| v.trim().eq_ignore_ascii_case("yes")));
+    let paired_phones = paired_phones_from_hub();
+    if paired_phones.is_empty() {
+        return;
+    }
 
-        let peer_prefix = if let Some(mfg_bytes) = parse_manufacturer_from_info(&info)
-            && let Some(prefix) = parse_manufacturer_payload(&mfg_bytes)
-        {
-            if &prefix == own_prefix {
-                continue;
-            }
-            Some(prefix)
-        } else if connected && paired && walk_away_lock_enabled() {
-            Some(fallback_peer_prefix(&mac))
-        } else {
-            None
-        };
+    let Ok(reply) = conn.call_method(
+        Some("org.bluez"),
+        "/",
+        Some("org.freedesktop.DBus.ObjectManager"),
+        "GetManagedObjects",
+        &(),
+    ) else {
+        return;
+    };
+    let Ok(objects) = reply.body().deserialize::<ManagedObjects>() else {
+        return;
+    };
 
-        if let Some(prefix) = peer_prefix
+    for ifaces in objects.values() {
+        let Some(props) = ifaces.get("org.bluez.Device1") else {
+            continue;
+        };
+        let Some(rssi) = props.get("RSSI").and_then(extract_i16) else {
+            continue;
+        };
+        let candidate = BluezDeviceCandidate {
+            address: props.get("Address").and_then(extract_string),
+            name: props.get("Name").and_then(extract_string),
+            alias: props.get("Alias").and_then(extract_string),
+            rssi: Some(rssi),
+            uuids: props.get("UUIDs").map(extract_string_list).unwrap_or_default(),
+            mfg_payload: props.get("ManufacturerData").and_then(extract_mfg_ffff),
+        };
+        if let Some(prefix) = match_nectarlink_device(&candidate, own_prefix, &paired_phones)
             && tracker.record(prefix, rssi)
         {
-            tracing::info!("BLE walk-away threshold reached; locking workstation and firing trigger");
-            let _ = super::shell::lock_workstation();
+            tracing::info!("BLE walk-away threshold reached for paired phone; firing trigger");
             crate::automations::fire_trigger(crate::automations::TRIGGER_PHONE_WALKED_AWAY);
         }
     }
 }
 
 fn run_worker(device_id: DeviceId) {
-    if !is_adapter_powered() {
-        tracing::debug!("BLE beacon: /org/bluez/hci0 unavailable or not powered; exiting worker");
+    let Ok(conn) = zbus::blocking::Connection::system() else {
+        tracing::debug!("BLE beacon: system D-Bus unavailable; exiting worker");
+        RUNNING.store(false, Ordering::SeqCst);
+        return;
+    };
+    if !is_adapter_powered(&conn) {
+        tracing::debug!("BLE beacon: no powered BlueZ adapter found; exiting worker");
         RUNNING.store(false, Ordering::SeqCst);
         return;
     }
 
-    let payload = build_manufacturer_payload(&device_id);
     let mut own_prefix = [0u8; 8];
     own_prefix.copy_from_slice(&device_id.as_bytes()[0..8]);
-
-    let adv_child = start_bluetoothctl_advertisement(&payload);
     let mut tracker = RssiTracker::default();
 
     while RUNNING.load(Ordering::Relaxed) {
-        poll_bluez_devices(&own_prefix, &mut tracker);
+        poll_bluez_devices(&conn, &own_prefix, &mut tracker);
 
-        let steps = (POLL_INTERVAL.as_millis() / POLL_STEP.as_millis()).max(1);
-        for _ in 0..steps {
-            if !RUNNING.load(Ordering::Relaxed) {
-                break;
-            }
-            thread::sleep(POLL_STEP);
-        }
+        let guard = STOP_MU.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = STOP_CV
+            .wait_timeout_while(guard, POLL_INTERVAL, |stopped| !*stopped && RUNNING.load(Ordering::Relaxed));
     }
-
-    stop_bluetoothctl_advertisement(adv_child);
 }
 
 #[cfg(test)]
@@ -372,6 +436,50 @@ mod tests {
         for _ in 0..4 {
             assert!(!tracker.record(peer, -95));
         }
+    }
+
+    #[test]
+    fn matches_only_paired_phones_or_nectarlink_uuid_and_ignores_peripherals() {
+        let own_prefix = [0xAA; 8];
+        let phone_prefix = [1, 2, 3, 4, 5, 6, 7, 8];
+        let paired = vec![PairedPhone {
+            prefix: phone_prefix,
+            name: "Pixel 9 Pro".into(),
+            model: Some("Pixel 9 Pro".into()),
+        }];
+
+        // Arbitrary Bluetooth headphones / mice must NEVER match.
+        let headphones = BluezDeviceCandidate {
+            address: Some("11:22:33:44:55:66".into()),
+            name: Some("Sony WH-1000XM5".into()),
+            alias: Some("Sony WH-1000XM5".into()),
+            rssi: Some(-90),
+            uuids: vec!["0000110b-0000-1000-8000-00805f9b34fb".into()],
+            mfg_payload: None,
+        };
+        assert_eq!(match_nectarlink_device(&headphones, &own_prefix, &paired), None);
+
+        // Paired phone matched by Name/Alias.
+        let by_name = BluezDeviceCandidate {
+            address: Some("AA:BB:CC:DD:EE:FF".into()),
+            name: Some("pixel 9 pro".into()),
+            alias: None,
+            rssi: Some(-65),
+            uuids: Vec::new(),
+            mfg_payload: None,
+        };
+        assert_eq!(match_nectarlink_device(&by_name, &own_prefix, &paired), Some(phone_prefix));
+
+        // Device advertising the NectarLink BLE service UUID matches.
+        let by_uuid = BluezDeviceCandidate {
+            address: Some("AA:BB:CC:DD:EE:FF".into()),
+            name: Some("Android".into()),
+            alias: None,
+            rssi: Some(-65),
+            uuids: vec![NECTARLINK_BLE_UUID.to_uppercase()],
+            mfg_payload: None,
+        };
+        assert_eq!(match_nectarlink_device(&by_uuid, &own_prefix, &paired), Some(phone_prefix));
     }
 
     #[test]

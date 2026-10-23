@@ -1,14 +1,177 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Capture a single window on Linux via in-process X11 `XGetImage`,
+//! Capture a single window on Linux (via in-process X11 `XGetImage`, with `import` fallback),
 //! matching the public API of `desktop/app/src/win/window_capture.rs`.
 
-use std::{
-    cell::RefCell,
-    ffi::{CStr, c_char, c_int, c_long, c_uint, c_ulong, c_void},
-    sync::OnceLock,
-};
+#![allow(unsafe_code)]
+
+use std::process::Command;
 
 use super::browser::{HWND, RECT, frame_of};
+
+#[repr(C)]
+struct XWindowAttributes {
+    x: std::ffi::c_int,
+    y: std::ffi::c_int,
+    width: std::ffi::c_int,
+    height: std::ffi::c_int,
+    border_width: std::ffi::c_int,
+    depth: std::ffi::c_int,
+    visual: *mut std::ffi::c_void,
+    root: std::ffi::c_ulong,
+    class: std::ffi::c_int,
+    bit_gravity: std::ffi::c_int,
+    win_gravity: std::ffi::c_int,
+    backing_store: std::ffi::c_int,
+    backing_planes: std::ffi::c_ulong,
+    backing_pixel: std::ffi::c_ulong,
+    save_under: std::ffi::c_int,
+    colormap: std::ffi::c_ulong,
+    map_installed: std::ffi::c_int,
+    map_state: std::ffi::c_int,
+    all_event_masks: std::ffi::c_long,
+    your_event_mask: std::ffi::c_long,
+    do_not_propagate_mask: std::ffi::c_long,
+    override_redirect: std::ffi::c_int,
+    screen: *mut std::ffi::c_void,
+}
+
+#[repr(C)]
+struct XImageFuncs {
+    create_image: *mut std::ffi::c_void,
+    destroy_image: Option<unsafe extern "C" fn(*mut XImage) -> std::ffi::c_int>,
+    get_pixel: *mut std::ffi::c_void,
+    put_pixel: *mut std::ffi::c_void,
+    sub_image: *mut std::ffi::c_void,
+    add_pixel: *mut std::ffi::c_void,
+}
+
+#[repr(C)]
+struct XImage {
+    width: std::ffi::c_int,
+    height: std::ffi::c_int,
+    xoffset: std::ffi::c_int,
+    format: std::ffi::c_int,
+    data: *mut u8,
+    byte_order: std::ffi::c_int,
+    bitmap_unit: std::ffi::c_int,
+    bitmap_bit_order: std::ffi::c_int,
+    bitmap_pad: std::ffi::c_int,
+    depth: std::ffi::c_int,
+    bytes_per_line: std::ffi::c_int,
+    bits_per_pixel: std::ffi::c_int,
+    red_mask: std::ffi::c_ulong,
+    green_mask: std::ffi::c_ulong,
+    blue_mask: std::ffi::c_ulong,
+    obdata: *mut std::ffi::c_void,
+    f: XImageFuncs,
+}
+
+type XErrorHandler =
+    Option<unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> std::ffi::c_int>;
+
+struct X11Api {
+    open_display: unsafe extern "C" fn(*const std::ffi::c_char) -> *mut std::ffi::c_void,
+    get_window_attributes: unsafe extern "C" fn(
+        *mut std::ffi::c_void,
+        std::ffi::c_ulong,
+        *mut XWindowAttributes,
+    ) -> std::ffi::c_int,
+    get_image: unsafe extern "C" fn(
+        *mut std::ffi::c_void,
+        std::ffi::c_ulong,
+        std::ffi::c_int,
+        std::ffi::c_int,
+        std::ffi::c_uint,
+        std::ffi::c_uint,
+        std::ffi::c_ulong,
+        std::ffi::c_int,
+    ) -> *mut XImage,
+    set_error_handler: unsafe extern "C" fn(XErrorHandler) -> XErrorHandler,
+    close_display: unsafe extern "C" fn(*mut std::ffi::c_void) -> std::ffi::c_int,
+    free: unsafe extern "C" fn(*mut std::ffi::c_void) -> std::ffi::c_int,
+}
+
+unsafe extern "C" fn ignore_x11_error(
+    _dpy: *mut std::ffi::c_void,
+    _err: *mut std::ffi::c_void,
+) -> std::ffi::c_int {
+    0
+}
+
+unsafe fn dl_sym<T: Copy>(lib: *mut std::ffi::c_void, name: &std::ffi::CStr) -> Option<T> {
+    let raw = unsafe { libc::dlsym(lib, name.as_ptr()) };
+    if raw.is_null() { None } else { Some(unsafe { std::mem::transmute_copy(&raw) }) }
+}
+
+fn x11_api() -> Option<&'static X11Api> {
+    static API: std::sync::OnceLock<Option<X11Api>> = std::sync::OnceLock::new();
+    API.get_or_init(|| unsafe {
+        let candidates = [c"libX11.so.6", c"libX11.so"];
+        let mut lib = std::ptr::null_mut();
+        for name in candidates {
+            lib = libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+            if !lib.is_null() {
+                break;
+            }
+        }
+        if lib.is_null() {
+            return None;
+        }
+        Some(X11Api {
+            open_display: dl_sym(lib, c"XOpenDisplay")?,
+            get_window_attributes: dl_sym(lib, c"XGetWindowAttributes")?,
+            get_image: dl_sym(lib, c"XGetImage")?,
+            set_error_handler: dl_sym(lib, c"XSetErrorHandler")?,
+            close_display: dl_sym(lib, c"XCloseDisplay")?,
+            free: dl_sym(lib, c"XFree")?,
+        })
+    })
+    .as_ref()
+}
+
+struct ThreadX11Display(*mut std::ffi::c_void);
+
+impl Drop for ThreadX11Display {
+    fn drop(&mut self) {
+        if !self.0.is_null()
+            && let Some(api) = x11_api()
+        {
+            unsafe {
+                let _ = (api.close_display)(self.0);
+            }
+        }
+    }
+}
+
+fn with_x11_display<R>(f: impl FnOnce(&X11Api, *mut std::ffi::c_void) -> Option<R>) -> Option<R> {
+    std::thread_local! {
+        static DISPLAY: std::cell::RefCell<Option<ThreadX11Display>> = const { std::cell::RefCell::new(None) };
+    }
+    let api = x11_api()?;
+    DISPLAY.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        if borrow.is_none() {
+            let dpy = unsafe { (api.open_display)(std::ptr::null()) };
+            if !dpy.is_null() {
+                *borrow = Some(ThreadX11Display(dpy));
+            }
+        }
+        let dpy = borrow.as_ref()?.0;
+        f(api, dpy)
+    })
+}
+
+fn has_executable(name: &str) -> bool {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path_var).any(|dir| dir.join(name).is_file())
+}
+
+/// Whether single-window capture is supported in the current Linux session.
+pub fn is_available() -> bool {
+    std::env::var_os("DISPLAY").is_some() && (x11_api().is_some() || has_executable("import"))
+}
 
 pub struct WindowCapture {
     hwnd: HWND,
@@ -23,6 +186,9 @@ impl WindowCapture {
         if hwnd.0.is_null() {
             return Err("invalid window handle".to_owned());
         }
+        if !is_available() {
+            return Err("X11 window capture unavailable".to_owned());
+        }
         Ok(WindowCapture { hwnd, rgba: Vec::new() })
     }
 
@@ -30,24 +196,15 @@ impl WindowCapture {
         self.hwnd
     }
 
-    /// Capture `self.hwnd`, optionally cropped to `crop` (in screen coordinates),
+    /// Capture `self.hwnd`, optionally cropped to `crop` (in window-relative coordinates),
     /// and scale the result into `bgra` (`dst_w` x `dst_h`, tightly packed BGRA).
     pub fn capture(&mut self, crop: RECT, dst_w: u32, dst_h: u32, bgra: &mut Vec<u8>) -> bool {
         if dst_w == 0 || dst_h == 0 {
             return false;
         }
-        let Some(frame) = frame_of(self.hwnd) else {
-            return false;
-        };
-        let win_w = (frame.right - frame.left).max(0) as u32;
-        let win_h = (frame.bottom - frame.top).max(0) as u32;
-        if win_w < 32 || win_h < 32 {
-            return false;
-        }
-
         let xid = self.hwnd.0 as usize;
-        if let Some((src_w, src_h)) = capture_x11_window_bgra(xid, win_w, win_h, &mut self.rgba) {
-            let (cx0, cy0, cw, ch) = compute_window_crop(frame, crop, src_w, src_h);
+        if let Some((src_w, src_h)) = capture_x11_window_bgra(self.hwnd, xid, &mut self.rgba) {
+            let (cx0, cy0, cw, ch) = compute_window_crop(crop, src_w, src_h);
             scale_bgra(&self.rgba, src_w, src_w * 4, cx0, cy0, cw, ch, dst_w, dst_h, bgra);
             return true;
         }
@@ -56,14 +213,14 @@ impl WindowCapture {
     }
 }
 
-fn compute_window_crop(frame: RECT, crop: RECT, src_w: u32, src_h: u32) -> (u32, u32, u32, u32) {
+fn compute_window_crop(crop: RECT, src_w: u32, src_h: u32) -> (u32, u32, u32, u32) {
     let cw = crop.right - crop.left;
     let ch = crop.bottom - crop.top;
     if cw >= 64 && ch >= 64 {
-        let x0 = (crop.left - frame.left).clamp(0, src_w as i32) as u32;
-        let y0 = (crop.top - frame.top).clamp(0, src_h as i32) as u32;
-        let x1 = (crop.right - frame.left).clamp(x0 as i32, src_w as i32) as u32;
-        let y1 = (crop.bottom - frame.top).clamp(y0 as i32, src_h as i32) as u32;
+        let x0 = crop.left.clamp(0, src_w as i32) as u32;
+        let y0 = crop.top.clamp(0, src_h as i32) as u32;
+        let x1 = crop.right.clamp(x0 as i32, src_w as i32) as u32;
+        let y1 = crop.bottom.clamp(y0 as i32, src_h as i32) as u32;
         if x1 - x0 >= 64 && y1 - y0 >= 64 {
             return (x0, y0, x1 - x0, y1 - y0);
         }
@@ -71,148 +228,11 @@ fn compute_window_crop(frame: RECT, crop: RECT, src_w: u32, src_h: u32) -> (u32,
     (0, 0, src_w, src_h)
 }
 
-#[repr(C)]
-struct XWindowAttributes {
-    x: c_int,
-    y: c_int,
-    width: c_int,
-    height: c_int,
-    border_width: c_int,
-    depth: c_int,
-    visual: *mut c_void,
-    root: c_ulong,
-    class: c_int,
-    bit_gravity: c_int,
-    win_gravity: c_int,
-    backing_store: c_int,
-    backing_planes: c_ulong,
-    backing_pixel: c_ulong,
-    save_under: c_int,
-    colormap: c_ulong,
-    map_installed: c_int,
-    map_state: c_int,
-    all_event_masks: c_long,
-    your_event_mask: c_long,
-    do_not_propagate_mask: c_long,
-    override_redirect: c_int,
-    screen: *mut c_void,
-}
-
-#[repr(C)]
-struct XImageFuncs {
-    create_image: *mut c_void,
-    destroy_image: Option<unsafe extern "C" fn(*mut XImage) -> c_int>,
-    get_pixel: *mut c_void,
-    put_pixel: *mut c_void,
-    sub_image: *mut c_void,
-    add_pixel: *mut c_void,
-}
-
-#[repr(C)]
-struct XImage {
-    width: c_int,
-    height: c_int,
-    xoffset: c_int,
-    format: c_int,
-    data: *mut u8,
-    byte_order: c_int,
-    bitmap_unit: c_int,
-    bitmap_bit_order: c_int,
-    bitmap_pad: c_int,
-    depth: c_int,
-    bytes_per_line: c_int,
-    bits_per_pixel: c_int,
-    red_mask: c_ulong,
-    green_mask: c_ulong,
-    blue_mask: c_ulong,
-    obdata: *mut c_void,
-    f: XImageFuncs,
-}
-
-struct X11WinCapApi {
-    open_display: unsafe extern "C" fn(*const c_char) -> *mut c_void,
-    get_window_attributes: unsafe extern "C" fn(*mut c_void, c_ulong, *mut XWindowAttributes) -> c_int,
-    get_image: unsafe extern "C" fn(
-        *mut c_void,
-        c_ulong,
-        c_int,
-        c_int,
-        c_uint,
-        c_uint,
-        c_ulong,
-        c_int,
-    ) -> *mut XImage,
-    close_display: unsafe extern "C" fn(*mut c_void) -> c_int,
-    free: unsafe extern "C" fn(*mut c_void) -> c_int,
-}
-
-unsafe fn dl_sym<T>(handle: *mut c_void, name: &CStr) -> Option<T> {
-    let raw = unsafe { libc::dlsym(handle, name.as_ptr()) };
-    if raw.is_null() {
-        return None;
-    }
-    Some(unsafe { std::mem::transmute_copy(&raw) })
-}
-
-fn x11_win_cap_api() -> Option<&'static X11WinCapApi> {
-    static API: OnceLock<Option<X11WinCapApi>> = OnceLock::new();
-    API.get_or_init(|| unsafe {
-        let mut lib = std::ptr::null_mut();
-        for name in [c"libX11.so.6", c"libX11.so"] {
-            lib = libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
-            if !lib.is_null() {
-                break;
-            }
-        }
-        if lib.is_null() {
-            return None;
-        }
-        Some(X11WinCapApi {
-            open_display: dl_sym(lib, c"XOpenDisplay")?,
-            get_window_attributes: dl_sym(lib, c"XGetWindowAttributes")?,
-            get_image: dl_sym(lib, c"XGetImage")?,
-            close_display: dl_sym(lib, c"XCloseDisplay")?,
-            free: dl_sym(lib, c"XFree")?,
-        })
-    })
-    .as_ref()
-}
-
-struct ThreadDisplay(*mut c_void);
-
-impl Drop for ThreadDisplay {
-    fn drop(&mut self) {
-        if !self.0.is_null()
-            && let Some(api) = x11_win_cap_api()
-        {
-            unsafe {
-                let _ = (api.close_display)(self.0);
-            }
-        }
-    }
-}
-
-fn capture_x11_window_bgra(xid: usize, _w: u32, _h: u32, out: &mut Vec<u8>) -> Option<(u32, u32)> {
-    if std::env::var_os("DISPLAY").is_none() || xid == 0 {
-        return None;
-    }
-    std::thread_local! {
-        static DISPLAY: RefCell<Option<ThreadDisplay>> = const { RefCell::new(None) };
-    }
-    let api = x11_win_cap_api()?;
-    DISPLAY.with(|cell| unsafe {
-        let mut borrow = cell.borrow_mut();
-        if borrow.is_none() {
-            let dpy = (api.open_display)(std::ptr::null());
-            if !dpy.is_null() {
-                *borrow = Some(ThreadDisplay(dpy));
-            }
-        }
-        let dpy = borrow.as_ref()?.0;
+fn capture_x11_window_in_process(xid: usize, out: &mut Vec<u8>) -> Option<(u32, u32)> {
+    with_x11_display(|api, dpy| unsafe {
+        let _prev_handler = (api.set_error_handler)(Some(ignore_x11_error));
         let mut attrs: XWindowAttributes = std::mem::zeroed();
-        // map_state == 2 is IsViewable in X11.
-        if (api.get_window_attributes)(dpy, xid as c_ulong, &mut attrs) == 0
-            || attrs.map_state != 2
+        if (api.get_window_attributes)(dpy, xid as std::ffi::c_ulong, &mut attrs) == 0
             || attrs.width < 32
             || attrs.height < 32
         {
@@ -222,13 +242,13 @@ fn capture_x11_window_bgra(xid: usize, _w: u32, _h: u32, out: &mut Vec<u8>) -> O
         let src_h = attrs.height as u32;
         let img = (api.get_image)(
             dpy,
-            xid as c_ulong,
+            xid as std::ffi::c_ulong,
             0,
             0,
             src_w,
             src_h,
-            !0 as c_ulong, // AllPlanes
-            2,             // ZPixmap
+            !0 as std::ffi::c_ulong, // AllPlanes
+            2,                       // ZPixmap
         );
         if img.is_null() {
             return None;
@@ -241,33 +261,60 @@ fn capture_x11_window_bgra(xid: usize, _w: u32, _h: u32, out: &mut Vec<u8>) -> O
             }
             return None;
         }
-        let pitch = (*img).bytes_per_line.max(0) as usize;
+
+        let bytes_per_line = (*img).bytes_per_line.max(0) as usize;
         let bpp = ((*img).bits_per_pixel.max(24) as usize) / 8;
         let needed = (src_w as usize).checked_mul(src_h as usize)?.checked_mul(4)?;
         out.resize(needed, 0);
-        let raw_len = pitch.saturating_mul(src_h as usize);
-        let src_bytes = std::slice::from_raw_parts((*img).data, raw_len);
+
         for y in 0..src_h as usize {
-            let s_row = y * pitch;
-            let d_row = y * (src_w as usize) * 4;
+            let src_row = (*img).data.add(y * bytes_per_line);
+            let dst_row_offset = y * (src_w as usize) * 4;
             for x in 0..src_w as usize {
-                let s_idx = s_row + x * bpp;
-                let d_idx = d_row + x * 4;
-                if s_idx + 3 <= src_bytes.len() && d_idx + 4 <= out.len() {
-                    out[d_idx] = src_bytes[s_idx];
-                    out[d_idx + 1] = src_bytes[s_idx + 1];
-                    out[d_idx + 2] = src_bytes[s_idx + 2];
-                    out[d_idx + 3] = 0xFF;
-                }
+                let px = src_row.add(x * bpp);
+                let dst_idx = dst_row_offset + x * 4;
+                out[dst_idx] = *px;
+                out[dst_idx + 1] = *px.add(1);
+                out[dst_idx + 2] = *px.add(2);
+                out[dst_idx + 3] = 0xFF;
             }
         }
+
         if let Some(destroy) = (*img).f.destroy_image {
             let _ = destroy(img);
         } else {
+            libc::free((*img).data.cast());
             let _ = (api.free)(img.cast());
         }
+
         Some((src_w, src_h))
     })
+}
+
+fn capture_x11_window_bgra(hwnd: HWND, xid: usize, out: &mut Vec<u8>) -> Option<(u32, u32)> {
+    if std::env::var_os("DISPLAY").is_none() || xid == 0 {
+        return None;
+    }
+    if let Some(dims) = capture_x11_window_in_process(xid, out) {
+        return Some(dims);
+    }
+    let frame = frame_of(hwnd)?;
+    let w = (frame.right - frame.left).max(0) as u32;
+    let h = (frame.bottom - frame.top).max(0) as u32;
+    if w < 32 || h < 32 {
+        return None;
+    }
+    let expected = (w as usize).checked_mul(h as usize)?.checked_mul(4)?;
+    let output = Command::new("import")
+        .args(["-silent", "-window", &xid.to_string(), "-depth", "8", "bgra:-"])
+        .output()
+        .ok()?;
+    if !output.status.success() || output.stdout.len() < expected {
+        return None;
+    }
+    out.clear();
+    out.extend_from_slice(&output.stdout[..expected]);
+    Some((w, h))
 }
 
 /// Area-averaging box filter from a cropped BGRA region `(crop_x, crop_y, crop_w, crop_h)`
@@ -367,5 +414,13 @@ mod tests {
         for px in dst.as_chunks::<4>().0 {
             assert_eq!(px, &[50, 100, 150, 255]);
         }
+    }
+
+    #[test]
+    fn compute_window_crop_uses_window_relative_coordinates() {
+        let crop = RECT { left: 100, top: 80, right: 740, bottom: 440 };
+        assert_eq!(compute_window_crop(crop, 1280, 720), (100, 80, 640, 360));
+        let tiny = RECT { left: 10, top: 10, right: 30, bottom: 30 };
+        assert_eq!(compute_window_crop(tiny, 1280, 720), (0, 0, 1280, 720));
     }
 }
