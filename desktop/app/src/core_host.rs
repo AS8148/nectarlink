@@ -116,30 +116,29 @@ pub fn compute_capabilities(
     {
         caps.push(nectarlink_core::PC_WAKE.into());
         caps.push("media.control".into());
+        caps.push(nectarlink_core::STORAGE_MOUNT.into());
+        caps.push(nectarlink_core::STORAGE_READ.into());
+        caps.push(nectarlink_core::STORAGE_WRITE.into());
         caps.push(nectarlink_core::MIRROR_VIEW.into());
         caps.push(nectarlink_core::MIRROR_LISTEN.into());
         caps.push(nectarlink_core::DECK_ACTIONS.into());
         caps.push(nectarlink_core::PC_AUDIO.into());
         caps.push(nectarlink_core::RECORDER.into());
         #[cfg(windows)]
-        caps.push(nectarlink_core::WEBCAM_VIRTUAL.into());
-        #[cfg(target_os = "linux")]
-        if crate::win::vcam::dll_path().is_some() || crate::win::vcam::is_registered() {
+        {
             caps.push(nectarlink_core::WEBCAM_VIRTUAL.into());
-        }
-        #[cfg(windows)]
-        caps.push(nectarlink_core::MEDIA_STREAM.into());
-        #[cfg(target_os = "linux")]
-        if crate::win::window_capture::is_available() && crate::pc_mirror::is_capture_available() {
             caps.push(nectarlink_core::MEDIA_STREAM.into());
         }
+        #[cfg(target_os = "linux")]
+        {
+            if crate::win::vcam::dll_path().is_some() || crate::win::vcam::is_registered() {
+                caps.push(nectarlink_core::WEBCAM_VIRTUAL.into());
+            }
+            if crate::win::window_capture::is_available() && crate::pc_mirror::is_capture_available() {
+                caps.push(nectarlink_core::MEDIA_STREAM.into());
+            }
+        }
         caps.push(nectarlink_core::MIC_LISTEN.into());
-    }
-    #[cfg(windows)]
-    {
-        caps.push(nectarlink_core::STORAGE_MOUNT.into());
-        caps.push(nectarlink_core::STORAGE_READ.into());
-        caps.push(nectarlink_core::STORAGE_WRITE.into());
     }
     #[cfg(any(windows, target_os = "linux"))]
     let mut pc_mirror_enabled = crate::pc_mirror::is_active();
