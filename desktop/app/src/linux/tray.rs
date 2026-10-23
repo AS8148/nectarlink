@@ -130,9 +130,388 @@ fn run_command_stdout(program: &str, args: &[&str]) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// Queries the currently active external window via `kdotool` (KDE Wayland)
-/// or `xdotool` (X11/XWayland), ignoring NectarLink's own windows.
+/// Returns `true` when a system tray host (Qt `QSystemTrayIcon` or D-Bus
+/// `org.kde.StatusNotifierWatcher` / `org.freedesktop.Notifications`)
+/// is available in the current desktop session.
+pub fn is_tray_available() -> bool {
+    if !has_desktop_session() {
+        return false;
+    }
+    if !cfg!(test) && crate::bridge::native::ffi::linux_tray_is_available() {
+        return true;
+    }
+    if let Ok(conn) = zbus::blocking::Connection::session()
+        && let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn)
+    {
+        for name in [
+            "org.kde.StatusNotifierWatcher",
+            "org.freedesktop.StatusNotifierWatcher",
+            "org.freedesktop.Notifications",
+        ] {
+            if let Ok(bus_name) = zbus::names::BusName::try_from(name)
+                && dbus.name_has_owner(bus_name).unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_numeric_window_id(hwnd: isize) -> bool {
+    if hwnd <= 0 {
+        return false;
+    }
+    if let Ok(map) = window_id_map().lock()
+        && let Some(raw) = map.get(&hwnd)
+    {
+        let trimmed = raw.trim();
+        return trimmed.starts_with("0x")
+            || trimmed.starts_with("0X")
+            || trimmed.bytes().all(|b| b.is_ascii_digit());
+    }
+    true
+}
+
+type XErrorHandler = Option<unsafe extern "C" fn(*mut libc::c_void, *mut libc::c_void) -> libc::c_int>;
+
+static X11_ERROR_LOCK: Mutex<()> = Mutex::new(());
+static X11_HAD_ERROR: AtomicBool = AtomicBool::new(false);
+
+unsafe extern "C" fn x11_ignore_bad_access(_dpy: *mut libc::c_void, _err: *mut libc::c_void) -> libc::c_int {
+    X11_HAD_ERROR.store(true, Ordering::Release);
+    0
+}
+
+#[repr(C)]
+struct XWindowAttributes {
+    x: libc::c_int,
+    y: libc::c_int,
+    width: libc::c_int,
+    height: libc::c_int,
+    border_width: libc::c_int,
+    depth: libc::c_int,
+    visual: *mut libc::c_void,
+    root: libc::c_ulong,
+    class: libc::c_int,
+    bit_gravity: libc::c_int,
+    win_gravity: libc::c_int,
+    backing_store: libc::c_int,
+    backing_planes: libc::c_ulong,
+    backing_pixel: libc::c_ulong,
+    save_under: libc::c_int,
+    colormap: libc::c_ulong,
+    map_installed: libc::c_int,
+    map_state: libc::c_int,
+    all_event_masks: libc::c_long,
+    your_event_mask: libc::c_long,
+    do_not_propagate_mask: libc::c_long,
+    override_redirect: libc::c_int,
+    screen: *mut libc::c_void,
+    _pad: [u8; 64],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct XClientMessageEvent {
+    event_type: libc::c_int,
+    serial: libc::c_ulong,
+    send_event: libc::c_int,
+    display: *mut libc::c_void,
+    window: libc::c_ulong,
+    message_type: libc::c_ulong,
+    format: libc::c_int,
+    data_l: [libc::c_long; 5],
+}
+
+struct X11Lib {
+    x_open_display: unsafe extern "C" fn(*const libc::c_char) -> *mut libc::c_void,
+    x_close_display: unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int,
+    x_default_root_window: unsafe extern "C" fn(*mut libc::c_void) -> libc::c_ulong,
+    x_intern_atom: unsafe extern "C" fn(*mut libc::c_void, *const libc::c_char, libc::c_int) -> libc::c_ulong,
+    x_get_window_property: unsafe extern "C" fn(
+        *mut libc::c_void,
+        libc::c_ulong,
+        libc::c_ulong,
+        libc::c_long,
+        libc::c_long,
+        libc::c_int,
+        libc::c_ulong,
+        *mut libc::c_ulong,
+        *mut libc::c_int,
+        *mut libc::c_ulong,
+        *mut libc::c_ulong,
+        *mut *mut libc::c_uchar,
+    ) -> libc::c_int,
+    x_free: unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int,
+    x_fetch_name:
+        unsafe extern "C" fn(*mut libc::c_void, libc::c_ulong, *mut *mut libc::c_char) -> libc::c_int,
+    x_get_window_attributes:
+        unsafe extern "C" fn(*mut libc::c_void, libc::c_ulong, *mut XWindowAttributes) -> libc::c_int,
+    x_send_event: unsafe extern "C" fn(
+        *mut libc::c_void,
+        libc::c_ulong,
+        libc::c_int,
+        libc::c_long,
+        *mut XEvent,
+    ) -> libc::c_int,
+    x_set_input_focus:
+        unsafe extern "C" fn(*mut libc::c_void, libc::c_ulong, libc::c_int, libc::c_ulong) -> libc::c_int,
+    x_raise_window: unsafe extern "C" fn(*mut libc::c_void, libc::c_ulong) -> libc::c_int,
+    x_sync: unsafe extern "C" fn(*mut libc::c_void, libc::c_int) -> libc::c_int,
+    x_set_error_handler: unsafe extern "C" fn(XErrorHandler) -> XErrorHandler,
+}
+
+static X11_LIB: OnceLock<Option<X11Lib>> = OnceLock::new();
+
+unsafe fn load_x11_sym<T>(lib: *mut libc::c_void, name: &std::ffi::CStr) -> Option<T> {
+    let ptr = unsafe { libc::dlsym(lib, name.as_ptr()) };
+    if ptr.is_null() { None } else { Some(unsafe { std::mem::transmute_copy(&ptr) }) }
+}
+
+fn x11_lib() -> Option<&'static X11Lib> {
+    X11_LIB
+        .get_or_init(|| unsafe {
+            let lib = libc::dlopen(c"libX11.so.6".as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
+            if lib.is_null() {
+                return None;
+            }
+            Some(X11Lib {
+                x_open_display: load_x11_sym(lib, c"XOpenDisplay")?,
+                x_close_display: load_x11_sym(lib, c"XCloseDisplay")?,
+                x_default_root_window: load_x11_sym(lib, c"XDefaultRootWindow")?,
+                x_intern_atom: load_x11_sym(lib, c"XInternAtom")?,
+                x_get_window_property: load_x11_sym(lib, c"XGetWindowProperty")?,
+                x_free: load_x11_sym(lib, c"XFree")?,
+                x_fetch_name: load_x11_sym(lib, c"XFetchName")?,
+                x_get_window_attributes: load_x11_sym(lib, c"XGetWindowAttributes")?,
+                x_send_event: load_x11_sym(lib, c"XSendEvent")?,
+                x_set_input_focus: load_x11_sym(lib, c"XSetInputFocus")?,
+                x_raise_window: load_x11_sym(lib, c"XRaiseWindow")?,
+                x_sync: load_x11_sym(lib, c"XSync")?,
+                x_set_error_handler: load_x11_sym(lib, c"XSetErrorHandler")?,
+            })
+        })
+        .as_ref()
+}
+
+/// Temporarily installs `x11_ignore_bad_access` around an X11 operation, flushes
+/// errors with `XSync`, and immediately restores the previous error handler so
+/// Qt's process-wide X11 error handler is never clobbered.
+unsafe fn with_x11_error_guard<R>(
+    x_set_error_handler: unsafe extern "C" fn(XErrorHandler) -> XErrorHandler,
+    x_sync: unsafe extern "C" fn(*mut libc::c_void, libc::c_int) -> libc::c_int,
+    dpy: *mut libc::c_void,
+    op: impl FnOnce() -> R,
+) -> (R, bool) {
+    let _guard = X11_ERROR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    X11_HAD_ERROR.store(false, Ordering::Release);
+    let prev = unsafe { x_set_error_handler(Some(x11_ignore_bad_access)) };
+    let out = op();
+    let _ = unsafe { x_sync(dpy, 0) };
+    let _ = unsafe { x_set_error_handler(prev) };
+    let had_err = X11_HAD_ERROR.load(Ordering::Acquire);
+    (out, had_err)
+}
+
+fn x11_window_title(x11: &X11Lib, dpy: *mut libc::c_void, win: libc::c_ulong) -> Option<String> {
+    unsafe {
+        let net_wm_name = (x11.x_intern_atom)(dpy, c"_NET_WM_NAME".as_ptr(), 0);
+        if net_wm_name != 0 {
+            let mut actual_type: libc::c_ulong = 0;
+            let mut actual_format: libc::c_int = 0;
+            let mut nitems: libc::c_ulong = 0;
+            let mut bytes_after: libc::c_ulong = 0;
+            let mut prop: *mut libc::c_uchar = std::ptr::null_mut();
+            let status = (x11.x_get_window_property)(
+                dpy,
+                win,
+                net_wm_name,
+                0,
+                1024,
+                0,
+                0, // AnyPropertyType
+                &mut actual_type,
+                &mut actual_format,
+                &mut nitems,
+                &mut bytes_after,
+                &mut prop,
+            );
+            if status == 0 && !prop.is_null() {
+                let text = if actual_format == 8 && nitems > 0 {
+                    let slice = std::slice::from_raw_parts(prop, nitems as usize);
+                    let end = slice.iter().position(|&b| b == 0).unwrap_or(slice.len());
+                    Some(String::from_utf8_lossy(&slice[..end]).trim().to_owned())
+                } else {
+                    None
+                };
+                let _ = (x11.x_free)(prop.cast());
+                if let Some(t) = text.filter(|s| !s.is_empty()) {
+                    return Some(t);
+                }
+            }
+        }
+
+        let mut name_ptr: *mut libc::c_char = std::ptr::null_mut();
+        if (x11.x_fetch_name)(dpy, win, &mut name_ptr) != 0 && !name_ptr.is_null() {
+            let title = std::ffi::CStr::from_ptr(name_ptr).to_string_lossy().trim().to_owned();
+            let _ = (x11.x_free)(name_ptr.cast());
+            if !title.is_empty() {
+                return Some(title);
+            }
+        }
+        None
+    }
+}
+
+fn x11_query_active_window() -> Option<(isize, String)> {
+    let x11 = x11_lib()?;
+    unsafe {
+        let dpy = (x11.x_open_display)(std::ptr::null());
+        if dpy.is_null() {
+            return None;
+        }
+        let root = (x11.x_default_root_window)(dpy);
+        let net_active = (x11.x_intern_atom)(dpy, c"_NET_ACTIVE_WINDOW".as_ptr(), 0);
+        let (res, had_err) = with_x11_error_guard(x11.x_set_error_handler, x11.x_sync, dpy, || {
+            if net_active == 0 {
+                return None;
+            }
+            let mut actual_type: libc::c_ulong = 0;
+            let mut actual_format: libc::c_int = 0;
+            let mut nitems: libc::c_ulong = 0;
+            let mut bytes_after: libc::c_ulong = 0;
+            let mut prop: *mut libc::c_uchar = std::ptr::null_mut();
+            let status = (x11.x_get_window_property)(
+                dpy,
+                root,
+                net_active,
+                0,
+                1,
+                0,
+                0, // AnyPropertyType
+                &mut actual_type,
+                &mut actual_format,
+                &mut nitems,
+                &mut bytes_after,
+                &mut prop,
+            );
+            if status != 0 || prop.is_null() {
+                return None;
+            }
+            let win = if actual_format == 32 && nitems >= 1 { *(prop as *const libc::c_ulong) } else { 0 };
+            let _ = (x11.x_free)(prop.cast());
+            if win == 0 {
+                return None;
+            }
+            let title = x11_window_title(x11, dpy, win)?;
+            Some((win, title))
+        });
+        let _ = (x11.x_close_display)(dpy);
+        if had_err {
+            return None;
+        }
+        let (win, title) = res?;
+        if is_nectarlink_title(&title) {
+            return None;
+        }
+        let hwnd = win as isize;
+        if hwnd == 0 {
+            return None;
+        }
+        if let Ok(mut map) = window_id_map().lock() {
+            map.insert(hwnd, format!("0x{win:x}"));
+        }
+        Some((hwnd, title))
+    }
+}
+
+fn x11_is_window_alive_and_visible(hwnd: isize) -> bool {
+    if !is_numeric_window_id(hwnd) {
+        return false;
+    }
+    let Some(x11) = x11_lib() else {
+        return false;
+    };
+    unsafe {
+        let dpy = (x11.x_open_display)(std::ptr::null());
+        if dpy.is_null() {
+            return false;
+        }
+        const IS_VIEWABLE: libc::c_int = 2;
+        let (viewable, had_err) = with_x11_error_guard(x11.x_set_error_handler, x11.x_sync, dpy, || {
+            let mut attrs: XWindowAttributes = std::mem::zeroed();
+            let status = (x11.x_get_window_attributes)(dpy, hwnd as libc::c_ulong, &mut attrs);
+            status != 0 && attrs.map_state == IS_VIEWABLE
+        });
+        let _ = (x11.x_close_display)(dpy);
+        viewable && !had_err
+    }
+}
+
+fn x11_focus_window(hwnd: isize) -> bool {
+    if !is_numeric_window_id(hwnd) {
+        return false;
+    }
+    let Some(x11) = x11_lib() else {
+        return false;
+    };
+    unsafe {
+        let dpy = (x11.x_open_display)(std::ptr::null());
+        if dpy.is_null() {
+            return false;
+        }
+        let root = (x11.x_default_root_window)(dpy);
+        let net_active = (x11.x_intern_atom)(dpy, c"_NET_ACTIVE_WINDOW".as_ptr(), 0);
+        const IS_VIEWABLE: libc::c_int = 2;
+        const CLIENT_MESSAGE: libc::c_int = 33;
+        const REVERT_TO_POINTER_ROOT: libc::c_int = 1;
+        const SUBSTRUCTURE_REDIRECT_MASK: libc::c_long = 1 << 20;
+        const SUBSTRUCTURE_NOTIFY_MASK: libc::c_long = 1 << 19;
+
+        let (ok, had_err) = with_x11_error_guard(x11.x_set_error_handler, x11.x_sync, dpy, || {
+            let win = hwnd as libc::c_ulong;
+            let mut attrs: XWindowAttributes = std::mem::zeroed();
+            if (x11.x_get_window_attributes)(dpy, win, &mut attrs) == 0 || attrs.map_state != IS_VIEWABLE {
+                return false;
+            }
+            if net_active != 0 {
+                let mut ev: XEvent = std::mem::zeroed();
+                ev.xclient = XClientMessageEvent {
+                    event_type: CLIENT_MESSAGE,
+                    serial: 0,
+                    send_event: 1,
+                    display: dpy,
+                    window: win,
+                    message_type: net_active,
+                    format: 32,
+                    data_l: [2, 0, 0, 0, 0],
+                };
+                let _ = (x11.x_send_event)(
+                    dpy,
+                    root,
+                    0,
+                    SUBSTRUCTURE_REDIRECT_MASK | SUBSTRUCTURE_NOTIFY_MASK,
+                    &mut ev,
+                );
+            }
+            let _ = (x11.x_raise_window)(dpy, win);
+            let _ = (x11.x_set_input_focus)(dpy, win, REVERT_TO_POINTER_ROOT, 0);
+            true
+        });
+        let _ = (x11.x_close_display)(dpy);
+        ok && !had_err
+    }
+}
+
+/// Queries the currently active external window via X11 `_NET_ACTIVE_WINDOW`
+/// (in-process), `kdotool` (KDE Wayland), or `xdotool`, ignoring NectarLink's own windows.
 pub fn query_active_window() -> Option<(isize, String)> {
+    if has_x11_display()
+        && let Some((hwnd, title)) = x11_query_active_window()
+    {
+        return Some((hwnd, title));
+    }
     if has_wayland_display()
         && let Some(raw_id) = run_command_stdout("kdotool", &["getactivewindow"])
         && let Some(hwnd) = parse_window_handle(&raw_id)
@@ -162,20 +541,25 @@ pub fn record_foreground_window() {
 }
 
 /// Captures the last active external foreground window `(hwnd, title)` at the
-/// moment a Continuity Camera request begins.
+/// moment a Continuity Camera request begins. Returns `None` honestly when no
+/// live external window can be inspected.
 pub fn snapshot_target_window() -> Option<(isize, String)> {
     if let Some((hwnd, title)) = query_active_window() {
         let mut guard = LAST_EXTERNAL_WINDOW.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some((hwnd, title.clone()));
         return Some((hwnd, title));
     }
-    LAST_EXTERNAL_WINDOW.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    let cached = LAST_EXTERNAL_WINDOW.lock().unwrap_or_else(|e| e.into_inner()).clone()?;
+    if is_window_alive_and_visible(cached.0) { Some(cached) } else { None }
 }
 
 /// Returns true if `hwnd` still refers to an existing, visible top-level window.
 pub fn is_window_alive_and_visible(hwnd: isize) -> bool {
     if hwnd == 0 {
         return false;
+    }
+    if has_x11_display() && x11_is_window_alive_and_visible(hwnd) {
+        return true;
     }
     let raw_id = raw_window_id(hwnd);
     if has_wayland_display()
@@ -190,18 +574,17 @@ pub fn is_window_alive_and_visible(hwnd: isize) -> bool {
     {
         return true;
     }
-    LAST_EXTERNAL_WINDOW
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .is_some_and(|(recorded_hwnd, _)| *recorded_hwnd == hwnd)
+    false
 }
 
 /// Restores and brings `hwnd` to the foreground so a paste shortcut can be
-/// synthesized into it. Returns false if the window is gone.
+/// synthesized into it. Returns false if the window is gone or cannot be focused.
 pub fn focus_window(hwnd: isize) -> bool {
     if !is_window_alive_and_visible(hwnd) {
         return false;
+    }
+    if has_x11_display() && x11_focus_window(hwnd) {
+        return true;
     }
     let raw_id = raw_window_id(hwnd);
     if has_wayland_display()
@@ -237,11 +620,7 @@ pub fn focus_window(hwnd: isize) -> bool {
             return true;
         }
     }
-    LAST_EXTERNAL_WINDOW
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .is_some_and(|(recorded_hwnd, _)| *recorded_hwnd == hwnd)
+    false
 }
 
 /// If the window manager prevented `focus_window` from making `hwnd` the
@@ -461,11 +840,166 @@ struct XKeyEvent {
 union XEvent {
     event_type: libc::c_int,
     xkey: XKeyEvent,
+    xclient: XClientMessageEvent,
     pad: [libc::c_long; 24],
 }
 
-unsafe extern "C" fn ignore_x11_error(_dpy: *mut libc::c_void, _err: *mut libc::c_void) -> libc::c_int {
-    0
+fn run_x11_hotkey_loop(stop: &AtomicBool, handler: &SharedHandler) {
+    if !has_x11_display() {
+        return;
+    }
+    // SAFETY: Dynamically loads libX11.so.6 and resolves standard Xlib symbols.
+    unsafe {
+        let lib = libc::dlopen(c"libX11.so.6".as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
+        if lib.is_null() {
+            tracing::debug!("libX11.so.6 not available for global hotkeys");
+            return;
+        }
+
+        type FnXOpenDisplay = unsafe extern "C" fn(*const libc::c_char) -> *mut libc::c_void;
+        type FnXCloseDisplay = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int;
+        type FnXDefaultRootWindow = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_ulong;
+        type FnXKeysymToKeycode = unsafe extern "C" fn(*mut libc::c_void, libc::c_ulong) -> libc::c_uchar;
+        type FnXGrabKey = unsafe extern "C" fn(
+            *mut libc::c_void,
+            libc::c_int,
+            libc::c_uint,
+            libc::c_ulong,
+            libc::c_int,
+            libc::c_int,
+            libc::c_int,
+        ) -> libc::c_int;
+        type FnXUngrabKey =
+            unsafe extern "C" fn(*mut libc::c_void, libc::c_int, libc::c_uint, libc::c_ulong) -> libc::c_int;
+        type FnXPending = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int;
+        type FnXNextEvent = unsafe extern "C" fn(*mut libc::c_void, *mut XEvent) -> libc::c_int;
+        type FnXSync = unsafe extern "C" fn(*mut libc::c_void, libc::c_int) -> libc::c_int;
+        type FnXConnectionNumber = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int;
+        type FnXSetErrorHandler = unsafe extern "C" fn(XErrorHandler) -> XErrorHandler;
+
+        macro_rules! sym {
+            ($name:literal, $ty:ty) => {{
+                let ptr = libc::dlsym(lib, $name.as_ptr());
+                if ptr.is_null() {
+                    return;
+                }
+                std::mem::transmute::<*mut libc::c_void, $ty>(ptr)
+            }};
+        }
+
+        let x_open_display = sym!(c"XOpenDisplay", FnXOpenDisplay);
+        let x_close_display = sym!(c"XCloseDisplay", FnXCloseDisplay);
+        let x_default_root_window = sym!(c"XDefaultRootWindow", FnXDefaultRootWindow);
+        let x_keysym_to_keycode = sym!(c"XKeysymToKeycode", FnXKeysymToKeycode);
+        let x_grab_key = sym!(c"XGrabKey", FnXGrabKey);
+        let x_ungrab_key = sym!(c"XUngrabKey", FnXUngrabKey);
+        let x_pending = sym!(c"XPending", FnXPending);
+        let x_next_event = sym!(c"XNextEvent", FnXNextEvent);
+        let x_sync = sym!(c"XSync", FnXSync);
+        let x_connection_number = sym!(c"XConnectionNumber", FnXConnectionNumber);
+        let x_set_error_handler = sym!(c"XSetErrorHandler", FnXSetErrorHandler);
+
+        let dpy = x_open_display(std::ptr::null());
+        if dpy.is_null() {
+            tracing::debug!("XOpenDisplay failed for global hotkeys");
+            return;
+        }
+        let root = x_default_root_window(dpy);
+        let fd = x_connection_number(dpy);
+
+        const KEY_PRESS: libc::c_int = 2;
+        const GRAB_MODE_ASYNC: libc::c_int = 1;
+        const LOCK_COMBOS: [u32; 4] = [0, X11_LOCK_MASK, X11_MOD2_MASK, X11_LOCK_MASK | X11_MOD2_MASK];
+
+        let mut applied_gen: u64 = 0;
+        // (x11_clean_mods, keycode, TrayEvent)
+        let mut grabbed: Vec<(u32, u32, TrayEvent)> = Vec::new();
+        let mut last_fired: Option<(TrayEvent, Instant)> = None;
+
+        while !stop.load(Ordering::Acquire) {
+            let current_gen = HOTKEY_GENERATION.load(Ordering::Acquire);
+            if current_gen != applied_gen {
+                let (photo, scan, palette, shelf) =
+                    HOTKEY_SPECS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let targets = [
+                    (photo.as_str(), TrayEvent::TakePhoto),
+                    (scan.as_str(), TrayEvent::ScanDocument),
+                    (palette.as_str(), TrayEvent::CommandPalette),
+                    (shelf.as_str(), TrayEvent::Shelf),
+                ];
+
+                let _ = with_x11_error_guard(x_set_error_handler, x_sync, dpy, || {
+                    for &(mods, keycode, _) in &grabbed {
+                        for extra in LOCK_COMBOS {
+                            let _ = x_ungrab_key(dpy, keycode as libc::c_int, mods | extra, root);
+                        }
+                    }
+                    grabbed.clear();
+
+                    for (spec, ev) in targets {
+                        let Some((mods, vk)) = parse_hotkey(spec) else { continue };
+                        let Some(keysym) = vk_to_x11_keysym(vk) else { continue };
+                        let keycode = u32::from(x_keysym_to_keycode(dpy, keysym));
+                        if keycode == 0 {
+                            continue;
+                        }
+                        let x11_mods = mods_to_x11_mask(mods);
+                        if x11_mods == 0 {
+                            continue;
+                        }
+                        for extra in LOCK_COMBOS {
+                            let _ = x_grab_key(
+                                dpy,
+                                keycode as libc::c_int,
+                                x11_mods | extra,
+                                root,
+                                1, // owner_events = True
+                                GRAB_MODE_ASYNC,
+                                GRAB_MODE_ASYNC,
+                            );
+                        }
+                        grabbed.push((x11_mods, keycode, ev));
+                    }
+                });
+                applied_gen = current_gen;
+            }
+
+            while x_pending(dpy) > 0 {
+                let mut event: XEvent = std::mem::zeroed();
+                let _ = x_next_event(dpy, &mut event);
+                if event.event_type == KEY_PRESS {
+                    let clean_mods = event.xkey.state & X11_CLEAN_MOD_MASK;
+                    let keycode = event.xkey.keycode;
+                    if let Some(&(_, _, tray_ev)) =
+                        grabbed.iter().find(|&&(m, kc, _)| m == clean_mods && kc == keycode)
+                    {
+                        let now = Instant::now();
+                        let debounced = last_fired.is_some_and(|(prev_ev, prev_t)| {
+                            prev_ev == tray_ev
+                                && now.saturating_duration_since(prev_t) < Duration::from_millis(220)
+                        });
+                        if !debounced {
+                            last_fired = Some((tray_ev, now));
+                            record_foreground_window();
+                            handler.emit(tray_ev);
+                        }
+                    }
+                }
+            }
+
+            let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+            let _ = libc::poll(&mut pfd, 1, 150);
+        }
+
+        let _ = with_x11_error_guard(x_set_error_handler, x_sync, dpy, || {
+            for &(mods, keycode, _) in &grabbed {
+                for extra in LOCK_COMBOS {
+                    let _ = x_ungrab_key(dpy, keycode as libc::c_int, mods | extra, root);
+                }
+            }
+        });
+        let _ = x_close_display(dpy);
+    }
 }
 
 fn spawn_x11_hotkey_thread(stop: Arc<AtomicBool>, handler: Arc<SharedHandler>) -> Option<JoinHandle<()>> {
@@ -474,168 +1008,245 @@ fn spawn_x11_hotkey_thread(stop: Arc<AtomicBool>, handler: Arc<SharedHandler>) -
     }
     std::thread::Builder::new()
         .name("tray-x11-hotkeys".into())
-        .spawn(move || {
-            // SAFETY: Dynamically loads libX11.so.6 and resolves standard Xlib symbols.
-            unsafe {
-                let lib = libc::dlopen(c"libX11.so.6".as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
-                if lib.is_null() {
-                    tracing::debug!("libX11.so.6 not available for global hotkeys");
-                    return;
-                }
-
-                type FnXOpenDisplay = unsafe extern "C" fn(*const libc::c_char) -> *mut libc::c_void;
-                type FnXCloseDisplay = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int;
-                type FnXDefaultRootWindow = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_ulong;
-                type FnXKeysymToKeycode =
-                    unsafe extern "C" fn(*mut libc::c_void, libc::c_ulong) -> libc::c_uchar;
-                type FnXGrabKey = unsafe extern "C" fn(
-                    *mut libc::c_void,
-                    libc::c_int,
-                    libc::c_uint,
-                    libc::c_ulong,
-                    libc::c_int,
-                    libc::c_int,
-                    libc::c_int,
-                ) -> libc::c_int;
-                type FnXUngrabKey = unsafe extern "C" fn(
-                    *mut libc::c_void,
-                    libc::c_int,
-                    libc::c_uint,
-                    libc::c_ulong,
-                ) -> libc::c_int;
-                type FnXPending = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int;
-                type FnXNextEvent = unsafe extern "C" fn(*mut libc::c_void, *mut XEvent) -> libc::c_int;
-                type FnXSync = unsafe extern "C" fn(*mut libc::c_void, libc::c_int) -> libc::c_int;
-                type FnXConnectionNumber = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int;
-                type XErrorHandler =
-                    Option<unsafe extern "C" fn(*mut libc::c_void, *mut libc::c_void) -> libc::c_int>;
-                type FnXSetErrorHandler = unsafe extern "C" fn(XErrorHandler) -> XErrorHandler;
-
-                macro_rules! sym {
-                    ($name:literal, $ty:ty) => {{
-                        let ptr = libc::dlsym(lib, $name.as_ptr());
-                        if ptr.is_null() {
-                            return;
-                        }
-                        std::mem::transmute::<*mut libc::c_void, $ty>(ptr)
-                    }};
-                }
-
-                let x_open_display = sym!(c"XOpenDisplay", FnXOpenDisplay);
-                let x_close_display = sym!(c"XCloseDisplay", FnXCloseDisplay);
-                let x_default_root_window = sym!(c"XDefaultRootWindow", FnXDefaultRootWindow);
-                let x_keysym_to_keycode = sym!(c"XKeysymToKeycode", FnXKeysymToKeycode);
-                let x_grab_key = sym!(c"XGrabKey", FnXGrabKey);
-                let x_ungrab_key = sym!(c"XUngrabKey", FnXUngrabKey);
-                let x_pending = sym!(c"XPending", FnXPending);
-                let x_next_event = sym!(c"XNextEvent", FnXNextEvent);
-                let x_sync = sym!(c"XSync", FnXSync);
-                let x_connection_number = sym!(c"XConnectionNumber", FnXConnectionNumber);
-                let x_set_error_handler = sym!(c"XSetErrorHandler", FnXSetErrorHandler);
-
-                let _ = x_set_error_handler(Some(ignore_x11_error));
-                let dpy = x_open_display(std::ptr::null());
-                if dpy.is_null() {
-                    tracing::debug!("XOpenDisplay failed for global hotkeys");
-                    return;
-                }
-                let root = x_default_root_window(dpy);
-                let fd = x_connection_number(dpy);
-
-                const KEY_PRESS: libc::c_int = 2;
-                const GRAB_MODE_ASYNC: libc::c_int = 1;
-                const LOCK_COMBOS: [u32; 4] =
-                    [0, X11_LOCK_MASK, X11_MOD2_MASK, X11_LOCK_MASK | X11_MOD2_MASK];
-
-                let mut applied_gen: u64 = 0;
-                // (x11_clean_mods, keycode, TrayEvent)
-                let mut grabbed: Vec<(u32, u32, TrayEvent)> = Vec::new();
-                let mut last_fired: Option<(TrayEvent, Instant)> = None;
-
-                while !stop.load(Ordering::Acquire) {
-                    let current_gen = HOTKEY_GENERATION.load(Ordering::Acquire);
-                    if current_gen != applied_gen {
-                        for &(mods, keycode, _) in &grabbed {
-                            for extra in LOCK_COMBOS {
-                                let _ = x_ungrab_key(dpy, keycode as libc::c_int, mods | extra, root);
-                            }
-                        }
-                        grabbed.clear();
-
-                        let (photo, scan, palette, shelf) =
-                            HOTKEY_SPECS.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                        let targets = [
-                            (photo.as_str(), TrayEvent::TakePhoto),
-                            (scan.as_str(), TrayEvent::ScanDocument),
-                            (palette.as_str(), TrayEvent::CommandPalette),
-                            (shelf.as_str(), TrayEvent::Shelf),
-                        ];
-
-                        for (spec, ev) in targets {
-                            let Some((mods, vk)) = parse_hotkey(spec) else { continue };
-                            let Some(keysym) = vk_to_x11_keysym(vk) else { continue };
-                            let keycode = u32::from(x_keysym_to_keycode(dpy, keysym));
-                            if keycode == 0 {
-                                continue;
-                            }
-                            let x11_mods = mods_to_x11_mask(mods);
-                            if x11_mods == 0 {
-                                continue;
-                            }
-                            for extra in LOCK_COMBOS {
-                                let _ = x_grab_key(
-                                    dpy,
-                                    keycode as libc::c_int,
-                                    x11_mods | extra,
-                                    root,
-                                    1, // owner_events = True
-                                    GRAB_MODE_ASYNC,
-                                    GRAB_MODE_ASYNC,
-                                );
-                            }
-                            grabbed.push((x11_mods, keycode, ev));
-                        }
-                        let _ = x_sync(dpy, 0);
-                        applied_gen = current_gen;
-                    }
-
-                    while x_pending(dpy) > 0 {
-                        let mut event: XEvent = std::mem::zeroed();
-                        let _ = x_next_event(dpy, &mut event);
-                        if event.event_type == KEY_PRESS {
-                            let clean_mods = event.xkey.state & X11_CLEAN_MOD_MASK;
-                            let keycode = event.xkey.keycode;
-                            if let Some(&(_, _, tray_ev)) =
-                                grabbed.iter().find(|&&(m, kc, _)| m == clean_mods && kc == keycode)
-                            {
-                                let now = Instant::now();
-                                let debounced = last_fired.is_some_and(|(prev_ev, prev_t)| {
-                                    prev_ev == tray_ev
-                                        && now.saturating_duration_since(prev_t) < Duration::from_millis(220)
-                                });
-                                if !debounced {
-                                    last_fired = Some((tray_ev, now));
-                                    record_foreground_window();
-                                    handler.emit(tray_ev);
-                                }
-                            }
-                        }
-                    }
-
-                    let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
-                    let _ = libc::poll(&mut pfd, 1, 150);
-                }
-
-                for &(mods, keycode, _) in &grabbed {
-                    for extra in LOCK_COMBOS {
-                        let _ = x_ungrab_key(dpy, keycode as libc::c_int, mods | extra, root);
-                    }
-                }
-                let _ = x_sync(dpy, 0);
-                let _ = x_close_display(dpy);
-            }
-        })
+        .spawn(move || run_x11_hotkey_loop(&stop, &handler))
         .ok()
+}
+
+/// Maps an `org.freedesktop.portal.GlobalShortcuts` shortcut identifier to [`TrayEvent`].
+pub(crate) fn parse_portal_shortcut_id(id: &str) -> Option<TrayEvent> {
+    match id.trim() {
+        "take-photo" => Some(TrayEvent::TakePhoto),
+        "scan-document" => Some(TrayEvent::ScanDocument),
+        "command-palette" => Some(TrayEvent::CommandPalette),
+        "shelf" => Some(TrayEvent::Shelf),
+        _ => None,
+    }
+}
+
+/// Converts a NectarLink hotkey spec (e.g. `"Ctrl+Alt+C"`) into an XDG GlobalShortcuts
+/// `preferred_trigger` string (e.g. `"CTRL+ALT+c"`).
+pub(crate) fn hotkey_to_portal_trigger(spec: &str) -> Option<String> {
+    let (mods, vk) = parse_hotkey(spec)?;
+    let mut parts: Vec<String> = Vec::new();
+    if (mods & MOD_CONTROL) != 0 {
+        parts.push("CTRL".into());
+    }
+    if (mods & MOD_ALT) != 0 {
+        parts.push("ALT".into());
+    }
+    if (mods & MOD_SHIFT) != 0 {
+        parts.push("SHIFT".into());
+    }
+    if (mods & MOD_WIN) != 0 {
+        parts.push("LOGO".into());
+    }
+    let key_name: String = match vk {
+        0x20 => "space".into(),
+        0x09 => "Tab".into(),
+        0x0D => "Return".into(),
+        0x1B => "Escape".into(),
+        0x2D => "Insert".into(),
+        0x2E => "Delete".into(),
+        0x24 => "Home".into(),
+        0x23 => "End".into(),
+        0x21 => "Page_Up".into(),
+        0x22 => "Page_Down".into(),
+        0x25 => "Left".into(),
+        0x26 => "Up".into(),
+        0x27 => "Right".into(),
+        0x28 => "Down".into(),
+        0xBB => "equal".into(),
+        0xBD => "minus".into(),
+        0xBC => "comma".into(),
+        0xBE => "period".into(),
+        0x30..=0x39 => char::from(vk as u8).to_string(),
+        0x41..=0x5A => char::from((vk as u8).to_ascii_lowercase()).to_string(),
+        0x70..=0x7B => format!("F{}", vk - 0x70 + 1),
+        _ => return None,
+    };
+    parts.push(key_name);
+    Some(parts.join("+"))
+}
+
+fn bind_portal_global_shortcuts(
+    conn: &zbus::blocking::Connection,
+    session_path: zbus::zvariant::ObjectPath<'_>,
+    bind_seq: &mut u64,
+) -> bool {
+    use zbus::zvariant::Value;
+
+    let (photo, scan, palette, shelf) = HOTKEY_SPECS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let specs = [
+        ("take-photo", "Take photo with phone", photo.as_str()),
+        ("scan-document", "Scan document with phone", scan.as_str()),
+        ("command-palette", "Open Command Palette", palette.as_str()),
+        ("shelf", "Open File Shelf", shelf.as_str()),
+    ];
+
+    let mut shortcuts: Vec<(&str, HashMap<&str, Value<'_>>)> = Vec::new();
+    let mut triggers: Vec<String> = Vec::new();
+    for (_, _, spec) in specs {
+        triggers.push(hotkey_to_portal_trigger(spec).unwrap_or_default());
+    }
+    for ((id, desc, _), trigger) in specs.iter().zip(triggers.iter()) {
+        if trigger.is_empty() {
+            continue;
+        }
+        let mut meta: HashMap<&str, Value<'_>> = HashMap::new();
+        meta.insert("description", Value::from(*desc));
+        meta.insert("preferred_trigger", Value::from(trigger.as_str()));
+        shortcuts.push((*id, meta));
+    }
+    if shortcuts.is_empty() {
+        return true;
+    }
+
+    *bind_seq += 1;
+    let token = format!("nectarlink_gs_bind_{}", *bind_seq);
+    let mut options: HashMap<&str, Value<'_>> = HashMap::new();
+    options.insert("handle_token", Value::from(token.as_str()));
+
+    conn.call_method(
+        Some("org.freedesktop.portal.Desktop"),
+        "/org/freedesktop/portal/desktop",
+        Some("org.freedesktop.portal.GlobalShortcuts"),
+        "BindShortcuts",
+        &(&session_path, shortcuts, "", options),
+    )
+    .is_ok()
+}
+
+fn try_run_wayland_portal_shortcuts(stop: &AtomicBool, handler: &SharedHandler) -> bool {
+    use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+
+    let Ok(conn) = zbus::blocking::Connection::session() else {
+        return false;
+    };
+    if !super::dbus_name_has_owner(&conn, "org.freedesktop.portal.Desktop") {
+        return false;
+    }
+    let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn) else {
+        return false;
+    };
+    let Ok(activated_rule) = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.portal.GlobalShortcuts")
+        .and_then(|b| b.member("Activated"))
+        .and_then(|b| b.path("/org/freedesktop/portal/desktop"))
+        .map(|b| b.build())
+    else {
+        return false;
+    };
+    if dbus.add_match_rule(activated_rule).is_err() {
+        return false;
+    }
+    if let Ok(resp_rule) = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.portal.Request")
+        .and_then(|b| b.member("Response"))
+        .map(|b| b.build())
+    {
+        let _ = dbus.add_match_rule(resp_rule);
+    }
+
+    let pid = std::process::id();
+    let req_token = format!("nectarlink_gs_req_{pid}");
+    let session_token = format!("nectarlink_gs_sess_{pid}");
+    let mut create_opts: HashMap<&str, Value<'_>> = HashMap::new();
+    create_opts.insert("handle_token", Value::from(req_token.as_str()));
+    create_opts.insert("session_handle_token", Value::from(session_token.as_str()));
+
+    let Ok(reply) = conn.call_method(
+        Some("org.freedesktop.portal.Desktop"),
+        "/org/freedesktop/portal/desktop",
+        Some("org.freedesktop.portal.GlobalShortcuts"),
+        "CreateSession",
+        &(create_opts,),
+    ) else {
+        return false;
+    };
+
+    let predicted_session_path =
+        conn.unique_name().map(|u| u.as_str().trim_start_matches(':').replace('.', "_")).and_then(|sender| {
+            ObjectPath::try_from(format!("/org/freedesktop/portal/desktop/session/{sender}/{session_token}"))
+                .ok()
+                .map(OwnedObjectPath::from)
+        });
+
+    let mut session_path: Option<OwnedObjectPath> = reply
+        .body()
+        .deserialize::<OwnedObjectPath>()
+        .ok()
+        .filter(|p| p.as_str().contains("/session/"))
+        .or(predicted_session_path);
+
+    let mut applied_gen: u64 = 0;
+    let mut bind_seq: u64 = 0;
+
+    if let Some(ref sp) = session_path {
+        let gen_now = HOTKEY_GENERATION.load(Ordering::Acquire);
+        let _ = bind_portal_global_shortcuts(&conn, sp.as_ref(), &mut bind_seq);
+        applied_gen = gen_now;
+    }
+
+    for msg in zbus::blocking::MessageIterator::from(&conn) {
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
+        let Ok(msg) = msg else {
+            break;
+        };
+        let hdr = msg.header();
+        let iface = hdr.interface().map(|i| i.as_str());
+        let member = hdr.member().map(|m| m.as_str());
+
+        if iface == Some("org.freedesktop.portal.Request")
+            && member == Some("Response")
+            && let Ok((code, results)) = msg.body().deserialize::<(u32, HashMap<String, OwnedValue>)>()
+        {
+            if code != 0 && session_path.is_none() {
+                return false;
+            }
+            if let Some(val) = results.get("session_handle") {
+                if let Ok(s) = <&str>::try_from(val)
+                    && let Ok(op) = ObjectPath::try_from(s)
+                {
+                    session_path = Some(OwnedObjectPath::from(op));
+                    applied_gen = 0;
+                } else if let Ok(op) = <ObjectPath<'_>>::try_from(&**val) {
+                    session_path = Some(OwnedObjectPath::from(op));
+                    applied_gen = 0;
+                }
+            }
+        }
+
+        let current_gen = HOTKEY_GENERATION.load(Ordering::Acquire);
+        if current_gen != applied_gen
+            && let Some(ref sp) = session_path
+        {
+            let _ = bind_portal_global_shortcuts(&conn, sp.as_ref(), &mut bind_seq);
+            applied_gen = current_gen;
+        }
+
+        if iface == Some("org.freedesktop.portal.GlobalShortcuts")
+            && member == Some("Activated")
+            && let Ok((_sess, shortcut_id, _ts, _opts)) =
+                msg.body().deserialize::<(OwnedObjectPath, String, u64, HashMap<String, OwnedValue>)>()
+            && let Some(ev) = parse_portal_shortcut_id(&shortcut_id)
+        {
+            record_foreground_window();
+            handler.emit(ev);
+        }
+    }
+    true
+}
+
+fn spawn_wayland_global_shortcuts_listener(stop: Arc<AtomicBool>, handler: Arc<SharedHandler>) {
+    let _ = std::thread::Builder::new().name("tray-wayland-shortcuts".into()).spawn(move || {
+        if !try_run_wayland_portal_shortcuts(&stop, &handler) && !stop.load(Ordering::Acquire) {
+            run_x11_hotkey_loop(&stop, &handler);
+        }
+    });
 }
 
 /// Returns true when an `org.freedesktop.portal.Settings.SettingChanged`
@@ -668,19 +1279,14 @@ pub fn is_portal_appearance_changed_line(line: &str) -> bool {
             || trimmed.contains("accent-color"))
 }
 
-type TrayEventHandler = Box<dyn Fn(TrayEvent)>;
+type TrayEventHandler = Box<dyn Fn(TrayEvent) + Send + Sync>;
 
 struct SharedHandler {
     inner: Mutex<Option<TrayEventHandler>>,
 }
 
-// SAFETY: Access to `inner` is serialized by its `Mutex`, and all invocations
-// either run on the owning thread or forward thread-safe `TrayEvent` variants.
-unsafe impl Send for SharedHandler {}
-unsafe impl Sync for SharedHandler {}
-
 impl SharedHandler {
-    fn new(handler: impl Fn(TrayEvent) + 'static) -> Arc<Self> {
+    fn new(handler: impl Fn(TrayEvent) + Send + Sync + 'static) -> Arc<Self> {
         Arc::new(Self { inner: Mutex::new(Some(Box::new(handler))) })
     }
 
@@ -809,7 +1415,11 @@ impl std::fmt::Debug for Tray {
 }
 
 impl Tray {
-    pub fn create(tooltip: &str, labels: MenuLabels, handler: impl Fn(TrayEvent) + 'static) -> Result<Tray> {
+    pub fn create(
+        tooltip: &str,
+        labels: MenuLabels,
+        handler: impl Fn(TrayEvent) + Send + Sync + 'static,
+    ) -> Result<Tray> {
         let icon_path = tray_icon_cache_path();
         if let Err(e) = super::icon::write_png(&icon_path, 32) {
             tracing::debug!(error = %e, path = %icon_path.display(), "could not write tray icon PNG");
@@ -866,7 +1476,9 @@ impl Tray {
             spawn_portal_appearance_listener(Arc::clone(&stop), Arc::clone(&shared_handler));
         }
 
-        if let Some(handle) = spawn_x11_hotkey_thread(Arc::clone(&stop), Arc::clone(&shared_handler)) {
+        if !cfg!(test) && has_wayland_display() {
+            spawn_wayland_global_shortcuts_listener(Arc::clone(&stop), Arc::clone(&shared_handler));
+        } else if let Some(handle) = spawn_x11_hotkey_thread(Arc::clone(&stop), Arc::clone(&shared_handler)) {
             threads.push(handle);
         }
 
@@ -1011,14 +1623,15 @@ mod tests {
 
     #[test]
     fn tray_lifecycle_and_window_tracking_work() {
+        assert!(!is_window_alive_and_visible(0));
+        assert!(!focus_window(0));
+        // Non-existent window handle must honestly report false rather than faking focus.
         {
             let mut guard = LAST_EXTERNAL_WINDOW.lock().unwrap_or_else(|e| e.into_inner());
-            *guard = Some((0x4242, "LibreOffice Writer".into()));
+            *guard = Some((0x7FFF_4242, "Nonexistent Window".into()));
         }
-        assert!(is_window_alive_and_visible(0x4242));
-        assert!(focus_window(0x4242));
-        let snap = snapshot_target_window().expect("snapshot window");
-        assert!(!snap.1.is_empty());
+        assert!(!is_window_alive_and_visible(0x7FFF_4242));
+        assert!(!focus_window(0x7FFF_4242));
 
         let labels = MenuLabels {
             open: "Open".into(),
@@ -1048,6 +1661,20 @@ mod tests {
         assert_eq!(parse_tray_helper_action("OPEN_LINK"), Some(TrayEvent::OpenLinkOnPhone));
         assert_eq!(parse_tray_helper_action("QUIT"), Some(TrayEvent::Quit));
         assert_eq!(parse_tray_helper_action("UNKNOWN"), None);
+    }
+
+    #[test]
+    fn portal_shortcut_mapping_and_triggers_work() {
+        assert_eq!(parse_portal_shortcut_id("take-photo"), Some(TrayEvent::TakePhoto));
+        assert_eq!(parse_portal_shortcut_id("scan-document"), Some(TrayEvent::ScanDocument));
+        assert_eq!(parse_portal_shortcut_id("command-palette"), Some(TrayEvent::CommandPalette));
+        assert_eq!(parse_portal_shortcut_id("shelf"), Some(TrayEvent::Shelf));
+        assert_eq!(parse_portal_shortcut_id("unknown"), None);
+
+        assert_eq!(hotkey_to_portal_trigger("Ctrl+Alt+C").as_deref(), Some("CTRL+ALT+c"));
+        assert_eq!(hotkey_to_portal_trigger("Ctrl+Alt+Space").as_deref(), Some("CTRL+ALT+space"));
+        assert_eq!(hotkey_to_portal_trigger("Super+Shift+F9").as_deref(), Some("SHIFT+LOGO+F9"));
+        assert!(hotkey_to_portal_trigger("none").is_none());
     }
 
     #[test]

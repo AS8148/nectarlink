@@ -17,6 +17,46 @@ pub enum Reach {
     Connected,
 }
 
+pub fn unescape_nmcli(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some(':') => out.push(':'),
+                Some('\\') => out.push('\\'),
+                Some(other) => out.push(other),
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn split_nmcli_fields(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut chars = line.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some(':') => current.push(':'),
+                Some('\\') => current.push('\\'),
+                Some(other) => current.push(other),
+                None => current.push('\\'),
+            }
+        } else if ch == ':' {
+            fields.push(std::mem::take(&mut current));
+        } else {
+            current.push(ch);
+        }
+    }
+    fields.push(current);
+    fields
+}
+
 fn tidy(mut names: Vec<String>) -> Vec<String> {
     names.retain(|n| !n.trim().is_empty());
     names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b)));
@@ -32,7 +72,8 @@ fn parse_saved_profiles(stdout: &str) -> Vec<String> {
         if let Some((kind, name)) = line.split_once(':')
             && (kind == "802-11-wireless" || kind == "wifi")
         {
-            let trimmed = name.trim();
+            let unescaped = unescape_nmcli(name);
+            let trimmed = unescaped.trim();
             if !trimmed.is_empty() {
                 names.push(trimmed.to_string());
             }
@@ -51,6 +92,58 @@ pub fn saved_networks() -> Vec<String> {
     parse_saved_profiles(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// Parses `nmcli -t -f ACTIVE,SSID dev wifi` output, finding the active `yes:<ssid>` line
+/// and unescaping `\:` -> `:` and `\\` -> `\`.
+pub fn parse_active_dev_wifi(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        if let Some(raw_ssid) = line.trim().strip_prefix("yes:") {
+            let ssid = unescape_nmcli(raw_ssid);
+            let trimmed = ssid.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Parses `nmcli -t -f NAME,TYPE connection show --active` output as a fallback.
+pub fn parse_active_connection_show(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        let fields = split_nmcli_fields(line.trim());
+        if fields.len() >= 2 {
+            let kind = fields[fields.len() - 1].trim();
+            if kind == "802-11-wireless" || kind == "wifi" {
+                let name = fields[..fields.len() - 1].join(":");
+                let trimmed = name.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Returns the currently active 802.11 Wi-Fi SSID (or active Wi-Fi connection name).
+pub fn current_profile() -> Option<String> {
+    if let Ok(out) = Command::new("nmcli").args(["-t", "-f", "ACTIVE,SSID", "dev", "wifi"]).output()
+        && out.status.success()
+        && let Some(ssid) = parse_active_dev_wifi(&String::from_utf8_lossy(&out.stdout))
+    {
+        return Some(ssid);
+    }
+
+    let out = Command::new("nmcli")
+        .args(["-t", "-f", "NAME,TYPE", "connection", "show", "--active"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_active_connection_show(&String::from_utf8_lossy(&out.stdout))
+}
+
 pub fn scan() {
     let _ = Command::new("nmcli").args(["device", "wifi", "rescan"]).output();
 }
@@ -60,8 +153,9 @@ fn parse_in_range(stdout: &str) -> Vec<InRange> {
     for line in stdout.lines() {
         // Format from `nmcli -t -f ACTIVE,SSID device wifi list`:
         // yes:MyHotspot
-        if let Some((active, ssid)) = line.split_once(':') {
-            let ssid = ssid.trim();
+        if let Some((active, raw_ssid)) = line.split_once(':') {
+            let unescaped = unescape_nmcli(raw_ssid);
+            let ssid = unescaped.trim();
             if !ssid.is_empty() {
                 out.push(InRange {
                     profile: ssid.to_string(),
@@ -140,5 +234,15 @@ mod tests {
         assert_eq!(reach_in(&list, "Home"), Reach::Connected);
         assert_eq!(reach_in(&list, "Pixel 9a"), Reach::InRange);
         assert_eq!(reach_in(&list, "Office"), Reach::NotInRange);
+    }
+
+    #[test]
+    fn parses_active_dev_wifi_with_escaped_colons_and_backslashes() {
+        let output = "no:NeighborWiFi\nyes:Cafe\\:Guest\\\\5GHz\nno:OtherNet\n";
+        assert_eq!(parse_active_dev_wifi(output), Some("Cafe:Guest\\5GHz".to_string()));
+        assert_eq!(parse_active_dev_wifi("no:NeighborWiFi\nyes:\n"), None);
+
+        let fallback_output = "Wired connection 1:802-3-ethernet\nMy\\:Hotspot\\\\Phone:802-11-wireless\n";
+        assert_eq!(parse_active_connection_show(fallback_output), Some("My:Hotspot\\Phone".to_string()));
     }
 }

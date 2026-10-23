@@ -97,6 +97,75 @@ jobs:
           name: windows-arm64
           path: target/package/*-setup.exe
 
+  linux:
+    name: Linux packages (x86_64)
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install system build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libgl1-mesa-dev libx11-dev libxcb1-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig1-dev \
+            libfreetype-dev libdbus-1-dev libxtst-dev file desktop-file-utils appstream
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: qtshadertools qtwaylandcompositor
+          cache: true
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git
+      - name: Install appimagetool and the AppImage runtime (pinned, checked)
+        run: |
+          curl -fsSL -o /tmp/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          curl -fsSL -o /tmp/runtime-x86_64 \
+            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          sha256sum -c - <<'SUMS'
+          ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  /tmp/appimagetool
+          2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  /tmp/runtime-x86_64
+          SUMS
+          chmod +x /tmp/appimagetool
+          sudo mv /tmp/appimagetool /usr/local/bin/appimagetool
+          echo "APPIMAGE_RUNTIME=/tmp/runtime-x86_64" >> "$GITHUB_ENV"
+      - name: Validate desktop entry and AppStream metadata
+        run: |
+          desktop-file-validate desktop/packaging/linux/nectarlink.desktop
+          appstreamcli validate --no-net desktop/packaging/linux/org.nectarlink.desktop.metainfo.xml
+      - name: Build and package (.deb, AppImage, tarball)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          cargo build --release -p nectarlink-desktop
+          ./desktop/packaging/linux/build-deb.sh
+          ./desktop/packaging/linux/build-appimage.sh
+          ./desktop/packaging/linux/build-tarball.sh
+      - name: Check that each package starts
+        # A package that doesn't start must not reach a release. The .deb goes
+        # into a clean Ubuntu 24.04, the oldest system the build supports.
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:24.04 bash -euc '
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends /dist/*.deb >/dev/null
+            nectarlink-desktop --version'
+          APPIMAGE_EXTRACT_AND_RUN=1 ./dist/*.AppImage --version
+          mkdir -p /tmp/tarball && tar -xzf dist/*.tar.gz -C /tmp/tarball
+          /tmp/tarball/*/nectarlink-desktop --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/*.tar.gz
+
   android:
     name: Android app (signed)
     needs: version
@@ -147,7 +216,7 @@ jobs:
 
   publish:
     name: Draft the release
-    needs: [windows, windows-arm64, android]
+    needs: [windows, windows-arm64, linux, android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -169,7 +238,7 @@ jobs:
           name=$(awk '/^\[workspace.metadata.release\]/{f=1;next} /^\[/{f=0} f && /^name = /{print $3}' source/Cargo.toml | tr -d '"')
           title="NectarLink ${GITHUB_REF_NAME#v}${name:+ $name}"
           cd files
-          sha256sum *.exe *.apk > SHA256SUMS.txt
+          sha256sum *.exe *.deb *.AppImage *.tar.gz *.apk > SHA256SUMS.txt
           cat SHA256SUMS.txt
           # The notes: this version's section of CHANGELOG.md ("## <version> ..."),
           # with its wrapped lines joined, or GitHub's generated notes when
@@ -177,5 +246,5 @@ jobs:
           awk -v v="${GITHUB_REF_NAME#v}" '$1=="##" && $2==v {f=1; next} f && /^## / {exit} f' \
             ../source/CHANGELOG.md | awk -f ../source/.github/scripts/unwrap-notes.awk > notes.md || true
           if [ -s notes.md ]; then notes=(--notes-file notes.md); else notes=(--generate-notes); fi
-          gh release create "${{ github.ref_name }}" *.exe *.apk SHA256SUMS.txt \
+          gh release create "${{ github.ref_name }}" *.exe *.deb *.AppImage *.tar.gz *.apk SHA256SUMS.txt \
             --repo "${{ github.repository }}" --draft "${notes[@]}" --title "$title"

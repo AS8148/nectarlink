@@ -70,7 +70,7 @@ bool mac_clipboard_write_text(rust::Str text, bool is_private);
 int64_t mac_local_offset_ms(int64_t at_ms);
 uint64_t mac_free_space(rust::Str path, bool &ok);
 
-// Linux QSystemTrayIcon + QMenu and QClipboard change notifications.
+// Linux QSystemTrayIcon + QMenu, screen geometry, activation token, and QClipboard.
 void linux_tray_setup(
     rust::Str icon_path,
     rust::Str tooltip,
@@ -86,7 +86,24 @@ void linux_tray_set_tooltip(rust::Str tooltip);
 void linux_tray_set_find_phone_enabled(bool enabled);
 void linux_tray_teardown();
 rust::String linux_tray_wait_action(uint32_t timeout_ms);
+bool linux_tray_is_available();
+
+bool linux_work_area(int32_t &x, int32_t &y, int32_t &w, int32_t &h);
+bool linux_screen_geometry(int32_t &x, int32_t &y, int32_t &w, int32_t &h);
+void linux_set_activation_token(rust::Str token);
 
 uint64_t linux_clipboard_sequence();
 uint64_t linux_clipboard_wait_change(uint64_t last_seq, uint32_t timeout_ms);
 void linux_clipboard_notify_external();
+bool linux_clipboard_read(
+    bool check_privacy,
+    bool &is_private,
+    bool &has_files,
+    rust::String &text,
+    rust::String &html,
+    rust::String &rtf,
+    rust::Vec<uint8_t> &png_bytes);
+rust::Vec<rust::String> linux_clipboard_read_files();
+bool linux_clipboard_write_text(rust::Str text, rust::Str html, rust::Str rtf, bool is_private);
+bool linux_clipboard_write_image_png(rust::Slice<const uint8_t> png);
+bool linux_clipboard_write_files(rust::Slice<const rust::String> paths);

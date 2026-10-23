@@ -249,6 +249,8 @@ struct Options {
     /// [`UI_CHECK_SECONDS`], and fail if QML reported a warning or an error.
     /// Qt's messages go to stderr. For CI (`scripts/ui-check.ps1`).
     ui_check: bool,
+    /// `--version` / `-V`: print the version and exit.
+    version: bool,
 }
 
 /// How long `--ui-check` keeps the window open: long enough for the window
@@ -286,6 +288,10 @@ fn parse_options_from<I: IntoIterator<Item = std::ffi::OsString>>(iter: I) -> Op
             Some("--ui-check") => {
                 in_share = false;
                 options.ui_check = true;
+            }
+            Some("--version" | "-V") => {
+                in_share = false;
+                options.version = true;
             }
             Some(setup::SETUP_ARG) => {
                 in_share = false;
@@ -351,6 +357,10 @@ fn parse_options_from<I: IntoIterator<Item = std::ffi::OsString>>(iter: I) -> Op
         *files = paths;
         // Sending doesn't need the window.
         options.minimized = true;
+    } else if share_targets.is_empty() && !paths.is_empty() {
+        // Desktop entry `Exec=nectarlink-desktop %U` passes URLs or dropped files
+        // as positional arguments without `--share`.
+        share_targets = paths.into_iter().map(|p| p.to_string_lossy().into_owned()).collect();
     }
     if matches!(options.task.as_deref(), Some("send-clipboard" | "find-phone" | "take-photo")) {
         options.minimized = true;
@@ -459,6 +469,10 @@ fn run_setup_window(mode: setup::Mode) -> ExitCode {
 
 fn main() -> ExitCode {
     let options = parse_options();
+    if options.version {
+        println!("nectarlink-desktop {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
     if let Some(installer) = options.setup.clone().filter(|p| !p.as_os_str().is_empty()) {
         return run_setup_window(setup::Mode::Install { installer });
     }
@@ -544,6 +558,10 @@ fn main() -> ExitCode {
 
     // Before any window: toasts and the taskbar both go by this ID.
     win::toast::set_process_id();
+    // Logging out or shutting down sends SIGTERM: quit as Quit does, so
+    // phone storage is unmounted instead of left behind.
+    #[cfg(target_os = "linux")]
+    win::quit_on_signals(bridge::app::request_quit);
     win::jumplist::register(options.data_dir.as_deref());
     if let Err(e) = core_host::start(data_dir.clone(), Arc::new(DesktopPlatform)) {
         tracing::error!(error = %e, "can't start the core runtime");
@@ -675,7 +693,7 @@ fn main() -> ExitCode {
             bridge::app::request_quit();
         });
     }
-    let code = app.as_mut().map_or(1, |app| app.exec());
+    let code = if bridge::app::is_quit_requested() { 0 } else { app.as_mut().map_or(1, |app| app.exec()) };
 
     tracing::info!(code, "shutting down");
     // QML first (it holds references into Qt), then the core.
@@ -763,5 +781,36 @@ mod tests {
         );
         assert_eq!(opts.data_dir, Some(PathBuf::from(r"C:\Temp\nectarlink-test")));
         assert!(opts.widget_provider);
+    }
+
+    #[test]
+    fn parse_options_recognizes_version_and_positional_desktop_uris() {
+        let ver = parse_options_from(["--version"].into_iter().map(OsString::from));
+        assert!(ver.version);
+
+        let web_opts = parse_options_from(["https://example.com"].into_iter().map(OsString::from));
+        assert!(web_opts.minimized);
+        assert_eq!(
+            web_opts.share,
+            Some(win::share_target::SharedPayload {
+                files: Vec::new(),
+                url: Some("https://example.com".into()),
+                text: None,
+            })
+        );
+
+        #[cfg(target_os = "linux")]
+        {
+            let uri_opts = parse_options_from(["tel:+15551234567"].into_iter().map(OsString::from));
+            assert!(uri_opts.minimized);
+            assert_eq!(
+                uri_opts.share,
+                Some(win::share_target::SharedPayload {
+                    files: Vec::new(),
+                    url: Some("tel:+15551234567".into()),
+                    text: None,
+                })
+            );
+        }
     }
 }

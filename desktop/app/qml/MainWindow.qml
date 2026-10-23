@@ -36,10 +36,8 @@ NativeWindow {
             if (targetId.indexOf("__grab__:") === 0) {
                 const outPath = targetId.substring("__grab__:".length)
                 AppController.clearHighlight()
-                if (window.contentItem && outPath.length > 0) {
-                    window.contentItem.grabToImage(function(result) {
-                        result.saveToFile(outPath)
-                    })
+                if (outPath.length > 0) {
+                    window.grabToFile(outPath)
                 }
                 return
             }

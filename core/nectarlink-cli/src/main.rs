@@ -3696,8 +3696,16 @@ async fn run(cli: &Cli, node: &Node) -> Result<()> {
                 .map(str::to_owned),
             );
             if node_power(cli) == PowerLevel::Elevated {
+                SCREEN_APPS.store(true, std::sync::atomic::Ordering::Relaxed);
                 offers.extend(
-                    [nectarlink_core::TOGGLES_WIFI, nectarlink_core::TOGGLES_BLUETOOTH].map(str::to_owned),
+                    [
+                        nectarlink_core::TOGGLES_WIFI,
+                        nectarlink_core::TOGGLES_BLUETOOTH,
+                        nectarlink_core::MIRROR_CAPTURE,
+                        nectarlink_core::MIRROR_INPUT,
+                        nectarlink_core::MIRROR_VIRTUAL_DISPLAY,
+                    ]
+                    .map(str::to_owned),
                 );
             }
             node.update_power(node_power(cli), offers).await;
@@ -4234,6 +4242,16 @@ async fn pair(node: &Node) -> Result<()> {
 
 async fn nearby(node: &Node, peer: DeviceId) -> Result<()> {
     let mut events = node.events();
+    if !node.discovered_devices().iter().any(|d| d.id == peer) {
+        let _ = tokio::time::timeout(Duration::from_secs(5), async {
+            while let Ok(ev) = events.recv().await {
+                if matches!(ev, NodeEvent::Discovered(ref d) if d.id == peer) {
+                    break;
+                }
+            }
+        })
+        .await;
+    }
     let mut task = {
         let node = node.clone();
         tokio::spawn(async move { node.pairing_start_nearby(peer).await })
@@ -5676,7 +5694,7 @@ async fn run_notify_when(
                 title: title.clone(),
                 active: false,
                 elapsed_ms: total_elapsed,
-                exit_code: None,
+                exit_code: Some(0),
             };
             let took = TaskNotify::format_took(total_elapsed);
             let send_res = transport.send(device, &finished).await;
