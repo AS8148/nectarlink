@@ -2,6 +2,7 @@
 package app.nectarlink.android.ui.desk
 
 import android.app.Activity
+import android.text.format.DateFormat
 import android.view.WindowManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -51,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -71,7 +73,6 @@ import app.nectarlink.core.Link
 import app.nectarlink.core.MediaAction
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -507,15 +508,19 @@ private fun DeskClockDisplay() {
         }
     }
 
-    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-    val secFormat = remember { SimpleDateFormat(":ss", Locale.getDefault()) }
-    val dateFormat = remember { SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()) }
+    val locale = LocalLocale.current.platformLocale
+    val timeFormat = remember(locale) { SimpleDateFormat("HH:mm", locale) }
+    val secFormat = remember(locale) { SimpleDateFormat(":ss", locale) }
+    val dateFormat = remember(locale) {
+        val pattern = DateFormat.getBestDateTimePattern(locale, "EEEEMMMMd")
+        SimpleDateFormat(pattern, locale)
+    }
 
     val minuteKey = nowMs / 60_000L
     val secondKey = nowMs / 1_000L
-    val timeText = remember(minuteKey) { timeFormat.format(Date(minuteKey * 60_000L)) }
-    val dateText = remember(minuteKey) { dateFormat.format(Date(minuteKey * 60_000L)) }
-    val secText = remember(secondKey) { secFormat.format(Date(secondKey * 1_000L)) }
+    val timeText = remember(minuteKey, locale) { timeFormat.format(Date(minuteKey * 60_000L)) }
+    val dateText = remember(minuteKey, locale) { dateFormat.format(Date(minuteKey * 60_000L)) }
+    val secText = remember(secondKey, locale) { secFormat.format(Date(secondKey * 1_000L)) }
 
     Row(
         verticalAlignment = Alignment.Bottom,

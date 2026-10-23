@@ -136,6 +136,7 @@ Item {
 
     function formatRetentionBytes(bytes) {
         const b = Number(bytes || 0)
+        const locale = Qt.locale()
         if (b <= 0)
             return qsTr("%1 B").arg(0)
         if (b < 1024)
@@ -143,10 +144,10 @@ Item {
         if (b < 1024 * 1024)
             return qsTr("%1 KB").arg(Math.max(1, Math.round(b / 1024)))
         if (b < 1024 * 1024 * 1024)
-            return qsTr("%1 MB").arg((b / (1024 * 1024)).toFixed(1))
+            return qsTr("%1 MB").arg(locale.toString(b / (1024 * 1024), "f", 1))
         if (b < 1024 * 1024 * 1024 * 1024)
-            return qsTr("%1 GB").arg((b / (1024 * 1024 * 1024)).toFixed(1))
-        return qsTr("%1 TB").arg((b / (1024 * 1024 * 1024 * 1024)).toFixed(1))
+            return qsTr("%1 GB").arg(locale.toString(b / (1024 * 1024 * 1024), "f", 1))
+        return qsTr("%1 TB").arg(locale.toString(b / (1024 * 1024 * 1024 * 1024), "f", 1))
     }
 
     visible: active

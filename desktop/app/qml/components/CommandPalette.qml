@@ -398,7 +398,7 @@ Item {
                         if (AppController.commandPaletteOpenMs <= 0)
                             return hk
                         const msText = AppController.commandPaletteOpenMs < 10
-                            ? AppController.commandPaletteOpenMs.toFixed(1)
+                            ? Qt.locale().toString(AppController.commandPaletteOpenMs, "f", 1)
                             : String(Math.round(AppController.commandPaletteOpenMs))
                         return qsTr("%1 · %2 ms").arg(hk).arg(msText)
                     }

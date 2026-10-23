@@ -86,10 +86,12 @@ Item {
             return qsTr("Today")
         if (date.toDateString() === yesterday.toDateString())
             return qsTr("Yesterday")
-        return date.toLocaleDateString(
-            Qt.locale(),
-            date.getFullYear() === today.getFullYear() ? "dddd, d MMMM" : Locale.LongFormat
-        )
+        const locale = Qt.locale()
+        if (date.getFullYear() !== today.getFullYear())
+            return date.toLocaleDateString(locale, Locale.LongFormat)
+        const pattern = locale.dateFormat(Locale.LongFormat)
+            .replace(/\s*yyyy\s*(?:'年'|年)\s*|[,\s]+yyyy\b|\byyyy[,\s]+/g, "")
+        return date.toLocaleDateString(locale, pattern)
     }
 
     function timeOfDay(unixSecs) {

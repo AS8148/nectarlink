@@ -158,8 +158,8 @@ Window {
         const b = Number(bytesPerSec) || 0
         if (b <= 0) return ""
         if (b < 1024 * 1024)
-            return (b / 1024).toFixed(0) + " KB/s"
-        return (b / (1024 * 1024)).toFixed(1) + " MB/s"
+            return Math.round(b / 1024) + " KB/s"
+        return Qt.locale().toString(b / (1024 * 1024), "f", 1) + " MB/s"
     }
 
     readonly property bool hasMediaCandidate: mediaPlaying && mediaDeviceId !== "local" && mediaTitle.length > 0
