@@ -5,11 +5,11 @@
 use std::{
     fs::{self, OpenOptions},
     io::Write,
-    os::fd::AsRawFd,
+    os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -105,8 +105,38 @@ pub fn find_v4l2loopback_in_sysfs(sysfs_root: &Path, dev_root: &Path) -> Option<
     None
 }
 
+fn has_v4l2loopback_module_installed() -> bool {
+    static INSTALLED: OnceLock<bool> = OnceLock::new();
+    *INSTALLED.get_or_init(|| {
+        if let Ok(release) = fs::read_to_string("/proc/sys/kernel/osrelease") {
+            let rel = release.trim();
+            for root in ["/lib/modules", "/usr/lib/modules"] {
+                let dep = Path::new(root).join(rel).join("modules.dep");
+                if let Ok(contents) = fs::read_to_string(&dep)
+                    && contents.contains("v4l2loopback")
+                {
+                    return true;
+                }
+            }
+        }
+        for bin in ["/sbin/modinfo", "/usr/sbin/modinfo", "modinfo"] {
+            if let Ok(status) = Command::new(bin)
+                .arg("v4l2loopback")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                && status.success()
+            {
+                return true;
+            }
+        }
+        false
+    })
+}
+
 /// Returns the active `v4l2loopback` device node, module sysfs directory, or `modprobe` binary
-/// so the desktop UI knows virtual camera setup is supported on this Linux host.
+/// when `v4l2loopback` is loaded or installed on this Linux host.
 pub fn dll_path() -> Option<PathBuf> {
     if let Some(dev) = find_v4l2loopback_device() {
         return Some(dev);
@@ -114,6 +144,9 @@ pub fn dll_path() -> Option<PathBuf> {
     let sys_mod = PathBuf::from("/sys/module/v4l2loopback");
     if sys_mod.exists() {
         return Some(sys_mod);
+    }
+    if !has_v4l2loopback_module_installed() {
+        return None;
     }
     for candidate in ["/sbin/modprobe", "/usr/sbin/modprobe", "/bin/modprobe", "/usr/bin/modprobe"] {
         let p = PathBuf::from(candidate);
@@ -161,19 +194,28 @@ fn run_modprobe(args: &[&str]) -> Result<(), String> {
     Err(last_err)
 }
 
+fn write_config_nofollow(path: &Path, content: &[u8]) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(mut f) = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .mode(0o644)
+        .open(path)
+    {
+        let _ = f.write_all(content);
+    }
+}
+
 /// Loads `v4l2loopback` with `"NectarLink Webcam"` and writes persistent module config files.
 pub fn register_hklm() -> Result<(), String> {
-    if let Some(parent) = Path::new(MODULES_LOAD_CONF).parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(MODULES_LOAD_CONF, "v4l2loopback\n");
-
-    if let Some(parent) = Path::new(MODPROBE_CONF).parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(
-        MODPROBE_CONF,
-        format!("options v4l2loopback exclusive_caps=1 card_label=\"{FRIENDLY_NAME}\"\n"),
+    write_config_nofollow(Path::new(MODULES_LOAD_CONF), b"v4l2loopback\n");
+    write_config_nofollow(
+        Path::new(MODPROBE_CONF),
+        format!("options v4l2loopback exclusive_caps=1 card_label=\"{FRIENDLY_NAME}\"\n").as_bytes(),
     );
 
     run_modprobe(&["v4l2loopback", "exclusive_caps=1", &format!("card_label={FRIENDLY_NAME}")])
@@ -321,8 +363,8 @@ fn v4l2_worker_loop(stop: &AtomicBool) {
 
     while !stop.load(Ordering::Acquire) {
         if mapping.is_none() {
-            mapping = SharedFrameMapping::open_existing(DEFAULT_MAPPING_NAME)
-                .or_else(|_| SharedFrameMapping::open_existing(LOCAL_MAPPING_NAME))
+            mapping = SharedFrameMapping::open_or_create(DEFAULT_MAPPING_NAME)
+                .or_else(|_| SharedFrameMapping::open_or_create(LOCAL_MAPPING_NAME))
                 .ok();
         }
 

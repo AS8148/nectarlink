@@ -64,17 +64,276 @@ pub(crate) fn pick<'a>(titles: &[&str], recent: &'a [String]) -> Option<&'a Stri
     best.map(|(_, name)| name)
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn percent_decode_str(input: &str) -> String {
+    let unescaped =
+        input.replace("&amp;", "&").replace("&apos;", "'").replace("&#39;", "'").replace("&quot;", "\"");
+    let bytes = unescaped.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) =
+                ((bytes[i + 1] as char).to_digit(16), (bytes[i + 2] as char).to_digit(16))
+        {
+            out.push(((hi << 4) | lo) as u8);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Resolves a `file://` URI (with percent-encoding and optional XML entity escaping)
+/// into a local filesystem [`PathBuf`].
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn decode_file_uri(uri: &str) -> Option<PathBuf> {
+    let trimmed = uri.trim().trim_matches('\'').trim_matches('"').trim();
+    let after_scheme = trimmed.strip_prefix("file://")?;
+    let path_part = after_scheme
+        .strip_prefix("localhost/")
+        .map(|r| format!("/{r}"))
+        .unwrap_or_else(|| after_scheme.to_owned());
+    let decoded = percent_decode_str(&path_part);
+    if decoded.trim().is_empty() { None } else { Some(PathBuf::from(decoded)) }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn extract_xml_attr<'a>(tag: &'a str, attr: &str) -> Option<&'a str> {
+    for quote in ['"', '\''] {
+        let pattern = format!("{attr}={quote}");
+        if let Some(start) = tag.find(&pattern) {
+            let rest = &tag[start + pattern.len()..];
+            if let Some(end) = rest.find(quote) {
+                return Some(&rest[..end]);
+            }
+        }
+    }
+    None
+}
+
+/// Parses Freedesktop `recently-used.xbel` XML content and returns playable video
+/// file paths ordered from most recently visited/modified to oldest.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn parse_xbel_recent_files(xml: &str) -> Vec<PathBuf> {
+    let mut entries: Vec<(String, usize, PathBuf)> = Vec::new();
+    for (idx, chunk) in xml.split("<bookmark").skip(1).enumerate() {
+        let Some(tag_end) = chunk.find('>') else {
+            continue;
+        };
+        let tag = &chunk[..tag_end];
+        let Some(href) = extract_xml_attr(tag, "href") else {
+            continue;
+        };
+        let Some(path) = decode_file_uri(href) else {
+            continue;
+        };
+        let is_playable = path.file_name().and_then(|n| n.to_str()).is_some_and(playable);
+        if !is_playable {
+            continue;
+        }
+        let timestamp = extract_xml_attr(tag, "visited")
+            .or_else(|| extract_xml_attr(tag, "modified"))
+            .or_else(|| extract_xml_attr(tag, "added"))
+            .unwrap_or("")
+            .to_owned();
+        entries.push((timestamp, idx, path));
+    }
+    entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    let mut out = Vec::with_capacity(entries.len().min(RECENT));
+    for (_, _, path) in entries {
+        if !out.contains(&path) {
+            out.push(path);
+            if out.len() >= RECENT {
+                break;
+            }
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn mpris_xesam_url_for(player: &str, title: &str) -> Option<PathBuf> {
+    use std::collections::HashMap;
+    use zbus::zvariant::OwnedValue;
+
+    let conn = zbus::blocking::Connection::session().ok()?;
+    let reply = conn
+        .call_method(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus"),
+            "ListNames",
+            &(),
+        )
+        .ok()?;
+    let bus_names: Vec<String> = reply
+        .body()
+        .deserialize::<Vec<String>>()
+        .ok()
+        .or_else(|| reply.body().deserialize::<(Vec<String>,)>().ok().map(|(v,)| v))?;
+
+    let player_lower = player.trim().to_ascii_lowercase();
+    for bus in bus_names {
+        let Some(short) = bus.strip_prefix("org.mpris.MediaPlayer2.") else {
+            continue;
+        };
+        let short_lower = short.to_ascii_lowercase();
+        if !player_lower.is_empty()
+            && !short_lower.contains(&player_lower)
+            && !player_lower.contains(&short_lower)
+        {
+            continue;
+        }
+        let Ok(msg) = conn.call_method(
+            Some(bus.as_str()),
+            "/org/mpris/MediaPlayer2",
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &("org.mpris.MediaPlayer2.Player", "Metadata"),
+        ) else {
+            continue;
+        };
+        let meta_val = msg
+            .body()
+            .deserialize::<OwnedValue>()
+            .ok()
+            .or_else(|| msg.body().deserialize::<(OwnedValue,)>().ok().map(|(v,)| v));
+        let Some(meta_dict) = meta_val
+            .and_then(|v| v.try_clone().ok())
+            .and_then(|owned| HashMap::<String, OwnedValue>::try_from(owned).ok())
+        else {
+            continue;
+        };
+        let Some(url_str) = meta_dict.get("xesam:url").and_then(|v| <&str>::try_from(v).ok()) else {
+            continue;
+        };
+        let Some(path) = decode_file_uri(url_str) else {
+            continue;
+        };
+        if path.is_file() && path.file_name().and_then(|n| n.to_str()).is_some_and(playable) {
+            if title.trim().is_empty() {
+                return Some(path);
+            }
+            if let Some(fname) = path.file_name().and_then(|n| n.to_str())
+                && names(title, fname) > 0
+            {
+                return Some(path);
+            }
+            return Some(path);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn proc_open_playable_files(programs: &[String]) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(proc_dir) = std::fs::read_dir("/proc") else {
+        return out;
+    };
+    for entry in proc_dir.flatten() {
+        let pid_os = entry.file_name();
+        let Some(pid_str) = pid_os.to_str() else {
+            continue;
+        };
+        if !pid_str.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let comm_path = entry.path().join("comm");
+        let comm = std::fs::read_to_string(&comm_path).unwrap_or_default().trim().to_ascii_lowercase();
+        if comm.is_empty() || !programs.iter().any(|p| p.eq_ignore_ascii_case(&comm) || comm.contains(p)) {
+            continue;
+        }
+        let Ok(fd_dir) = std::fs::read_dir(entry.path().join("fd")) else {
+            continue;
+        };
+        for fd_entry in fd_dir.flatten() {
+            if let Ok(target) = std::fs::read_link(fd_entry.path())
+                && target.is_file()
+                && target.file_name().and_then(|n| n.to_str()).is_some_and(playable)
+                && !out.contains(&target)
+            {
+                out.push(target);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn xbel_recent_playable_files() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(data_dir) = dirs::data_local_dir() {
+        candidates.push(data_dir.join("recently-used.xbel"));
+    }
+    if let Some(home) = dirs::home_dir() {
+        let fallback = home.join(".local/share/recently-used.xbel");
+        if !candidates.contains(&fallback) {
+            candidates.push(fallback);
+        }
+    }
+    for xbel_path in candidates {
+        if let Ok(xml) = std::fs::read_to_string(&xbel_path) {
+            let parsed = parse_xbel_recent_files(&xml);
+            if !parsed.is_empty() {
+                return parsed;
+            }
+        }
+    }
+    Vec::new()
+}
+
 /// The video file this PC's `player` plays (`title`, as its media session
-/// says), if it is one a phone plays and Windows lists it as opened lately.
+/// says), if it is one a phone plays and the system lists it as opened lately.
 pub fn file_for(player: &str, title: &str) -> Option<PathBuf> {
     let programs = browser::programs_for(player);
     if programs.iter().any(|p| browser::is_browser(p)) {
         return None;
     }
+
+    #[cfg(target_os = "linux")]
+    if let Some(path) = mpris_xesam_url_for(player, title) {
+        return Some(path);
+    }
+
     let windows: Vec<String> =
         browser::windows().into_iter().filter(|w| programs.contains(&w.program)).map(|w| w.title).collect();
     let mut titles: Vec<&str> = windows.iter().map(String::as_str).collect();
     titles.push(title);
+
+    #[cfg(target_os = "linux")]
+    {
+        let open_files = proc_open_playable_files(&programs);
+        let open_names: Vec<String> = open_files
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|s| s.to_str()).map(str::to_owned))
+            .collect();
+        if let Some(chosen) = pick(&titles, &open_names)
+            && let Some(found) = open_files
+                .into_iter()
+                .find(|p| p.file_name().and_then(|s| s.to_str()) == Some(chosen.as_str()))
+        {
+            return Some(found);
+        }
+
+        let xbel_files: Vec<PathBuf> =
+            xbel_recent_playable_files().into_iter().filter(|p| p.is_file()).collect();
+        let xbel_names: Vec<String> = xbel_files
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|s| s.to_str()).map(str::to_owned))
+            .collect();
+        if let Some(chosen) = pick(&titles, &xbel_names)
+            && let Some(found) = xbel_files
+                .into_iter()
+                .find(|p| p.file_name().and_then(|s| s.to_str()) == Some(chosen.as_str()))
+        {
+            return Some(found);
+        }
+    }
 
     let dir = shortcut::recent_dir()?;
     let mut links: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(&dir)
@@ -125,5 +384,28 @@ mod tests {
         // The window's title counts too.
         let titles = ["", "Holiday 2024 extras.mp4 - VLC media player"];
         assert_eq!(pick(&titles, &recent).map(String::as_str), Some("Holiday 2024 extras.mp4"));
+    }
+
+    #[test]
+    fn parses_xbel_recent_files_and_decodes_file_uris() {
+        assert_eq!(
+            decode_file_uri("file:///home/user/Videos/Director&apos;s%20Cut%20(2026).mkv"),
+            Some(PathBuf::from("/home/user/Videos/Director's Cut (2026).mkv"))
+        );
+
+        let xbel = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xbel version="1.0">
+  <bookmark href="file:///home/user/Documents/notes.txt" visited="2026-10-08T10:00:00Z"/>
+  <bookmark href="file:///home/user/Videos/Older%20Clip.mp4" visited="2026-10-07T09:00:00Z"/>
+  <bookmark href="file:///home/user/Videos/Newest%20Movie%202026.mkv" visited="2026-10-08T12:30:00Z"/>
+</xbel>"#;
+        let files = parse_xbel_recent_files(xbel);
+        assert_eq!(
+            files,
+            vec![
+                PathBuf::from("/home/user/Videos/Newest Movie 2026.mkv"),
+                PathBuf::from("/home/user/Videos/Older Clip.mp4"),
+            ]
+        );
     }
 }

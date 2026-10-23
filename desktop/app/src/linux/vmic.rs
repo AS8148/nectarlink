@@ -9,7 +9,6 @@ use std::io::{ErrorKind, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub const SOURCE_NAME: &str = "NectarLink_Virtual_Mic";
 pub const DEFAULT_DESCRIPTION: &str = "NectarLink Phone Microphone";
@@ -102,8 +101,10 @@ pub fn format_file_arg(fifo_path: &Path) -> Result<String, String> {
     Ok(format!("file=\"{s}\""))
 }
 
+const PACTL_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(800);
+
 pub fn is_available() -> bool {
-    Command::new("pactl").arg("info").output().map(|o| o.status.success()).unwrap_or(false)
+    super::run_cmd_timeout("pactl", &["info"], PACTL_TIMEOUT).is_some_and(|o| o.status.success())
 }
 
 /// Ensures that `fifo_path` exists on disk as a Unix FIFO (`0o600`) owned by the
@@ -210,7 +211,7 @@ pub fn parse_stale_pipe_source_modules(pactl_short: &str) -> Vec<u32> {
 /// Unloads any leftover NectarLink `module-pipe-source` modules in
 /// PulseAudio / PipeWire and removes any legacy `/tmp/nectarlink-vmic.pcm` FIFO.
 pub fn cleanup_stale_sources() {
-    if let Ok(output) = Command::new("pactl").args(["list", "modules", "short"]).output()
+    if let Some(output) = super::run_cmd_timeout("pactl", &["list", "modules", "short"], PACTL_TIMEOUT)
         && output.status.success()
     {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -244,20 +245,25 @@ pub fn create_source_with_label(
     let _ = ensure_fifo(fifo_path);
     let clean_channels = channels.clamp(1, 2);
     let source_props = format_source_properties_with_channels(phone_name, clean_channels);
-    let output = Command::new("pactl")
-        .args([
+    let source_name_arg = format!("source_name={SOURCE_NAME}");
+    let rate_arg = format!("rate={}", rate.max(8_000));
+    let channels_arg = format!("channels={clean_channels}");
+    let output = super::run_cmd_timeout(
+        "pactl",
+        &[
             "load-module",
             "module-pipe-source",
-            &format!("source_name={SOURCE_NAME}"),
+            &source_name_arg,
             &file_arg,
             "format=s16le",
-            &format!("rate={}", rate.max(8_000)),
-            &format!("channels={clean_channels}"),
+            &rate_arg,
+            &channels_arg,
             format_channel_map(clean_channels),
             &source_props,
-        ])
-        .output()
-        .map_err(|e| format!("failed to run pactl: {e}"))?;
+        ],
+        PACTL_TIMEOUT,
+    )
+    .ok_or_else(|| "pactl timed out or failed to start".to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
@@ -267,14 +273,15 @@ pub fn create_source_with_label(
         .map_err(|e| format!("invalid pactl module id: {e}"))?;
 
     // Ensure the virtual source is unmuted and at 100% (0 dB) unity gain in PipeWire/PulseAudio.
-    let _ = Command::new("pactl").args(["set-source-mute", SOURCE_NAME, "0"]).status();
-    let _ = Command::new("pactl").args(["set-source-volume", SOURCE_NAME, "100%"]).status();
+    let _ = super::run_cmd_timeout("pactl", &["set-source-mute", SOURCE_NAME, "0"], PACTL_TIMEOUT);
+    let _ = super::run_cmd_timeout("pactl", &["set-source-volume", SOURCE_NAME, "100%"], PACTL_TIMEOUT);
 
     Ok(module_id)
 }
 
 pub fn destroy_source(module_id: u32) {
-    let _ = Command::new("pactl").args(["unload-module", &module_id.to_string()]).status();
+    let id_str = module_id.to_string();
+    let _ = super::run_cmd_timeout("pactl", &["unload-module", &id_str], PACTL_TIMEOUT);
 }
 
 /// Default makeup pre-gain (in dB) applied to phone microphone streams on Linux
@@ -381,10 +388,40 @@ impl VirtualMic {
             module_id,
             input_channels: in_ch,
             output_channels: out_ch,
-            gain_db: DEFAULT_PHONE_MAKEUP_GAIN_DB,
+            gain_db: 0.0,
             muted: false,
             last_rms: 0.0,
         }
+    }
+
+    /// Creates a new `VirtualMic` controller labeled with `phone_name`, failing
+    /// honestly when `pactl load-module module-pipe-source` does not succeed.
+    pub fn open_with_label(
+        rate: u32,
+        input_channels: u8,
+        output_channels: u8,
+        phone_name: Option<&str>,
+    ) -> Result<Self, String> {
+        let in_ch = input_channels.clamp(1, 2);
+        let out_ch = output_channels.clamp(1, 2);
+        let fifo_path = default_fifo_path();
+        ensure_fifo(&fifo_path)?;
+        let fifo_file = open_fifo_nonblocking(&fifo_path)
+            .map_err(|e| format!("open FIFO {}: {e}", fifo_path.display()))?;
+        let module_id = create_source_with_label(rate, out_ch, &fifo_path, phone_name).ok();
+        if !cfg!(test) && module_id.is_none() {
+            return Err("failed to create PipeWire/PulseAudio virtual microphone source".into());
+        }
+        Ok(Self {
+            fifo_path,
+            fifo_file: Some(fifo_file),
+            module_id,
+            input_channels: in_ch,
+            output_channels: out_ch,
+            gain_db: 0.0,
+            muted: false,
+            last_rms: 0.0,
+        })
     }
 
     /// Creates a `VirtualMic` backed by a specific FIFO path (creating the FIFO if needed)
@@ -464,10 +501,35 @@ impl VirtualMic {
         }
     }
 
-    /// Processes incoming `s16le` PCM frames (applying `gain_db` and upmixing mono to
-    /// stereo when `input_channels == 1 && output_channels == 2`) and writes them to
-    /// the pipe FIFO if the virtual source or FIFO handle is active.
+    /// Processes incoming `s16le` PCM frames (applying `gain_db` when non-zero and
+    /// upmixing mono to stereo when `input_channels == 1 && output_channels == 2`)
+    /// and writes them to the pipe FIFO if the virtual source or FIFO handle is active.
     pub fn push_pcm(&mut self, pcm: &[u8]) -> Result<f32, String> {
+        if !self.muted && self.gain_db.abs() < f32::EPSILON {
+            let sample_count = pcm.len() / 2;
+            let rms = if sample_count == 0 {
+                0.0
+            } else {
+                let mut sum_sq = 0.0_f64;
+                for chunk in pcm.as_chunks::<2>().0 {
+                    let norm = f64::from(i16::from_le_bytes([chunk[0], chunk[1]])) / 32768.0;
+                    sum_sq += norm * norm;
+                }
+                ((sum_sq / (sample_count as f64)).sqrt() as f32).clamp(0.0, 1.0)
+            };
+            self.last_rms = rms;
+            if (self.module_id.is_some() || self.fifo_file.is_some()) && sample_count > 0 {
+                let aligned = &pcm[..sample_count * 2];
+                if self.input_channels == 1 && self.output_channels == 2 {
+                    let stereo = mono_to_stereo_s16le(aligned);
+                    let _ = self.write_pcm_s16le(&stereo);
+                } else {
+                    let _ = self.write_pcm_s16le(aligned);
+                }
+            }
+            return Ok(rms);
+        }
+
         let (processed, rms) = process_mic_pcm_s16le(pcm, self.gain_db, self.muted);
         self.last_rms = rms;
         if (self.module_id.is_some() || self.fifo_file.is_some()) && !processed.is_empty() {
