@@ -226,49 +226,14 @@ pub(crate) fn evdev_key_for_mod(m: KeyMod) -> u16 {
     }
 }
 
-/// Maps an X11 keysym name (as returned by [`resolve_key`]) to a Linux evdev `KEY_*` code.
+/// Maps a named X11 keysym (as returned by [`resolve_key`]) to a Linux evdev `KEY_*` code.
+/// Letters and digits aren't here: where they are depends on the layout ([`key_code_for_sym`]).
 pub(crate) fn evdev_key_for_sym(sym: &str) -> Option<u16> {
     let code = match sym {
         "Escape" => 1,
-        "1" => 2,
-        "2" => 3,
-        "3" => 4,
-        "4" => 5,
-        "5" => 6,
-        "6" => 7,
-        "7" => 8,
-        "8" => 9,
-        "9" => 10,
-        "0" => 11,
         "BackSpace" => 14,
         "Tab" => 15,
-        "q" => 16,
-        "w" => 17,
-        "e" => 18,
-        "r" => 19,
-        "t" => 20,
-        "y" => 21,
-        "u" => 22,
-        "i" => 23,
-        "o" => 24,
-        "p" => 25,
         "Return" => 28,
-        "a" => 30,
-        "s" => 31,
-        "d" => 32,
-        "f" => 33,
-        "g" => 34,
-        "h" => 35,
-        "j" => 36,
-        "k" => 37,
-        "l" => 38,
-        "z" => 44,
-        "x" => 45,
-        "c" => 46,
-        "v" => 47,
-        "b" => 48,
-        "n" => 49,
-        "m" => 50,
         "space" => 57,
         "F1" => 59,
         "F2" => 60,
@@ -304,50 +269,30 @@ pub(crate) fn evdev_key_for_sym(sym: &str) -> Option<u16> {
     Some(code)
 }
 
-/// Maps an ASCII character to `(evdev_keycode, needs_shift)`.
-pub(crate) fn evdev_key_for_ascii(ch: char) -> Option<(u16, bool)> {
-    let pair = match ch {
-        'a'..='z' => (evdev_key_for_sym(&ch.to_string())?, false),
-        'A'..='Z' => (evdev_key_for_sym(&ch.to_ascii_lowercase().to_string())?, true),
-        '0'..='9' => (evdev_key_for_sym(&ch.to_string())?, false),
-        '!' => (2, true),
-        '@' => (3, true),
-        '#' => (4, true),
-        '$' => (5, true),
-        '%' => (6, true),
-        '^' => (7, true),
-        '&' => (8, true),
-        '*' => (9, true),
-        '(' => (10, true),
-        ')' => (11, true),
-        '-' => (12, false),
-        '_' => (12, true),
-        '=' => (13, false),
-        '+' => (13, true),
-        '\t' => (15, false),
-        '[' => (26, false),
-        '{' => (26, true),
-        ']' => (27, false),
-        '}' => (27, true),
-        '\n' => (28, false),
-        ';' => (39, false),
-        ':' => (39, true),
-        '\'' => (40, false),
-        '"' => (40, true),
-        '`' => (41, false),
-        '~' => (41, true),
-        '\\' => (43, false),
-        '|' => (43, true),
-        ',' => (51, false),
-        '<' => (51, true),
-        '.' => (52, false),
-        '>' => (52, true),
-        '/' => (53, false),
-        '?' => (53, true),
-        ' ' => (57, false),
-        _ => return None,
-    };
-    Some(pair)
+/// The modifier keys a [`KeyPress`](super::keymap::KeyPress) needs held.
+fn press_mods(press: &super::keymap::KeyPress) -> Vec<u16> {
+    let mut mods = Vec::with_capacity(2);
+    if press.shift {
+        mods.push(evdev_key_for_mod(KeyMod::Shift));
+    }
+    if press.altgr {
+        mods.push(super::keymap::KEY_RIGHTALT);
+    }
+    mods
+}
+
+/// The evdev key for a shortcut's key name. Named keys (arrows, F-keys,
+/// Enter) are in the same place on every layout; a letter isn't (Z is
+/// where Y is on a German keyboard), so letters go through the user's
+/// layout, and without a known layout there is no key code to send.
+fn key_code_for_sym(sym: &str) -> Option<u16> {
+    let mut chars = sym.chars();
+    match (chars.next(), chars.next()) {
+        (Some(ch), None) => {
+            super::keymap::current()?.press_for(ch).filter(|p| !p.shift && !p.altgr).map(|p| p.code)
+        }
+        _ => evdev_key_for_sym(sym),
+    }
 }
 
 /// Converts a Unicode character to its X11 keysym (`XK_*` or `0x0100_0000 | codepoint`).
@@ -1246,17 +1191,13 @@ pub fn type_text(text: &str) {
         return;
     }
 
-    // 1. Try `/dev/uinput` when all characters map to standard ASCII evdev keycodes.
-    let ascii_seq: Option<Vec<(u16, bool)>> = cleaned.chars().map(evdev_key_for_ascii).collect();
-    if let Some(ref seq) = ascii_seq
-        && with_uinput(|u| {
-            let shift_mod = [evdev_key_for_mod(KeyMod::Shift)];
-            seq.iter().all(
-                |&(code, shift)| {
-                    if shift { u.key_combo(code, &shift_mod) } else { u.key_combo(code, &[]) }
-                },
-            )
-        })
+    // 1. `/dev/uinput`, pressing the keys that type each character on the
+    //    user's layout. Without a known layout, skip it: a guessed layout
+    //    types the wrong characters.
+    let presses: Option<Vec<super::keymap::KeyPress>> =
+        super::keymap::current().and_then(|km| cleaned.chars().map(|ch| km.press_for(ch)).collect());
+    if let Some(ref presses) = presses
+        && with_uinput(|u| presses.iter().all(|p| u.key_combo(p.code, &press_mods(p))))
     {
         return;
     }
@@ -1461,7 +1402,7 @@ pub fn press_key(key: &str, mods: &[KeyMod]) {
         }
     }
 
-    if let Some(evdev_code) = evdev_key_for_sym(&sym) {
+    if let Some(evdev_code) = key_code_for_sym(&sym) {
         let mod_codes: Vec<u16> = all_mods.iter().map(|&m| evdev_key_for_mod(m)).collect();
         if with_uinput(|u| u.key_combo(evdev_code, &mod_codes)) {
             return;
@@ -1680,12 +1621,6 @@ mod tests {
         assert_eq!(evdev_key_for_sym("F5"), Some(63));
         assert_eq!(evdev_key_for_sym("XF86AudioPlay"), Some(164));
         assert_eq!(evdev_key_for_mod(KeyMod::Win), 125);
-
-        assert_eq!(evdev_key_for_ascii('a'), Some((30, false)));
-        assert_eq!(evdev_key_for_ascii('A'), Some((30, true)));
-        assert_eq!(evdev_key_for_ascii('!'), Some((2, true)));
-        assert_eq!(evdev_key_for_ascii('\n'), Some((28, false)));
-        assert!(evdev_key_for_ascii('é').is_none());
 
         assert_eq!(char_to_x11_keysym('a'), 0x61);
         assert_eq!(char_to_x11_keysym('\n'), 0xff0d);
