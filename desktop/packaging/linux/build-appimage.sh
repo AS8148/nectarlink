@@ -166,10 +166,15 @@ OUT_DIR="${OUT_DIR:-${REPO_ROOT}/dist}"
 mkdir -p "${OUT_DIR}"
 OUT_APPIMAGE="${OUT_DIR}/Nectarlink-${VERSION}-${ARCH}.AppImage"
 
-if command -v appimagetool >/dev/null 2>&1; then
-    ARCH="${ARCH}" appimagetool "${APPDIR}" "${OUT_APPIMAGE}"
-    echo "Built ${OUT_APPIMAGE}"
-else
+if ! command -v appimagetool >/dev/null 2>&1; then
     echo "appimagetool not found in PATH; AppDir staged at ${APPDIR}" >&2
-    exit 0
+    exit 1
 fi
+# APPIMAGE_RUNTIME: a runtime file checked beforehand (the release workflow
+# pins one). Without it appimagetool downloads the latest runtime itself.
+runtime_args=()
+if [[ -n "${APPIMAGE_RUNTIME:-}" ]]; then
+    runtime_args=(--runtime-file "${APPIMAGE_RUNTIME}")
+fi
+ARCH="${ARCH}" appimagetool "${runtime_args[@]}" "${APPDIR}" "${OUT_APPIMAGE}"
+echo "Built ${OUT_APPIMAGE}"

@@ -122,12 +122,19 @@ jobs:
           modules: qtshadertools qtwaylandcompositor
           cache: true
           aqtsource: git+https://github.com/miurahr/aqtinstall.git
-      - name: Install appimagetool
+      - name: Install appimagetool and the AppImage runtime (pinned, checked)
         run: |
           curl -fsSL -o /tmp/appimagetool \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          curl -fsSL -o /tmp/runtime-x86_64 \
+            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          sha256sum -c - <<'SUMS'
+          ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  /tmp/appimagetool
+          2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  /tmp/runtime-x86_64
+          SUMS
           chmod +x /tmp/appimagetool
           sudo mv /tmp/appimagetool /usr/local/bin/appimagetool
+          echo "APPIMAGE_RUNTIME=/tmp/runtime-x86_64" >> "$GITHUB_ENV"
       - name: Validate desktop entry and AppStream metadata
         run: |
           desktop-file-validate desktop/packaging/linux/nectarlink.desktop
@@ -140,6 +147,17 @@ jobs:
           ./desktop/packaging/linux/build-deb.sh
           ./desktop/packaging/linux/build-appimage.sh
           ./desktop/packaging/linux/build-tarball.sh
+      - name: Check that each package starts
+        # A package that doesn't start must not reach a release. The .deb goes
+        # into a clean Ubuntu 24.04, the oldest system the build supports.
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:24.04 bash -euc '
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends /dist/*.deb >/dev/null
+            nectarlink-desktop --version'
+          APPIMAGE_EXTRACT_AND_RUN=1 ./dist/*.AppImage --version
+          mkdir -p /tmp/tarball && tar -xzf dist/*.tar.gz -C /tmp/tarball
+          /tmp/tarball/*/nectarlink-desktop --version
       - uses: actions/upload-artifact@v7
         with:
           name: linux
