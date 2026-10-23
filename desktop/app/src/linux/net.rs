@@ -52,8 +52,7 @@ static STOP_FLAG: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 fn proc_network_snapshot() -> String {
     let route = fs::read_to_string("/proc/net/route").unwrap_or_default();
     let inet6 = fs::read_to_string("/proc/net/if_inet6").unwrap_or_default();
-    let fib_trie = fs::read_to_string("/proc/net/arp").unwrap_or_default();
-    format!("{route}\n---\n{inet6}\n---\n{fib_trie}")
+    format!("{route}\n---\n{inet6}")
 }
 
 /// Calls `callback` whenever an IP address or route is added or removed on the PC.

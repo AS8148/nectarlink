@@ -5676,7 +5676,7 @@ async fn run_notify_when(
                 title: title.clone(),
                 active: false,
                 elapsed_ms: total_elapsed,
-                exit_code: Some(0),
+                exit_code: None,
             };
             let took = TaskNotify::format_took(total_elapsed);
             let send_res = transport.send(device, &finished).await;
