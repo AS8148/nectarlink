@@ -6,8 +6,13 @@ pub mod ffi {
     unsafe extern "C++" {
         include!("app_helpers.h");
         include!("video_view.h");
+        include!("cxx-qt-lib/qguiapplication.h");
         include!("cxx-qt-lib/qqmlapplicationengine.h");
+        type QGuiApplication = cxx_qt_lib::QGuiApplication;
         type QQmlApplicationEngine = cxx_qt_lib::QQmlApplicationEngine;
+
+        #[allow(dead_code)]
+        fn create_qt_app() -> UniquePtr<QGuiApplication>;
 
         /// The latest picture of a video stream (32-bit BGRX rows), for
         /// `VideoView`s showing it. Any thread.
@@ -69,5 +74,77 @@ pub mod ffi {
 
         #[allow(dead_code)]
         fn mac_free_space(path: &str, ok: &mut bool) -> u64;
+
+        #[allow(dead_code)]
+        #[allow(clippy::too_many_arguments)]
+        fn linux_tray_setup(
+            icon_path: &str,
+            tooltip: &str,
+            open_label: &str,
+            command_palette_label: &str,
+            shelf_label: &str,
+            take_photo_label: &str,
+            scan_document_label: &str,
+            find_phone_label: &str,
+            open_link_label: &str,
+            quit_label: &str,
+        );
+
+        #[allow(dead_code)]
+        fn linux_tray_set_tooltip(tooltip: &str);
+
+        #[allow(dead_code)]
+        fn linux_tray_set_find_phone_enabled(enabled: bool);
+
+        #[allow(dead_code)]
+        fn linux_tray_teardown();
+
+        #[allow(dead_code)]
+        fn linux_tray_wait_action(timeout_ms: u32) -> String;
+
+        #[allow(dead_code)]
+        fn linux_tray_is_available() -> bool;
+
+        #[allow(dead_code)]
+        fn linux_work_area(x: &mut i32, y: &mut i32, w: &mut i32, h: &mut i32) -> bool;
+
+        #[allow(dead_code)]
+        fn linux_screen_geometry(x: &mut i32, y: &mut i32, w: &mut i32, h: &mut i32) -> bool;
+
+        #[allow(dead_code)]
+        fn linux_set_activation_token(token: &str);
+
+        #[allow(dead_code)]
+        fn linux_clipboard_sequence() -> u64;
+
+        #[allow(dead_code)]
+        fn linux_clipboard_wait_change(last_seq: u64, timeout_ms: u32) -> u64;
+
+        #[allow(dead_code)]
+        fn linux_clipboard_notify_external();
+
+        #[allow(dead_code)]
+        #[allow(clippy::too_many_arguments)]
+        fn linux_clipboard_read(
+            check_privacy: bool,
+            is_private: &mut bool,
+            has_files: &mut bool,
+            text: &mut String,
+            html: &mut String,
+            rtf: &mut String,
+            png_bytes: &mut Vec<u8>,
+        ) -> bool;
+
+        #[allow(dead_code)]
+        fn linux_clipboard_read_files() -> Vec<String>;
+
+        #[allow(dead_code)]
+        fn linux_clipboard_write_text(text: &str, html: &str, rtf: &str, is_private: bool) -> bool;
+
+        #[allow(dead_code)]
+        fn linux_clipboard_write_image_png(png: &[u8]) -> bool;
+
+        #[allow(dead_code)]
+        fn linux_clipboard_write_files(paths: &[String]) -> bool;
     }
 }

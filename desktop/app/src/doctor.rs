@@ -3,7 +3,7 @@
 //! and a button to fix what can be fixed from here (the firewall, the
 //! network's profile, reconnecting).
 //!
-//! Checks run on a worker thread (they ask Windows a few slow questions)
+//! Checks run on a worker thread (they ask the OS a few slow questions)
 //! and come back as a list for the UI.
 
 use crate::i18n::tr;
@@ -44,7 +44,7 @@ pub struct DeviceFact {
     pub dial_failures: u32,
 }
 
-/// What Windows said, gathered first so the wording can be tested.
+/// What the OS said, gathered first so the wording can be tested.
 #[derive(Debug, Clone, Default)]
 pub struct Facts {
     pub local_address: bool,
@@ -55,9 +55,15 @@ pub struct Facts {
     pub firewall: Option<windows_checks::Firewall>,
     /// Paired devices: link and discovery diagnostics.
     pub devices: Vec<DeviceFact>,
+    /// Optional helper tools missing from `PATH` on Linux.
+    #[cfg(target_os = "linux")]
+    pub missing_tools: Vec<&'static str>,
+    /// Linux-specific system readiness checks: `(id, title, ok, detail, fix)`.
+    #[cfg(target_os = "linux")]
+    pub linux_checks: Vec<(String, String, bool, String, Option<&'static str>)>,
 }
 
-/// Asks Windows and the core (blocking; call on a worker thread).
+/// Asks the OS and the core (blocking; call on a worker thread).
 pub fn gather() -> Facts {
     let adapters = windows_checks::adapters();
     let networks = windows_checks::networks()
@@ -81,7 +87,17 @@ pub fn gather() -> Facts {
             })
             .collect()
     });
-    Facts { local_address: adapters.local_address, vpn: adapters.vpn, networks, firewall, devices }
+    Facts {
+        local_address: adapters.local_address,
+        vpn: adapters.vpn,
+        networks,
+        firewall,
+        devices,
+        #[cfg(target_os = "linux")]
+        missing_tools: windows_checks::missing_tools(),
+        #[cfg(target_os = "linux")]
+        linux_checks: windows_checks::linux_checks(),
+    }
 }
 
 /// A network's name as people say it. While Windows is still identifying
@@ -204,12 +220,23 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         checks.push(check("network", Outcome::Ok, title, "", None));
     }
     if let Some((name, _)) = facts.networks.iter().find(|(_, trusted)| !trusted) {
+        #[cfg(target_os = "linux")]
+        let profile_detail = tr!(
+            "Doctor",
+            "On public networks the firewall keeps other devices from finding this PC. If it's your home or work \
+             network, open network settings and set its firewall zone to Home or Trusted."
+        );
+        #[cfg(not(target_os = "linux"))]
+        let profile_detail = tr!(
+            "Doctor",
+            "On public networks Windows keeps other devices from finding this PC. If it's your home or work \
+             network, set it to Private."
+        );
         checks.push(check(
             "profile",
             Outcome::Warn,
             tr!("Doctor", "%1 is set as a public network", name),
-            tr!("Doctor", "On public networks Windows keeps other devices from finding this PC. If it's your home or work \
-             network, set it to Private."),
+            profile_detail,
             Some("network-settings"),
         ));
     }
@@ -218,38 +245,51 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
     match facts.firewall {
         None => {}
         Some(f) if !f.on => {
+            #[cfg(target_os = "linux")]
+            let title = tr!("Doctor", "The firewall is off for this network");
+            #[cfg(not(target_os = "linux"))]
+            let title = tr!("Doctor", "Windows Firewall is off for this network");
+            checks.push(check("firewall", Outcome::Ok, title, "", None));
+        }
+        Some(f) if f.blocked => {
+            #[cfg(target_os = "linux")]
+            let (title, detail) = (
+                tr!("Doctor", "The firewall blocks NectarLink"),
+                tr!(
+                    "Doctor",
+                    "A firewall rule blocks incoming NectarLink connections. Allow it, and your phone can connect."
+                ),
+            );
+            #[cfg(not(target_os = "linux"))]
+            let (title, detail) = (
+                tr!("Doctor", "Windows Firewall blocks NectarLink"),
+                tr!(
+                    "Doctor",
+                    "Someone chose not to allow it when Windows asked. Allow it, and your phone can connect."
+                ),
+            );
+            checks.push(check("firewall", Outcome::Fail, title, detail, Some("firewall")));
+        }
+        Some(f) if !f.allowed => {
+            #[cfg(target_os = "linux")]
+            let title = tr!("Doctor", "NectarLink isn't allowed through the firewall");
+            #[cfg(not(target_os = "linux"))]
+            let title = tr!("Doctor", "NectarLink isn't allowed through Windows Firewall");
             checks.push(check(
                 "firewall",
-                Outcome::Ok,
-                tr!("Doctor", "Windows Firewall is off for this network"),
-                "",
-                None,
+                Outcome::Warn,
+                title,
+                tr!("Doctor", "Your phone may not be able to connect. Allow it once here."),
+                Some("firewall"),
             ));
         }
-        Some(f) if f.blocked => checks.push(check(
-            "firewall",
-            Outcome::Fail,
-            tr!("Doctor", "Windows Firewall blocks NectarLink"),
-            tr!(
-                "Doctor",
-                "Someone chose not to allow it when Windows asked. Allow it, and your phone can connect."
-            ),
-            Some("firewall"),
-        )),
-        Some(f) if !f.allowed => checks.push(check(
-            "firewall",
-            Outcome::Warn,
-            tr!("Doctor", "NectarLink isn't allowed through Windows Firewall"),
-            tr!("Doctor", "Your phone may not be able to connect. Allow it once here."),
-            Some("firewall"),
-        )),
-        Some(_) => checks.push(check(
-            "firewall",
-            Outcome::Ok,
-            tr!("Doctor", "Windows Firewall lets your phone connect"),
-            "",
-            None,
-        )),
+        Some(_) => {
+            #[cfg(target_os = "linux")]
+            let title = tr!("Doctor", "The firewall lets your phone connect");
+            #[cfg(not(target_os = "linux"))]
+            let title = tr!("Doctor", "Windows Firewall lets your phone connect");
+            checks.push(check("firewall", Outcome::Ok, title, "", None));
+        }
     }
 
     if facts.vpn {
@@ -260,6 +300,31 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
             tr!("Doctor", "VPNs often keep devices on your network from reaching this PC. If your phone can't connect, try \
              turning it off."),
             None,
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    if !facts.missing_tools.is_empty() {
+        let list = facts.missing_tools.join(", ");
+        checks.push(check(
+            "linux-tools",
+            Outcome::Warn,
+            format!("Optional helper tools not found: {list}"),
+            format!(
+                "Install {list} with your package manager for background clipboard sync and opening files or links."
+            ),
+            None,
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    for (id, title, ok, detail, fix) in &facts.linux_checks {
+        checks.push(check(
+            id,
+            if *ok { Outcome::Ok } else { Outcome::Warn },
+            title.clone(),
+            detail.clone(),
+            *fix,
         ));
     }
 
@@ -373,7 +438,7 @@ fn ago(seconds: i64) -> String {
     }
 }
 
-/// Runs a fix (blocking: the firewall one waits for Windows' prompt).
+/// Runs a fix (blocking: the firewall one waits for the elevation prompt).
 /// Returns whether anything was done.
 pub fn fix(id: &str) -> bool {
     match id {
@@ -395,6 +460,9 @@ pub fn fix(id: &str) -> bool {
             true
         }
         "firewall-settings" => windows_checks::open_firewall_settings(),
+        #[cfg(target_os = "linux")]
+        "network-settings" => windows_checks::open_network_settings(),
+        #[cfg(not(target_os = "linux"))]
         "network-settings" => crate::win::shell::open_url("ms-settings:network-status").is_ok(),
         "reconnect" => {
             if let Some(node) = core_host::node() {
@@ -428,6 +496,10 @@ mod tests {
             networks: vec![("Home".into(), true)],
             firewall: Some(windows_checks::Firewall { on: true, allowed: true, blocked: false }),
             devices: vec![device_fact("Pixel", LinkState::Online { path: ConnectionPath::Lan, rtt_ms: 4 })],
+            #[cfg(target_os = "linux")]
+            missing_tools: Vec::new(),
+            #[cfg(target_os = "linux")]
+            linux_checks: Vec::new(),
         }
     }
 
@@ -564,5 +636,34 @@ mod tests {
         assert_eq!(ago(600), "10 minutes ago");
         assert_eq!(ago(5400), "an hour ago");
         assert_eq!(ago(3 * 86400), "3 days ago");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn includes_linux_readiness_checks_and_platform_titles() {
+        let mut f = facts();
+        f.linux_checks = vec![
+            (
+                "linux-appindicator".into(),
+                "GNOME system tray extension not detected".into(),
+                false,
+                "Install gnome-shell-extension-appindicator".into(),
+                None,
+            ),
+            (
+                "linux-fuse".into(),
+                "Phone storage can open in your file manager".into(),
+                true,
+                String::new(),
+                None,
+            ),
+        ];
+        let checks = diagnose(&f, 0);
+        let fw = checks.iter().find(|c| c.id == "firewall").expect("firewall check");
+        assert_eq!(fw.title, "The firewall lets your phone connect");
+        let appind = checks.iter().find(|c| c.id == "linux-appindicator").expect("appindicator check");
+        assert_eq!(appind.outcome, Outcome::Warn);
+        let fuse = checks.iter().find(|c| c.id == "linux-fuse").expect("fuse check");
+        assert_eq!(fuse.outcome, Outcome::Ok);
     }
 }

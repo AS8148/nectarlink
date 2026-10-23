@@ -198,6 +198,10 @@ pub fn forward_pc_notifications_to_phone() -> bool {
 
 pub fn set_forward_pc_notifications_to_phone(on: bool) {
     FORWARD_PC_NOTIFICATIONS.store(on, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(target_os = "linux")]
+    if on {
+        crate::pc_notifications::start_listener();
+    }
 }
 
 /// Whether the PC's clipboard goes to the phone when control moves to it (`input_share`).
@@ -639,6 +643,8 @@ impl Settings {
 
     /// Saves atomically: a crash mid-write never leaves a half-written file.
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
+        static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let path = Self::path(dir);
         let tmp = path.with_extension("json.tmp");
         {

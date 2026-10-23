@@ -33,6 +33,22 @@
 #include <malloc.h>
 #endif
 
+#ifdef __linux__
+#include <QtCore/QBuffer>
+#include <QtCore/QMetaObject>
+#include <QtCore/QThread>
+#include <QtGui/QAction>
+#include <QtGui/QClipboard>
+#include <QtGui/QScreen>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QMenu>
+#include <QtWidgets/QSystemTrayIcon>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#endif
+
 namespace {
 QIcon &appIcon()
 {
@@ -537,4 +553,718 @@ uint64_t mac_free_space(rust::Str path, bool &ok)
         return 0;
     ok = true;
     return static_cast<uint64_t>(available);
+}
+
+#ifdef __linux__
+namespace {
+std::atomic<bool> &qtEventLoopRunning()
+{
+    static std::atomic<bool> running { false };
+    return running;
+}
+
+struct LinuxClipboardWatch {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::atomic<uint64_t> seq { 1 };
+};
+
+LinuxClipboardWatch &linuxClipboardWatch()
+{
+    static LinuxClipboardWatch *watch = new LinuxClipboardWatch();
+    return *watch;
+}
+
+struct LinuxTrayState {
+    QPointer<QSystemTrayIcon> icon;
+    QPointer<QMenu> menu;
+    QPointer<QAction> takePhotoAction;
+    QPointer<QAction> scanDocumentAction;
+    QPointer<QAction> findPhoneAction;
+    QPointer<QAction> openLinkAction;
+    bool phoneActionsEnabled = false;
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::string> actions;
+};
+
+LinuxTrayState &linuxTray()
+{
+    static LinuxTrayState *state = new LinuxTrayState();
+    return *state;
+}
+
+void pushTrayAction(const char *action)
+{
+    auto &st = linuxTray();
+    {
+        std::lock_guard<std::mutex> lock(st.mutex);
+        st.actions.emplace_back(action);
+    }
+    st.cv.notify_all();
+}
+
+template <typename F>
+void runOnQtMainThread(F &&fn)
+{
+    QCoreApplication *app = QCoreApplication::instance();
+    if (!app)
+        return;
+    if (QThread::currentThread() == app->thread()) {
+        fn();
+    } else {
+        QMetaObject::invokeMethod(app, std::forward<F>(fn), Qt::QueuedConnection);
+    }
+}
+
+template <typename F>
+bool runOnQtMainThreadSync(F &&fn, uint32_t timeout_ms = 500)
+{
+    QCoreApplication *app = QCoreApplication::instance();
+    if (!app)
+        return false;
+    if (QThread::currentThread() == app->thread()) {
+        fn();
+        return true;
+    }
+    if (!qtEventLoopRunning().load(std::memory_order_acquire))
+        return false;
+    struct SyncState {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool done = false;
+    };
+    auto state = std::make_shared<SyncState>();
+    auto task = std::make_shared<std::decay_t<F>>(std::forward<F>(fn));
+    QMetaObject::invokeMethod(
+        app,
+        [state, task]() {
+            (*task)();
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                state->done = true;
+            }
+            state->cv.notify_all();
+        },
+        Qt::QueuedConnection);
+    std::unique_lock<std::mutex> lock(state->mutex);
+    return state->cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&state]() {
+        return state->done;
+    });
+}
+} // namespace
+#endif
+
+std::unique_ptr<QGuiApplication> create_qt_app()
+{
+    static int s_argc = 1;
+    static char s_arg0[] = "nectarlink";
+    static char *s_argv[] = { s_arg0, nullptr };
+#ifdef __linux__
+    auto app = std::unique_ptr<QGuiApplication>(new QApplication(s_argc, s_argv));
+    QObject::connect(app.get(), &QCoreApplication::aboutToQuit, app.get(), []() {
+        qtEventLoopRunning().store(false, std::memory_order_release);
+    });
+    QMetaObject::invokeMethod(
+        app.get(),
+        []() {
+            qtEventLoopRunning().store(true, std::memory_order_release);
+        },
+        Qt::QueuedConnection);
+    if (QClipboard *cb = QGuiApplication::clipboard()) {
+        QObject::connect(cb, &QClipboard::dataChanged, cb, []() {
+            linux_clipboard_notify_external();
+        });
+    }
+    return app;
+#else
+    return std::make_unique<QGuiApplication>(s_argc, s_argv);
+#endif
+}
+
+void linux_tray_setup(
+    rust::Str icon_path,
+    rust::Str tooltip,
+    rust::Str open_label,
+    rust::Str command_palette_label,
+    rust::Str shelf_label,
+    rust::Str take_photo_label,
+    rust::Str scan_document_label,
+    rust::Str find_phone_label,
+    rust::Str open_link_label,
+    rust::Str quit_label)
+{
+#ifdef __linux__
+    const QString iconPath = QString::fromUtf8(icon_path.data(), static_cast<qsizetype>(icon_path.size()));
+    const QString tooltipStr = QString::fromUtf8(tooltip.data(), static_cast<qsizetype>(tooltip.size()));
+    const QString openStr = QString::fromUtf8(open_label.data(), static_cast<qsizetype>(open_label.size()));
+    const QString paletteStr = QString::fromUtf8(command_palette_label.data(), static_cast<qsizetype>(command_palette_label.size()));
+    const QString shelfStr = QString::fromUtf8(shelf_label.data(), static_cast<qsizetype>(shelf_label.size()));
+    const QString photoStr = QString::fromUtf8(take_photo_label.data(), static_cast<qsizetype>(take_photo_label.size()));
+    const QString scanStr = QString::fromUtf8(scan_document_label.data(), static_cast<qsizetype>(scan_document_label.size()));
+    const QString findPhoneStr = QString::fromUtf8(find_phone_label.data(), static_cast<qsizetype>(find_phone_label.size()));
+    const QString openLinkStr = QString::fromUtf8(open_link_label.data(), static_cast<qsizetype>(open_link_label.size()));
+    const QString quitStr = QString::fromUtf8(quit_label.data(), static_cast<qsizetype>(quit_label.size()));
+
+    runOnQtMainThread([=]() {
+        if (!qobject_cast<QApplication *>(QCoreApplication::instance()))
+            return;
+        auto &st = linuxTray();
+        if (st.icon) {
+            st.icon->hide();
+            delete st.icon.data();
+        }
+        if (st.menu) {
+            delete st.menu.data();
+        }
+        {
+            std::lock_guard<std::mutex> lock(st.mutex);
+            st.actions.clear();
+        }
+
+        // Menu order matches win/tray.rs:
+        // Take Photo, Scan Document, Separator, Open, Command Palette, Shelf, Find Phone, Open Link, Separator, Quit.
+        const bool enabled = st.phoneActionsEnabled;
+        auto *menu = new QMenu();
+        QAction *takePhoto = menu->addAction(photoStr);
+        takePhoto->setEnabled(enabled);
+        QObject::connect(takePhoto, &QAction::triggered, menu, []() { pushTrayAction("TAKE_PHOTO"); });
+
+        QAction *scanDoc = menu->addAction(scanStr);
+        scanDoc->setEnabled(enabled);
+        QObject::connect(scanDoc, &QAction::triggered, menu, []() { pushTrayAction("SCAN_DOCUMENT"); });
+
+        menu->addSeparator();
+        QObject::connect(menu->addAction(openStr), &QAction::triggered, menu, []() { pushTrayAction("OPEN"); });
+        QObject::connect(menu->addAction(paletteStr), &QAction::triggered, menu, []() { pushTrayAction("COMMAND_PALETTE"); });
+        QObject::connect(menu->addAction(shelfStr), &QAction::triggered, menu, []() { pushTrayAction("SHELF"); });
+
+        QAction *findPhone = menu->addAction(findPhoneStr);
+        findPhone->setEnabled(enabled);
+        QObject::connect(findPhone, &QAction::triggered, menu, []() { pushTrayAction("FIND_PHONE"); });
+
+        QAction *openLink = menu->addAction(openLinkStr);
+        openLink->setEnabled(enabled);
+        QObject::connect(openLink, &QAction::triggered, menu, []() { pushTrayAction("OPEN_LINK"); });
+
+        menu->addSeparator();
+        QObject::connect(menu->addAction(quitStr), &QAction::triggered, menu, []() { pushTrayAction("QUIT"); });
+
+        auto *tray = new QSystemTrayIcon(QCoreApplication::instance());
+        QIcon icon = appIcon();
+        if (icon.isNull() && !iconPath.isEmpty())
+            icon = QIcon(iconPath);
+        tray->setIcon(icon);
+        tray->setToolTip(tooltipStr);
+        tray->setContextMenu(menu);
+        QObject::connect(tray, &QSystemTrayIcon::activated, tray, [](QSystemTrayIcon::ActivationReason reason) {
+            if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
+                pushTrayAction("OPEN");
+        });
+        tray->show();
+
+        st.icon = tray;
+        st.menu = menu;
+        st.takePhotoAction = takePhoto;
+        st.scanDocumentAction = scanDoc;
+        st.findPhoneAction = findPhone;
+        st.openLinkAction = openLink;
+    });
+#else
+    (void)icon_path;
+    (void)tooltip;
+    (void)open_label;
+    (void)command_palette_label;
+    (void)shelf_label;
+    (void)take_photo_label;
+    (void)scan_document_label;
+    (void)find_phone_label;
+    (void)open_link_label;
+    (void)quit_label;
+#endif
+}
+
+void linux_tray_set_tooltip(rust::Str tooltip)
+{
+#ifdef __linux__
+    const QString tooltipStr = QString::fromUtf8(tooltip.data(), static_cast<qsizetype>(tooltip.size()));
+    runOnQtMainThread([tooltipStr]() {
+        if (auto *icon = linuxTray().icon.data())
+            icon->setToolTip(tooltipStr);
+    });
+#else
+    (void)tooltip;
+#endif
+}
+
+void linux_tray_set_find_phone_enabled(bool enabled)
+{
+#ifdef __linux__
+    runOnQtMainThread([enabled]() {
+        auto &st = linuxTray();
+        st.phoneActionsEnabled = enabled;
+        if (auto *act = st.takePhotoAction.data())
+            act->setEnabled(enabled);
+        if (auto *act = st.scanDocumentAction.data())
+            act->setEnabled(enabled);
+        if (auto *act = st.findPhoneAction.data())
+            act->setEnabled(enabled);
+        if (auto *act = st.openLinkAction.data())
+            act->setEnabled(enabled);
+    });
+#else
+    (void)enabled;
+#endif
+}
+
+void linux_tray_teardown()
+{
+#ifdef __linux__
+    auto &st = linuxTray();
+    st.cv.notify_all();
+    runOnQtMainThread([]() {
+        auto &s = linuxTray();
+        if (s.icon) {
+            s.icon->hide();
+            delete s.icon.data();
+        }
+        if (s.menu) {
+            delete s.menu.data();
+        }
+        s.takePhotoAction = nullptr;
+        s.scanDocumentAction = nullptr;
+        s.findPhoneAction = nullptr;
+        s.openLinkAction = nullptr;
+    });
+#endif
+}
+
+rust::String linux_tray_wait_action(uint32_t timeout_ms)
+{
+#ifdef __linux__
+    auto &st = linuxTray();
+    std::unique_lock<std::mutex> lock(st.mutex);
+    if (st.actions.empty() && timeout_ms > 0) {
+        st.cv.wait_for(lock, std::chrono::milliseconds(timeout_ms));
+    }
+    if (!st.actions.empty()) {
+        std::string next = std::move(st.actions.front());
+        st.actions.pop_front();
+        return rust::String(next);
+    }
+#else
+    (void)timeout_ms;
+#endif
+    return rust::String();
+}
+
+bool linux_tray_is_available()
+{
+#ifdef __linux__
+    bool available = false;
+    if (runOnQtMainThreadSync([&available]() {
+            available = QSystemTrayIcon::isSystemTrayAvailable();
+        })) {
+        return available;
+    }
+#endif
+    return false;
+}
+
+bool linux_work_area(int32_t &x, int32_t &y, int32_t &w, int32_t &h)
+{
+#ifdef __linux__
+    bool ok = false;
+    int32_t rx = 0, ry = 0, rw = 0, rh = 0;
+    if (runOnQtMainThreadSync([&]() {
+            if (QScreen *screen = QGuiApplication::primaryScreen()) {
+                const QRect avail = screen->availableGeometry();
+                const qreal dpr = screen->devicePixelRatio() > 0.0 ? screen->devicePixelRatio() : 1.0;
+                if (avail.width() > 0 && avail.height() > 0) {
+                    rx = static_cast<int32_t>(avail.x() * dpr);
+                    ry = static_cast<int32_t>(avail.y() * dpr);
+                    rw = static_cast<int32_t>(avail.width() * dpr);
+                    rh = static_cast<int32_t>(avail.height() * dpr);
+                    ok = true;
+                }
+            }
+        })
+        && ok) {
+        x = rx;
+        y = ry;
+        w = rw;
+        h = rh;
+        return true;
+    }
+#else
+    (void)x;
+    (void)y;
+    (void)w;
+    (void)h;
+#endif
+    return false;
+}
+
+bool linux_screen_geometry(int32_t &x, int32_t &y, int32_t &w, int32_t &h)
+{
+#ifdef __linux__
+    bool ok = false;
+    int32_t rx = 0, ry = 0, rw = 0, rh = 0;
+    if (runOnQtMainThreadSync([&]() {
+            if (QScreen *screen = QGuiApplication::primaryScreen()) {
+                const QRect geom = screen->geometry();
+                const qreal dpr = screen->devicePixelRatio() > 0.0 ? screen->devicePixelRatio() : 1.0;
+                if (geom.width() > 0 && geom.height() > 0) {
+                    rx = static_cast<int32_t>(geom.x() * dpr);
+                    ry = static_cast<int32_t>(geom.y() * dpr);
+                    rw = static_cast<int32_t>(geom.width() * dpr);
+                    rh = static_cast<int32_t>(geom.height() * dpr);
+                    ok = true;
+                }
+            }
+        })
+        && ok) {
+        x = rx;
+        y = ry;
+        w = rw;
+        h = rh;
+        return true;
+    }
+#else
+    (void)x;
+    (void)y;
+    (void)w;
+    (void)h;
+#endif
+    return false;
+}
+
+void linux_set_activation_token(rust::Str token)
+{
+#ifdef __linux__
+    if (token.empty())
+        return;
+    const QByteArray tok(token.data(), static_cast<qsizetype>(token.size()));
+    runOnQtMainThread([tok]() {
+        qputenv("XDG_ACTIVATION_TOKEN", tok);
+    });
+#else
+    (void)token;
+#endif
+}
+
+uint64_t linux_clipboard_sequence()
+{
+#ifdef __linux__
+    return linuxClipboardWatch().seq.load(std::memory_order_acquire);
+#else
+    return 0;
+#endif
+}
+
+uint64_t linux_clipboard_wait_change(uint64_t last_seq, uint32_t timeout_ms)
+{
+#ifdef __linux__
+    auto &w = linuxClipboardWatch();
+    uint64_t cur = w.seq.load(std::memory_order_acquire);
+    if (cur != last_seq || timeout_ms == 0)
+        return cur;
+    std::unique_lock<std::mutex> lock(w.mutex);
+    w.cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&w, last_seq]() {
+        return w.seq.load(std::memory_order_acquire) != last_seq;
+    });
+    return w.seq.load(std::memory_order_acquire);
+#else
+    (void)last_seq;
+    (void)timeout_ms;
+    return 0;
+#endif
+}
+
+void linux_clipboard_notify_external()
+{
+#ifdef __linux__
+    auto &w = linuxClipboardWatch();
+    {
+        std::lock_guard<std::mutex> lock(w.mutex);
+        w.seq.fetch_add(1, std::memory_order_release);
+    }
+    w.cv.notify_all();
+#endif
+}
+
+bool linux_clipboard_read(
+    bool check_privacy,
+    bool &is_private,
+    bool &has_files,
+    rust::String &text,
+    rust::String &html,
+    rust::String &rtf,
+    rust::Vec<uint8_t> &png_bytes)
+{
+    is_private = false;
+    has_files = false;
+    text = rust::String();
+    html = rust::String();
+    rtf = rust::String();
+    png_bytes.clear();
+#ifdef __linux__
+    bool ran = false;
+    bool priv = false;
+    bool files = false;
+    std::string outText;
+    std::string outHtml;
+    std::string outRtf;
+    QByteArray outPng;
+
+    if (!runOnQtMainThreadSync([&]() {
+            QClipboard *cb = QGuiApplication::clipboard();
+            if (!cb)
+                return;
+            ran = true;
+            const QMimeData *mime = cb->mimeData(QClipboard::Clipboard);
+            if (!mime)
+                return;
+
+            const QStringList formats = mime->formats();
+            if (check_privacy) {
+                for (const QString &fmt : formats) {
+                    if (fmt.compare(QStringLiteral("x-gnome-privacy-hint"), Qt::CaseInsensitive) == 0
+                        || fmt.compare(QStringLiteral("ExcludeClipboardContentFromMonitorProcessing"), Qt::CaseInsensitive) == 0
+                        || fmt.compare(QStringLiteral("Clipboard Viewer Ignore"), Qt::CaseInsensitive) == 0) {
+                        priv = true;
+                        return;
+                    }
+                    if (fmt.compare(QStringLiteral("x-kde-passwordManagerHint"), Qt::CaseInsensitive) == 0) {
+                        const QByteArray val = mime->data(fmt).trimmed();
+                        if (val.isEmpty() || QString::fromUtf8(val).trimmed().compare(QStringLiteral("secret"), Qt::CaseInsensitive) == 0) {
+                            priv = true;
+                            return;
+                        }
+                    }
+                }
+            }
+
+            if (mime->hasFormat(QStringLiteral("image/png"))) {
+                outPng = mime->data(QStringLiteral("image/png"));
+                if (!outPng.isEmpty())
+                    return;
+            }
+            if (mime->hasImage()) {
+                const QImage img = qvariant_cast<QImage>(mime->imageData());
+                if (!img.isNull()) {
+                    QBuffer buf(&outPng);
+                    if (buf.open(QIODevice::WriteOnly) && img.save(&buf, "PNG")) {
+                        return;
+                    }
+                    outPng.clear();
+                }
+            }
+
+            for (const QString &fmt : formats) {
+                if (fmt.compare(QStringLiteral("x-special/gnome-copied-files"), Qt::CaseInsensitive) == 0
+                    || fmt.compare(QStringLiteral("x-special/mate-copied-files"), Qt::CaseInsensitive) == 0) {
+                    files = true;
+                    return;
+                }
+            }
+            if (mime->hasUrls()) {
+                for (const QUrl &u : mime->urls()) {
+                    if (u.isLocalFile()) {
+                        files = true;
+                        return;
+                    }
+                }
+            }
+
+            if (mime->hasText()) {
+                outText = mime->text().toStdString();
+            }
+            if (mime->hasHtml()) {
+                outHtml = mime->html().toStdString();
+            }
+            if (mime->hasFormat(QStringLiteral("text/rtf"))) {
+                const QByteArray r = mime->data(QStringLiteral("text/rtf"));
+                outRtf.assign(r.constData(), static_cast<size_t>(r.size()));
+            } else if (mime->hasFormat(QStringLiteral("application/rtf"))) {
+                const QByteArray r = mime->data(QStringLiteral("application/rtf"));
+                outRtf.assign(r.constData(), static_cast<size_t>(r.size()));
+            }
+        })) {
+        return false;
+    }
+    if (!ran)
+        return false;
+
+    is_private = priv;
+    has_files = files;
+    text = rust::String(outText);
+    html = rust::String(outHtml);
+    rtf = rust::String(outRtf);
+    if (!outPng.isEmpty()) {
+        png_bytes.reserve(static_cast<size_t>(outPng.size()));
+        const auto *raw = reinterpret_cast<const uint8_t *>(outPng.constData());
+        for (qsizetype i = 0; i < outPng.size(); ++i)
+            png_bytes.push_back(raw[i]);
+    }
+    return true;
+#else
+    (void)check_privacy;
+    return false;
+#endif
+}
+
+rust::Vec<rust::String> linux_clipboard_read_files()
+{
+    rust::Vec<rust::String> result;
+#ifdef __linux__
+    std::vector<std::string> paths;
+    if (runOnQtMainThreadSync([&]() {
+            QClipboard *cb = QGuiApplication::clipboard();
+            if (!cb)
+                return;
+            const QMimeData *mime = cb->mimeData(QClipboard::Clipboard);
+            if (!mime)
+                return;
+            if (mime->hasUrls()) {
+                for (const QUrl &u : mime->urls()) {
+                    if (u.isLocalFile()) {
+                        const QString local = u.toLocalFile();
+                        if (!local.isEmpty() && QFileInfo::exists(local))
+                            paths.push_back(local.toStdString());
+                    }
+                }
+            }
+            if (paths.empty()) {
+                for (const char *fmt : { "x-special/gnome-copied-files", "x-special/mate-copied-files", "text/uri-list" }) {
+                    const QString qfmt = QString::fromLatin1(fmt);
+                    if (mime->hasFormat(qfmt)) {
+                        const QString raw = QString::fromUtf8(mime->data(qfmt));
+                        for (const QString &line : raw.split(QLatin1Char('\n'))) {
+                            const QString trimmed = line.trimmed();
+                            if (trimmed.startsWith(QStringLiteral("file://"))) {
+                                const QUrl u(trimmed);
+                                if (u.isLocalFile()) {
+                                    const QString local = u.toLocalFile();
+                                    if (!local.isEmpty() && QFileInfo::exists(local))
+                                        paths.push_back(local.toStdString());
+                                }
+                            }
+                        }
+                        if (!paths.empty())
+                            break;
+                    }
+                }
+            }
+        })) {
+        for (const std::string &p : paths)
+            result.push_back(rust::String(p));
+    }
+#endif
+    return result;
+}
+
+bool linux_clipboard_write_text(rust::Str text, rust::Str html, rust::Str rtf, bool is_private)
+{
+#ifdef __linux__
+    const QString qtext = QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
+    const QString qhtml = QString::fromUtf8(html.data(), static_cast<qsizetype>(html.size()));
+    const QByteArray qrtf(rtf.data(), static_cast<qsizetype>(rtf.size()));
+    bool ok = false;
+    if (runOnQtMainThreadSync([&]() {
+            QClipboard *cb = QGuiApplication::clipboard();
+            if (!cb)
+                return;
+            auto *mime = new QMimeData();
+            mime->setText(qtext);
+            if (is_private) {
+                mime->setData(QStringLiteral("x-kde-passwordManagerHint"), QByteArrayLiteral("secret"));
+                mime->setData(QStringLiteral("x-gnome-privacy-hint"), QByteArrayLiteral("1"));
+                mime->setData(QStringLiteral("ExcludeClipboardContentFromMonitorProcessing"), QByteArrayLiteral("1"));
+                mime->setData(QStringLiteral("Clipboard Viewer Ignore"), QByteArrayLiteral("1"));
+            } else {
+                if (!qhtml.isEmpty())
+                    mime->setHtml(qhtml);
+                if (!qrtf.isEmpty()) {
+                    mime->setData(QStringLiteral("text/rtf"), qrtf);
+                    mime->setData(QStringLiteral("application/rtf"), qrtf);
+                }
+            }
+            cb->setMimeData(mime, QClipboard::Clipboard);
+            ok = true;
+        })) {
+        return ok;
+    }
+#else
+    (void)text;
+    (void)html;
+    (void)rtf;
+    (void)is_private;
+#endif
+    return false;
+}
+
+bool linux_clipboard_write_image_png(rust::Slice<const uint8_t> png)
+{
+#ifdef __linux__
+    if (png.empty())
+        return false;
+    const QByteArray bytes(reinterpret_cast<const char *>(png.data()), static_cast<qsizetype>(png.size()));
+    bool ok = false;
+    if (runOnQtMainThreadSync([&]() {
+            QClipboard *cb = QGuiApplication::clipboard();
+            if (!cb)
+                return;
+            auto *mime = new QMimeData();
+            mime->setData(QStringLiteral("image/png"), bytes);
+            QImage img;
+            if (img.loadFromData(bytes, "PNG") && !img.isNull())
+                mime->setImageData(img);
+            cb->setMimeData(mime, QClipboard::Clipboard);
+            ok = true;
+        })) {
+        return ok;
+    }
+#else
+    (void)png;
+#endif
+    return false;
+}
+
+bool linux_clipboard_write_files(rust::Slice<const rust::String> paths)
+{
+#ifdef __linux__
+    if (paths.empty())
+        return false;
+    QList<QUrl> urls;
+    QByteArray gnomePayload("copy");
+    for (const rust::String &p : paths) {
+        const QString qp = QString::fromUtf8(p.data(), static_cast<qsizetype>(p.size()));
+        if (!qp.isEmpty()) {
+            const QUrl u = QUrl::fromLocalFile(qp);
+            urls.append(u);
+            gnomePayload.append('\n');
+            gnomePayload.append(u.toEncoded());
+        }
+    }
+    if (urls.isEmpty())
+        return false;
+    bool ok = false;
+    if (runOnQtMainThreadSync([&]() {
+            QClipboard *cb = QGuiApplication::clipboard();
+            if (!cb)
+                return;
+            auto *mime = new QMimeData();
+            mime->setUrls(urls);
+            mime->setData(QStringLiteral("x-special/gnome-copied-files"), gnomePayload);
+            mime->setData(QStringLiteral("x-special/mate-copied-files"), gnomePayload);
+            cb->setMimeData(mime, QClipboard::Clipboard);
+            ok = true;
+        })) {
+        return ok;
+    }
+#else
+    (void)paths;
+#endif
+    return false;
 }
