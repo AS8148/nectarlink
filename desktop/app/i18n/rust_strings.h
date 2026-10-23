@@ -199,6 +199,7 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Doctor", "Connecting to %1…"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "GNOME shows app icons there only with the AppIndicator extension. Install it (gnome-shell-extension-appindicator) and turn it on in Extensions."), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Install fuse3 to browse your phone's files in your file manager."), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Install gstreamer1.0-pipewire and gstreamer1.0-tools, and the desktop portal (xdg-desktop-portal) if it's missing."), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Install pipewire-pulse (or pulseaudio-utils) for call audio and Find my PC."), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Install v4l2loopback-dkms, then restart, so apps can use your phone as a camera."), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "It hasn't connected yet."), // desktop/app/src/doctor.rs
@@ -223,6 +224,7 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Doctor", "Phone as webcam needs one more step"), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Phone storage can open in your file manager"), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Phone storage needs one more step"), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Showing this PC's screen needs one more step"), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Someone chose not to allow it when Windows asked. Allow it, and your phone can connect."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Sound is ready"), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "The firewall blocks NectarLink"), // desktop/app/src/doctor.rs
@@ -239,6 +241,7 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Doctor", "Windows Firewall is off for this network"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Windows Firewall lets your phone connect"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Your phone can control this PC"), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Your phone can show this PC's screen"), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Your phone can't control this PC yet"), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Your phone may not be able to connect. Allow it once here."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "a minute ago"), // desktop/app/src/doctor.rs

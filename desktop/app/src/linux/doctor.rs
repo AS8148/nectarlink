@@ -586,6 +586,21 @@ pub fn linux_checks() -> Vec<(String, String, bool, String, Option<&'static str>
         tr!("Doctor", "Install pipewire-pulse (or pulseaudio-utils) for call audio and Find my PC."),
     );
 
+    // Sharing this PC's screen on Wayland goes through the ScreenCast portal
+    // and GStreamer's PipeWire source; on X11 it reads the screen directly.
+    if std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty()) {
+        check(
+            "linux-screencast",
+            portal_available && crate::pc_mirror::pipewire_capture_installed(),
+            tr!("Doctor", "Your phone can show this PC's screen"),
+            tr!("Doctor", "Showing this PC's screen needs one more step"),
+            tr!(
+                "Doctor",
+                "Install gstreamer1.0-pipewire and gstreamer1.0-tools, and the desktop portal (xdg-desktop-portal) if it's missing."
+            ),
+        );
+    }
+
     check(
         "linux-v4l2loopback",
         has_v4l2loopback(),

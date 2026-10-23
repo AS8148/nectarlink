@@ -1367,6 +1367,20 @@ mod imp {
         std::env::split_paths(&path_var).any(|dir| dir.join(name).is_file())
     }
 
+    /// Whether gst-launch and its PipeWire source are installed (gstreamer1.0-tools
+    /// and gstreamer1.0-pipewire on Debian and Ubuntu), which Wayland capture uses.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn pipewire_capture_installed() -> bool {
+        has_executable("gst-launch-1.0")
+            && std::process::Command::new("gst-inspect-1.0")
+                .args(["--exists", "pipewiresrc"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+    }
+
     #[cfg(target_os = "linux")]
     fn is_wayland_screencast_available() -> bool {
         if std::env::var_os("WAYLAND_DISPLAY").is_none() {
@@ -1374,7 +1388,7 @@ mod imp {
         }
         static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *AVAILABLE.get_or_init(|| {
-            if !has_executable("gst-launch-1.0") && !has_executable("ffmpeg") {
+            if !pipewire_capture_installed() {
                 return false;
             }
             let Ok(conn) = zbus::blocking::Connection::session() else {
@@ -1394,7 +1408,11 @@ mod imp {
     #[cfg(target_os = "linux")]
     struct WaylandScreenCaster {
         _conn: zbus::blocking::Connection,
+        /// The PipeWire connection the portal opened for us; the stream is
+        /// only readable through it.
+        remote: std::os::fd::OwnedFd,
         node_id: u32,
+        started: Instant,
         src_w: u32,
         src_h: u32,
         dst_w: u32,
@@ -1435,7 +1453,8 @@ mod imp {
 
     #[cfg(target_os = "linux")]
     impl WaylandScreenCaster {
-        fn negotiate_portal() -> Option<(zbus::blocking::Connection, u32, u32, u32)> {
+        #[allow(clippy::type_complexity)]
+        fn negotiate_portal() -> Option<(zbus::blocking::Connection, std::os::fd::OwnedFd, u32, u32, u32)> {
             use std::collections::HashMap;
             use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 
@@ -1484,6 +1503,13 @@ mod imp {
             select_opts.insert("types", Value::from(1u32));
             select_opts.insert("multiple", Value::from(false));
             select_opts.insert("cursor_mode", Value::from(2u32));
+            // Ask once while the app runs: the portal hands back a token that
+            // restores the same choice without a new dialog.
+            select_opts.insert("persist_mode", Value::from(1u32));
+            let restore = RESTORE_TOKEN.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            if let Some(token) = restore.as_deref() {
+                select_opts.insert("restore_token", Value::from(token));
+            }
 
             let reply = conn
                 .call_method(
@@ -1513,6 +1539,10 @@ mod imp {
                 .ok()?;
             let req_path_3: OwnedObjectPath = reply.body().deserialize().ok()?;
             let start_res = wait_portal_response(&mut iter, req_path_3.as_str())?;
+            if let Some(token) = start_res.get("restore_token").and_then(|v| String::try_from(v.clone()).ok())
+            {
+                *RESTORE_TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(token);
+            }
 
             let streams_val = start_res.get("streams")?;
             let streams: Vec<(u32, HashMap<String, OwnedValue>)> = streams_val.clone().try_into().ok()?;
@@ -1524,71 +1554,63 @@ mod imp {
                 .map(|(w, h)| (w as u32, h as u32))
                 .unwrap_or((1920, 1080));
 
-            // Request PipeWire remote fd so the portal grants access to our PipeWire client context.
+            // The stream is only readable through the PipeWire connection
+            // the portal opens for this session.
             let empty_opts: HashMap<&str, Value<'_>> = HashMap::new();
-            let _ = conn.call_method(
-                Some("org.freedesktop.portal.Desktop"),
-                "/org/freedesktop/portal/desktop",
-                Some("org.freedesktop.portal.ScreenCast"),
-                "OpenPipeWireRemote",
-                &(&session_obj, &empty_opts),
-            );
+            let reply = conn
+                .call_method(
+                    Some("org.freedesktop.portal.Desktop"),
+                    "/org/freedesktop/portal/desktop",
+                    Some("org.freedesktop.portal.ScreenCast"),
+                    "OpenPipeWireRemote",
+                    &(&session_obj, &empty_opts),
+                )
+                .ok()?;
+            let remote: zbus::zvariant::OwnedFd = reply.body().deserialize().ok()?;
+            let remote: std::os::fd::OwnedFd = remote.into();
 
-            Some((conn, node_id, src_w, src_h))
+            Some((conn, remote, node_id, src_w, src_h))
         }
 
+        /// The fd number the portal's PipeWire connection gets in the capture process.
+        const REMOTE_FD: i32 = 3;
+
+        /// Starts gst-launch reading the stream through `remote` and writing
+        /// raw BGRx frames of `dst_w` x `dst_h` to its stdout.
         #[allow(clippy::type_complexity)]
         fn spawn_pipeline(
+            remote: &std::os::fd::OwnedFd,
             node_id: u32,
             dst_w: u32,
             dst_h: u32,
         ) -> Option<(std::process::Child, Arc<Mutex<Option<Vec<u8>>>>)> {
             use std::io::Read;
+            use std::os::fd::AsRawFd;
+            use std::os::unix::process::CommandExt;
             use std::process::{Command, Stdio};
 
-            let mut child = Command::new("gst-launch-1.0")
-                .args([
-                    "-q",
-                    "pipewiresrc",
-                    &format!("path={node_id}"),
-                    "do-timestamp=true",
-                    "!",
-                    "videoconvert",
-                    "!",
-                    "videoscale",
-                    "!",
-                    &format!("video/x-raw,format=BGRx,width={dst_w},height={dst_h}"),
-                    "!",
-                    "fdsink",
-                    "fd=1",
-                ])
+            let raw = remote.as_raw_fd();
+            let mut cmd = Command::new("gst-launch-1.0");
+            cmd.args(pipeline_args(node_id, dst_w, dst_h))
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .or_else(|_| {
-                    Command::new("ffmpeg")
-                        .args([
-                            "-loglevel",
-                            "error",
-                            "-f",
-                            "pipewire",
-                            "-i",
-                            &node_id.to_string(),
-                            "-vf",
-                            &format!("scale={dst_w}:{dst_h}"),
-                            "-pix_fmt",
-                            "bgr0",
-                            "-f",
-                            "rawvideo",
-                            "-",
-                        ])
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::null())
-                        .spawn()
-                })
-                .ok()?;
+                .stderr(Stdio::null());
+            // SAFETY: runs in the child between fork and exec and only calls
+            // async-signal-safe functions (dup2, fcntl) on descriptors we own.
+            unsafe {
+                cmd.pre_exec(move || {
+                    if raw == Self::REMOTE_FD {
+                        // Already in place: only let it survive exec.
+                        if libc::fcntl(raw, libc::F_SETFD, 0) < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    } else if libc::dup2(raw, Self::REMOTE_FD) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            let mut child = cmd.spawn().ok()?;
 
             let mut stdout = child.stdout.take()?;
             let latest_frame: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
@@ -1612,9 +1634,25 @@ mod imp {
         }
 
         fn start(dst_w: u32, dst_h: u32) -> Option<Self> {
-            let (conn, node_id, src_w, src_h) = Self::negotiate_portal()?;
-            let (child, latest_frame) = Self::spawn_pipeline(node_id, dst_w, dst_h)?;
-            Some(Self { _conn: conn, node_id, src_w, src_h, dst_w, dst_h, child: Some(child), latest_frame })
+            let (conn, remote, node_id, src_w, src_h) = Self::negotiate_portal()?;
+            let (child, latest_frame) = Self::spawn_pipeline(&remote, node_id, dst_w, dst_h)?;
+            Some(Self {
+                _conn: conn,
+                remote,
+                node_id,
+                started: Instant::now(),
+                src_w,
+                src_h,
+                dst_w,
+                dst_h,
+                child: Some(child),
+                latest_frame,
+            })
+        }
+
+        /// Whether the capture process is still running.
+        fn alive(&mut self) -> bool {
+            self.child.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None)))
         }
 
         fn capture(&mut self, dst_w: u32, dst_h: u32, bgra: &mut Vec<u8>) -> Option<(u32, u32)> {
@@ -1623,14 +1661,22 @@ mod imp {
                     let _ = old.kill();
                     let _ = old.wait();
                 }
-                let (child, latest_frame) = Self::spawn_pipeline(self.node_id, dst_w, dst_h)?;
+                let (child, latest_frame) = Self::spawn_pipeline(&self.remote, self.node_id, dst_w, dst_h)?;
+                self.started = Instant::now();
                 self.dst_w = dst_w;
                 self.dst_h = dst_h;
                 self.child = Some(child);
                 self.latest_frame = latest_frame;
             }
 
-            let deadline = Instant::now() + Duration::from_millis(250);
+            // The first frame can take a while (the pipeline negotiates
+            // formats); after that a frame is late only for a moment.
+            let wait = if self.started.elapsed() < Duration::from_secs(3) {
+                Duration::from_secs(3).saturating_sub(self.started.elapsed())
+            } else {
+                Duration::from_millis(250)
+            };
+            let deadline = Instant::now() + wait;
             loop {
                 if let Some(frame) = self.latest_frame.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
                     bgra.clear();
@@ -1648,6 +1694,34 @@ mod imp {
     #[cfg(target_os = "linux")]
     static WAYLAND_CASTER: Mutex<Option<WaylandScreenCaster>> = Mutex::new(None);
 
+    /// The ScreenCast portal's restore token, so later sessions in this run
+    /// reuse the screen the user chose instead of asking again.
+    #[cfg(target_os = "linux")]
+    static RESTORE_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+
+    /// gst-launch arguments: read stream `node_id` through the portal's
+    /// PipeWire connection (fd 3) and write raw BGRx frames to stdout.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn pipeline_args(node_id: u32, dst_w: u32, dst_h: u32) -> Vec<String> {
+        [
+            "-q".to_owned(),
+            "pipewiresrc".to_owned(),
+            format!("fd={}", WaylandScreenCaster::REMOTE_FD),
+            format!("path={node_id}"),
+            "do-timestamp=true".to_owned(),
+            "!".to_owned(),
+            "videoconvert".to_owned(),
+            "!".to_owned(),
+            "videoscale".to_owned(),
+            "!".to_owned(),
+            format!("video/x-raw,format=BGRx,width={dst_w},height={dst_h}"),
+            "!".to_owned(),
+            "fdsink".to_owned(),
+            "fd=1".to_owned(),
+        ]
+        .into()
+    }
+
     #[cfg(target_os = "linux")]
     fn capture_screen_wayland(dst_w: u32, dst_h: u32, bgra: &mut Vec<u8>) -> Option<(u32, u32)> {
         if !is_wayland_screencast_available() {
@@ -1659,7 +1733,9 @@ mod imp {
         }
         let caster = guard.as_mut()?;
         let res = caster.capture(dst_w, dst_h, bgra);
-        if res.is_none() {
+        // A late frame is skipped; only a stopped capture ends the session
+        // (starting a new one would ask the user again).
+        if res.is_none() && !caster.alive() {
             *guard = None;
         }
         res
@@ -2085,6 +2161,17 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn wayland_capture_reads_the_stream_through_the_portal_connection() {
+            let args = pipeline_args(57, 1280, 720);
+            assert_eq!(args[1], "pipewiresrc");
+            assert!(args.contains(&"fd=3".to_owned()), "the portal's PipeWire connection, as fd 3");
+            assert!(args.contains(&"path=57".to_owned()));
+            assert!(args.contains(&"video/x-raw,format=BGRx,width=1280,height=720".to_owned()));
+            assert_eq!(args.last().map(String::as_str), Some("fd=1"));
+        }
 
         #[test]
         fn computes_target_dimensions_and_nv12() {
