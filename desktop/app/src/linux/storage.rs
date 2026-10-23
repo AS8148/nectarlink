@@ -825,6 +825,51 @@ fn find_fusermount_binary() -> Option<&'static str> {
     None
 }
 
+/// A mount left by a copy of the app that ended without unmounting (a crash,
+/// `kill -9`) answers every access with "transport endpoint is not connected"
+/// and blocks a new mount at the same place: detach it first.
+fn clear_stale_mount(mount_path: &Path) {
+    let disconnected = fs::metadata(mount_path).err().and_then(|e| e.raw_os_error()) == Some(libc::ENOTCONN);
+    let listed =
+        fs::read_to_string("/proc/self/mounts").is_ok_and(|mounts| is_listed_mount(&mounts, mount_path));
+    if disconnected || listed {
+        tracing::info!("detaching a phone storage mount left by an earlier run");
+        unmount_fuse_path(mount_path);
+    }
+}
+
+/// Whether `/proc/self/mounts` text lists a NectarLink FUSE mount at `path`
+/// (mount points there escape spaces, tabs, newlines and backslashes as octal).
+pub(crate) fn is_listed_mount(mounts: &str, path: &Path) -> bool {
+    fn unescape(field: &str) -> String {
+        let mut out = String::with_capacity(field.len());
+        let mut chars = field.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                let code: String = chars.by_ref().take(3).collect();
+                match u8::from_str_radix(&code, 8) {
+                    Ok(byte) => out.push(char::from(byte)),
+                    Err(_) => {
+                        out.push('\\');
+                        out.push_str(&code);
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+    let wanted = path.to_string_lossy();
+    mounts.lines().any(|line| {
+        let mut fields = line.split(' ');
+        let (_source, Some(point), Some(kind)) = (fields.next(), fields.next(), fields.next()) else {
+            return false;
+        };
+        kind == "fuse.nectarlink" && unescape(point) == wanted
+    })
+}
+
 fn unmount_fuse_path(mount_path: &Path) {
     for bin in ["fusermount3", "fusermount"] {
         if let Ok(status) = Command::new(bin)
@@ -1794,7 +1839,11 @@ fn reconcile(desired: &[(DeviceId, String, bool)], disabled: &[(DeviceId, String
     for (device, name, online) in desired {
         let folder_name = sanitize_folder_name(name);
         let mount_path = base.join(&folder_name);
-        if fs::create_dir_all(&mount_path).is_err() {
+        if get_mounted_device(device).is_none() {
+            clear_stale_mount(&mount_path);
+        }
+        if let Err(e) = fs::create_dir_all(&mount_path) {
+            tracing::warn!(error = %e, "can't create the phone storage folder");
             continue;
         }
         register_sidebar_bookmarks(&mount_path, name);
@@ -1987,6 +2036,16 @@ mod tests {
             Some("DCIM/Camera/IMG_001.jpg".to_owned())
         );
         assert_eq!(to_remote_rel_path(root, Path::new("/home/alice/Nectarlink/OtherPhone/DCIM")), None);
+    }
+
+    #[test]
+    fn finds_a_mount_left_by_an_earlier_run() {
+        let mounts = "sysfs /sys sysfs rw 0 0\n\
+                      nectarlink /home/bee/Nectarlink/Pixel\\0409 fuse.nectarlink rw,nosuid,nodev 0 0\n\
+                      portal /run/user/1000/doc fuse.portal rw 0 0\n";
+        assert!(is_listed_mount(mounts, Path::new("/home/bee/Nectarlink/Pixel 9")));
+        assert!(!is_listed_mount(mounts, Path::new("/home/bee/Nectarlink/Galaxy")));
+        assert!(!is_listed_mount(mounts, Path::new("/run/user/1000/doc")), "only NectarLink's own mounts");
     }
 
     #[test]
