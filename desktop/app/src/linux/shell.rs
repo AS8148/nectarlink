@@ -65,13 +65,6 @@ fn validate_url(url: &str) -> Result<&str, String> {
 /// `gio open` / `xdg-open`.
 pub fn open_url(url: &str) -> Result<(), String> {
     let trimmed = url.trim();
-    // Map Windows settings deep-links used by Doctor / Bluetooth UI to desktop equivalents or no-op.
-    if (trimmed.starts_with("ms-settings:") || trimmed.eq_ignore_ascii_case("firewall.cpl"))
-        && !trimmed.starts_with('-')
-    {
-        return spawn_detached("xdg-open", &[trimmed]).or(Ok(()));
-    }
-
     let validated = validate_url(trimmed)?;
 
     if !cfg!(test)
@@ -302,19 +295,8 @@ pub fn select_in_explorer(path: &Path) -> Result<(), String> {
     open_folder(folder)
 }
 
-/// Runs `program` with `arguments`. Special-cases Windows `"explorer.exe"` calls from shared UI code.
+/// Runs `program` with `arguments` (split on spaces, `"` groups).
 pub fn run(program: &Path, arguments: &str) -> Result<(), String> {
-    let prog_str = program.to_string_lossy();
-    if prog_str.eq_ignore_ascii_case("explorer.exe") || prog_str.eq_ignore_ascii_case("explorer") {
-        let trimmed = arguments.trim();
-        if let Some(rest) = trimmed.strip_prefix("/select,") {
-            let target = rest.trim().trim_matches('"');
-            return select_in_explorer(Path::new(target));
-        }
-        let target = trimmed.trim_matches('"');
-        return open_folder(Path::new(target));
-    }
-
     let args = split_args(arguments);
     let mut cmd = Command::new(program);
     cmd.args(&args);
