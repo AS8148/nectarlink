@@ -118,29 +118,13 @@ pub fn current_recording_stem() -> String {
 
 #[cfg(not(windows))]
 pub fn current_recording_stem() -> String {
-    #[repr(C)]
-    struct Tm {
-        tm_sec: i32,
-        tm_min: i32,
-        tm_hour: i32,
-        tm_mday: i32,
-        tm_mon: i32,
-        tm_year: i32,
-        tm_wday: i32,
-        tm_yday: i32,
-        tm_isdst: i32,
-        tm_gmtoff: i64,
-        tm_zone: *const std::ffi::c_char,
-    }
-    unsafe extern "C" {
-        fn time(tloc: *mut i64) -> i64;
-        fn localtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
-    }
+    // SAFETY: `libc::time` and `libc::localtime_r` are thread-safe POSIX calls
+    // operating on stack-allocated `time_t` and `tm` values.
     unsafe {
-        let mut t: i64 = 0;
-        time(&mut t);
-        let mut tm = std::mem::zeroed::<Tm>();
-        localtime_r(&t, &mut tm);
+        let mut t: libc::time_t = 0;
+        libc::time(&mut t);
+        let mut tm = std::mem::zeroed::<libc::tm>();
+        libc::localtime_r(&t, &mut tm);
         format_recording_stem(
             (tm.tm_year + 1900) as u16,
             (tm.tm_mon + 1) as u16,
@@ -282,7 +266,52 @@ fn move_file(src: &Path, dest: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+/// ffmpeg arguments that convert `src` into `dest` in `format`. The paths
+/// are arguments of their own (never parsed by a shell), and a relative path
+/// starting with `-` gets `./` so ffmpeg can't take it for an option.
+#[cfg(target_os = "linux")]
+pub(crate) fn ffmpeg_args(src: &Path, dest: &Path, format: RecordingFormat) -> Vec<std::ffi::OsString> {
+    fn not_an_option(path: &Path) -> std::ffi::OsString {
+        if path.to_string_lossy().starts_with('-') { Path::new(".").join(path).into() } else { path.into() }
+    }
+    let codec: &[&str] = match format {
+        RecordingFormat::M4a => &["-c", "copy"],
+        RecordingFormat::Mp3 => &["-c:a", "libmp3lame", "-q:a", "2"],
+        RecordingFormat::Wav => &["-c:a", "pcm_s16le"],
+        RecordingFormat::Flac => &["-c:a", "flac"],
+    };
+    let mut args: Vec<std::ffi::OsString> =
+        ["-nostdin", "-v", "error", "-y", "-i"].into_iter().map(Into::into).collect();
+    args.push(not_an_option(src));
+    args.extend(codec.iter().map(Into::into));
+    args.push(not_an_option(dest));
+    args
+}
+
+/// Converts `src` (`.m4a`) to `dest` in `format` with ffmpeg on Linux.
+#[cfg(target_os = "linux")]
+pub fn convert_audio(src: &Path, dest: &Path, format: RecordingFormat) -> std::io::Result<()> {
+    if matches!(format, RecordingFormat::M4a) {
+        fs::copy(src, dest)?;
+        return Ok(());
+    }
+    let status = std::process::Command::new("ffmpeg")
+        .args(ffmpeg_args(src, dest, format))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                std::io::Error::other("converting recordings needs ffmpeg")
+            } else {
+                e
+            }
+        })?;
+    if status.success() { Ok(()) } else { Err(std::io::Error::other(format!("ffmpeg exited with {status}"))) }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn convert_audio(_src: &Path, _dest: &Path, _format: RecordingFormat) -> Result<(), String> {
     Err("audio conversion via Media Foundation is only supported on Windows".into())
 }
@@ -806,9 +835,31 @@ mod tests {
         ];
         let text = format_markers(&markers);
         assert_eq!(text, "00:01.250  Intro\n01:05.000  Marker 2\n01:01:01.005  Wrap-up\n");
+
+        let stem = current_recording_stem();
+        assert!(stem.starts_with("Recording "));
+        assert_eq!(stem_from_phone(&format!("{stem}.m4a")).as_deref(), Some(stem.as_str()));
+
+        #[cfg(target_os = "linux")]
+        {
+            let args = ffmpeg_args(
+                Path::new("-odd name!.m4a"),
+                Path::new("/tmp/out it's.mp3"),
+                RecordingFormat::Mp3,
+            );
+            let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+            assert_eq!(args[..5], ["-nostdin", "-v", "error", "-y", "-i"]);
+            assert_eq!(args[5], "./-odd name!.m4a", "a path can't be read as an option");
+            assert!(args.windows(2).any(|w| w == ["-c:a", "libmp3lame"]));
+            assert_eq!(
+                args.last().map(String::as_str),
+                Some("/tmp/out it's.mp3"),
+                "names are passed as they are"
+            );
+        }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn media_foundation_converts_m4a_to_m4a_mp3_wav_and_flac_with_markers() {
         let dir = tempfile::tempdir().unwrap();

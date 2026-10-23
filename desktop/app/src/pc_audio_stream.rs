@@ -4,7 +4,7 @@
 //! 32-bit float stereo samples to 16-bit signed little-endian PCM, and streams
 //! them to connected phones over NectarLink's low-latency audio stream.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod imp {
 
     #![allow(unsafe_code)]
@@ -14,6 +14,7 @@ mod imp {
         time::Duration,
     };
 
+    #[cfg(windows)]
     use windows::Win32::{
         Media::Audio::{
             AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
@@ -192,6 +193,7 @@ mod imp {
             out
         }
 
+        #[cfg_attr(target_os = "linux", allow(dead_code))]
         fn encode_stereo_i16(&mut self, samples: &[i16], channels: usize) -> Vec<u8> {
             let frames = samples.len() / channels.max(1);
             let mut out = Vec::with_capacity(frames * 4);
@@ -222,6 +224,168 @@ mod imp {
             .ok();
     }
 
+    /// Formats a PulseAudio/PipeWire sink name into its monitor source name.
+    #[cfg_attr(windows, allow(dead_code))]
+    pub(crate) fn format_monitor_source_name(default_sink: Option<&str>) -> String {
+        let Some(trimmed) = default_sink.map(str::trim).filter(|s| !s.is_empty()) else {
+            return "@DEFAULT_MONITOR@".to_owned();
+        };
+        if trimmed.ends_with(".monitor") { trimmed.to_owned() } else { format!("{trimmed}.monitor") }
+    }
+
+    /// Builds `pw-record` CLI arguments that capture desktop sink monitor loopback
+    /// (`-P stream.capture.sink=true`) rather than the default microphone input.
+    #[cfg_attr(windows, allow(dead_code))]
+    pub(crate) fn pw_record_loopback_args(monitor: &str) -> Vec<String> {
+        let mut args = vec![
+            "--raw".to_owned(),
+            "--format=f32".to_owned(),
+            "--rate=48000".to_owned(),
+            "--channels=2".to_owned(),
+            "-P".to_owned(),
+            "stream.capture.sink=true".to_owned(),
+        ];
+        let trimmed = monitor.trim();
+        if !trimmed.is_empty() && trimmed != "@DEFAULT_MONITOR@" {
+            let sink_name = trimmed.strip_suffix(".monitor").unwrap_or(trimmed).trim();
+            if !sink_name.is_empty() && !sink_name.starts_with('-') {
+                args.push("--target".to_owned());
+                args.push(sink_name.to_owned());
+            }
+        }
+        args.push("-".to_owned());
+        args
+    }
+
+    #[cfg(target_os = "linux")]
+    fn resolve_default_monitor_source() -> String {
+        let default_sink = std::process::Command::new("pactl")
+            .arg("get-default-sink")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        format_monitor_source_name(default_sink.as_deref())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn run_loopback_worker() {
+        while is_enabled() {
+            if let Err(e) = capture_and_stream_once() {
+                tracing::debug!(error = %e, "PC audio loopback stream cycle ended");
+                for _ in 0..30 {
+                    if !is_enabled() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn capture_and_stream_once() -> Result<(), String> {
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+
+        let node = core_host::node().ok_or_else(|| "core node not running".to_owned())?;
+        let peers: Vec<_> = node
+            .paired_devices()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| matches!(d.link, nectarlink_core::LinkState::Online { .. }))
+            .map(|d| d.id)
+            .collect();
+        let wanted = *TARGET.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(&peer) = wanted.as_ref().filter(|w| peers.contains(w)).or_else(|| peers.first()) else {
+            std::thread::sleep(Duration::from_millis(500));
+            return Ok(());
+        };
+
+        let monitor = resolve_default_monitor_source();
+        let rate: u32 = 48_000;
+        let channels: usize = 2;
+
+        let mut child = Command::new("parec")
+            .args([
+                "--raw",
+                "--format=float32le",
+                "--rate=48000",
+                "--channels=2",
+                "--latency-msec=10",
+                &format!("--device={monitor}"),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .or_else(|_| {
+                let pw_args = pw_record_loopback_args(&monitor);
+                Command::new("pw-record").args(&pw_args).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
+            })
+            .map_err(|e| format!("failed to spawn parec/pw-record: {e}"))?;
+
+        let Some(mut stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("loopback recorder stdout unavailable".into());
+        };
+
+        let mut enhancer = SpeakerEnhancer::new(rate);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(u32, u8, Vec<u8>)>(64);
+        let send_node = node.clone();
+        core_host::spawn(async move {
+            while let Some((r, ch, pcm)) = rx.recv().await {
+                for chunk in pcm.chunks(960) {
+                    if send_node.send_pc_audio_pcm(&peer, r, ch, chunk.to_vec()).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+
+        // 480 stereo f32 frames = 10 ms = 3840 bytes.
+        let frames_per_read = 480usize;
+        let mut raw_buf = vec![0u8; frames_per_read * channels * 4];
+        let mut floats = vec![0.0_f32; frames_per_read * channels];
+        let mut silence_tail_packets: u32 = 0;
+
+        while is_enabled() {
+            if target() != wanted && target().is_some_and(|t| peers.contains(&t)) {
+                break;
+            }
+            if stdout.read_exact(&mut raw_buf).is_err() {
+                break;
+            }
+            for (dst, &chunk) in floats.iter_mut().zip(raw_buf.as_chunks::<4>().0) {
+                *dst = f32::from_le_bytes(chunk);
+            }
+            let has_signal = floats.iter().any(|&s| s.is_finite() && s.abs() > 1e-5);
+            let pcm_bytes = if has_signal {
+                silence_tail_packets = 50;
+                enhancer.encode_stereo_f32(&floats, channels)
+            } else if silence_tail_packets > 0 {
+                silence_tail_packets -= 1;
+                vec![0u8; frames_per_read * 4]
+            } else {
+                Vec::new()
+            };
+
+            if !pcm_bytes.is_empty()
+                && matches!(
+                    tx.try_send((rate, 2, pcm_bytes)),
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_))
+                )
+            {
+                break;
+            }
+        }
+
+        let _ = child.kill();
+        let _ = child.wait();
+        Ok(())
+    }
+
+    #[cfg(windows)]
     fn run_loopback_worker() {
         // SAFETY: Initialize COM and elevate thread priority for low-latency audio capture.
         unsafe {
@@ -237,6 +401,7 @@ mod imp {
         }
     }
 
+    #[cfg(windows)]
     fn capture_and_stream_once() -> Result<(), String> {
         let node = core_host::node().ok_or_else(|| "core node not running".to_owned())?;
         let peers: Vec<_> = node
@@ -401,10 +566,52 @@ mod imp {
             set_enabled(false);
             assert!(!is_enabled());
         }
+
+        #[test]
+        fn format_monitor_source_name_appends_monitor_suffix_or_uses_default() {
+            assert_eq!(
+                format_monitor_source_name(Some("alsa_output.pci-0000_00_1f.3.analog-stereo\n")),
+                "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"
+            );
+            assert_eq!(
+                format_monitor_source_name(Some("alsa_output.pci.monitor")),
+                "alsa_output.pci.monitor"
+            );
+            assert_eq!(format_monitor_source_name(Some("  ")), "@DEFAULT_MONITOR@");
+            assert_eq!(format_monitor_source_name(None), "@DEFAULT_MONITOR@");
+
+            let default_pw = pw_record_loopback_args("@DEFAULT_MONITOR@");
+            assert!(default_pw.windows(2).any(|w| w == ["-P", "stream.capture.sink=true"]));
+            assert!(!default_pw.iter().any(|a| a == "--target"));
+            assert_eq!(default_pw.last().map(String::as_str), Some("-"));
+
+            let targeted_pw = pw_record_loopback_args("alsa_output.pci-0000_00_1f.3.analog-stereo.monitor");
+            assert!(targeted_pw.windows(2).any(|w| w == ["-P", "stream.capture.sink=true"]));
+            assert!(
+                targeted_pw
+                    .windows(2)
+                    .any(|w| w == ["--target", "alsa_output.pci-0000_00_1f.3.analog-stereo"])
+            );
+            assert_eq!(targeted_pw.last().map(String::as_str), Some("-"));
+        }
+
+        #[test]
+        fn speaker_enhancer_encodes_stereo_f32_and_i16_without_clipping() {
+            let mut enhancer = SpeakerEnhancer::new(48_000);
+            let floats = [0.25_f32, -0.25, 0.95, -0.95, f32::NAN, 0.5];
+            let encoded = enhancer.encode_stereo_f32(&floats, 2);
+            assert_eq!(encoded.len(), 3 * 4);
+            assert!(encoded.iter().any(|&b| b != 0));
+
+            let i16s = [8000i16, -8000, 16000, -16000];
+            let encoded_i16 = enhancer.encode_stereo_i16(&i16s, 2);
+            assert_eq!(encoded_i16.len(), 2 * 4);
+            assert!(encoded_i16.iter().any(|&b| b != 0));
+        }
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 mod imp {
     #![allow(dead_code)]
 

@@ -349,10 +349,13 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Mirror", "Mirror recording"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Mirror screenshot"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Mirroring is turned off for this phone."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Recording from %1, saved in Downloads/Nectarlink"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Recording from %1, saved in Downloads\\Nectarlink"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Saved %1"), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Saved %1 to Downloads/Nectarlink."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Saved %1 to Downloads\\Nectarlink."), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Screenshot copied to clipboard."), // desktop/app/src/mirror.rs
+    QT_TRANSLATE_NOOP("Mirror", "Screenshot from %1, saved in Downloads/Nectarlink"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Screenshot from %1, saved in Downloads\\Nectarlink"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Sending %1 files…"), // desktop/app/src/mirror.rs
     QT_TRANSLATE_NOOP("Mirror", "Sending %1…"), // desktop/app/src/mirror.rs
