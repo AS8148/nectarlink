@@ -484,8 +484,8 @@ fn staging_dir() -> PathBuf {
 
 #[cfg(not(windows))]
 fn current_euid() -> u32 {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0)
+    // SAFETY: geteuid takes no arguments and cannot fail.
+    unsafe { libc::geteuid() }
 }
 
 #[cfg(not(windows))]

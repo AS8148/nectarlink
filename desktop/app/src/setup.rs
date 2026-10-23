@@ -247,7 +247,7 @@ pub enum Outcome {
 }
 
 /// Installs from `installer` with administrator rights, reporting each step.
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
 pub fn install(installer: &Path, on_event: impl FnMut(Event)) -> Outcome {
     let progress = progress_file("install");
     let params = format!("/S /PROGRESS={}", progress.display());
@@ -298,15 +298,21 @@ pub fn install(installer: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
             Err(e) => Outcome::Failed(tr!("Setup", "Couldn't start setup: %1", e)),
         }
     } else {
-        let progress = progress_file("install");
-        let params = format!("/S /PROGRESS={}", progress.display());
-        run_tracked(installer, &params, &progress, Duration::from_secs(600), true, on_event)
+        // Only the .deb and the tarball install this way; the Windows
+        // installer's switches mean nothing to anything else.
+        Outcome::Failed(tr!("Setup", "Couldn't start setup: %1", name))
     }
+}
+
+/// The app installs from a disk image on macOS, not through this setup.
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn install(installer: &Path, _on_event: impl FnMut(Event)) -> Outcome {
+    Outcome::Failed(tr!("Setup", "Couldn't start setup: %1", installer.display()))
 }
 
 /// Removes the copy in `installed` with administrator rights, then this
 /// user's data.
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
 pub fn remove(installed: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
     let uninstaller = installed.join("uninstall.exe");
     if !uninstaller.is_file() {
@@ -385,6 +391,15 @@ pub fn remove(installed: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
 
 /// Removes this user's settings, pairings, history and caches. Received
 /// files, recordings and synced folders live elsewhere and stay.
+/// On macOS the app is removed by moving it to the Trash; this removes this
+/// user's data.
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn remove(_installed: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
+    remove_user_data();
+    on_event(Event::Done);
+    Outcome::Done
+}
+
 pub fn remove_user_data() {
     let Some(data) = user_data_dir() else { return };
     if let Err(e) = std::fs::remove_dir_all(&data)
@@ -409,6 +424,7 @@ fn user_data_dir() -> Option<PathBuf> {
 /// Runs `program` elevated with `params` and follows `progress` until it
 /// reports done or an error. With `wait_for_exit`, the process ending also
 /// ends the run (its exit code decides when the file says nothing).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn run_tracked(
     program: &Path,
     params: &str,
