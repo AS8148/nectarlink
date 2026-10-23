@@ -558,6 +558,10 @@ fn main() -> ExitCode {
 
     // Before any window: toasts and the taskbar both go by this ID.
     win::toast::set_process_id();
+    // Logging out or shutting down sends SIGTERM: quit as Quit does, so
+    // phone storage is unmounted instead of left behind.
+    #[cfg(target_os = "linux")]
+    win::quit_on_signals(bridge::app::request_quit);
     win::jumplist::register(options.data_dir.as_deref());
     if let Err(e) = core_host::start(data_dir.clone(), Arc::new(DesktopPlatform)) {
         tracing::error!(error = %e, "can't start the core runtime");

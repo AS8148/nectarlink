@@ -42,6 +42,79 @@ pub mod wol;
 
 use std::{fs, io::Read, process::Command};
 
+/// How long a signalled quit may take before the process ends anyway, so
+/// logging out never waits on the app.
+const SIGNAL_QUIT_GRACE: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Quits the app cleanly on SIGTERM (logout, shutdown, `kill`), SIGINT and
+/// SIGHUP, the way Quit does, so phone storage is unmounted and the phone
+/// sees the PC leave. A second signal, or a quit that takes longer than
+/// [`SIGNAL_QUIT_GRACE`], ends the process at once.
+///
+/// The handler only writes a byte to a pipe (all a signal handler may safely
+/// do); a thread reads it and asks the app to quit. The signal mask is left
+/// alone, so processes the app starts still get their signals.
+pub fn quit_on_signals(quit: fn()) {
+    use std::sync::atomic::{AtomicI32, Ordering};
+    static WRITE_END: AtomicI32 = AtomicI32::new(-1);
+
+    extern "C" fn on_signal(_: libc::c_int) {
+        let fd = WRITE_END.load(Ordering::Relaxed);
+        if fd >= 0 {
+            let byte = 1u8;
+            // SAFETY: write(2) is async-signal-safe; the pipe stays open for the process's life.
+            let _ = unsafe { libc::write(fd, (&raw const byte).cast(), 1) };
+        }
+    }
+
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: pipe2 fills two descriptors on success.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return;
+    }
+    let (read_end, write_end) = (fds[0], fds[1]);
+    let spawned = std::thread::Builder::new().name("signals".into()).spawn(move || {
+        let mut signals = 0;
+        loop {
+            let mut byte = 0u8;
+            // SAFETY: reads one byte into a local buffer from our own pipe.
+            let n = unsafe { libc::read(read_end, (&raw mut byte).cast(), 1) };
+            if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            if n != 1 {
+                return;
+            }
+            signals += 1;
+            if signals > 1 {
+                std::process::exit(130);
+            }
+            tracing::info!("quitting on a signal");
+            quit();
+            let _ = std::thread::Builder::new().name("signal-quit-grace".into()).spawn(|| {
+                std::thread::sleep(SIGNAL_QUIT_GRACE);
+                tracing::warn!("quit took too long; ending");
+                std::process::exit(0);
+            });
+        }
+    });
+    if spawned.is_err() {
+        return;
+    }
+    WRITE_END.store(write_end, Ordering::Relaxed);
+    for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        // SAFETY: installs a handler that only calls write(2); the struct is
+        // zeroed, then the handler, flags and an empty mask are set.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+            action.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&mut action.sa_mask);
+            libc::sigaction(signal, &action, std::ptr::null_mut());
+        }
+    }
+}
+
 /// A stable machine identifier from `/etc/machine-id` or `/var/lib/dbus/machine-id`.
 pub fn machine_guid() -> Option<String> {
     for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
