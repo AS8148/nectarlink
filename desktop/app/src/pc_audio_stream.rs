@@ -233,6 +233,30 @@ mod imp {
         if trimmed.ends_with(".monitor") { trimmed.to_owned() } else { format!("{trimmed}.monitor") }
     }
 
+    /// Builds `pw-record` CLI arguments that capture desktop sink monitor loopback
+    /// (`-P stream.capture.sink=true`) rather than the default microphone input.
+    #[cfg_attr(windows, allow(dead_code))]
+    pub(crate) fn pw_record_loopback_args(monitor: &str) -> Vec<String> {
+        let mut args = vec![
+            "--raw".to_owned(),
+            "--format=f32".to_owned(),
+            "--rate=48000".to_owned(),
+            "--channels=2".to_owned(),
+            "-P".to_owned(),
+            "stream.capture.sink=true".to_owned(),
+        ];
+        let trimmed = monitor.trim();
+        if !trimmed.is_empty() && trimmed != "@DEFAULT_MONITOR@" {
+            let sink_name = trimmed.strip_suffix(".monitor").unwrap_or(trimmed).trim();
+            if !sink_name.is_empty() && !sink_name.starts_with('-') {
+                args.push("--target".to_owned());
+                args.push(sink_name.to_owned());
+            }
+        }
+        args.push("-".to_owned());
+        args
+    }
+
     #[cfg(target_os = "linux")]
     fn resolve_default_monitor_source() -> String {
         let default_sink = std::process::Command::new("pactl")
@@ -249,7 +273,12 @@ mod imp {
         while is_enabled() {
             if let Err(e) = capture_and_stream_once() {
                 tracing::debug!(error = %e, "PC audio loopback stream cycle ended");
-                std::thread::sleep(Duration::from_millis(500));
+                for _ in 0..30 {
+                    if !is_enabled() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
             }
         }
     }
@@ -290,11 +319,8 @@ mod imp {
             .stderr(Stdio::null())
             .spawn()
             .or_else(|_| {
-                Command::new("pw-record")
-                    .args(["--raw", "--format=f32", "--rate=48000", "--channels=2", "-"])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::null())
-                    .spawn()
+                let pw_args = pw_record_loopback_args(&monitor);
+                Command::new("pw-record").args(&pw_args).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
             })
             .map_err(|e| format!("failed to spawn parec/pw-record: {e}"))?;
 
@@ -324,6 +350,9 @@ mod imp {
         let mut silence_tail_packets: u32 = 0;
 
         while is_enabled() {
+            if target() != wanted && target().is_some_and(|t| peers.contains(&t)) {
+                break;
+            }
             if stdout.read_exact(&mut raw_buf).is_err() {
                 break;
             }
@@ -550,6 +579,20 @@ mod imp {
             );
             assert_eq!(format_monitor_source_name(Some("  ")), "@DEFAULT_MONITOR@");
             assert_eq!(format_monitor_source_name(None), "@DEFAULT_MONITOR@");
+
+            let default_pw = pw_record_loopback_args("@DEFAULT_MONITOR@");
+            assert!(default_pw.windows(2).any(|w| w == ["-P", "stream.capture.sink=true"]));
+            assert!(!default_pw.iter().any(|a| a == "--target"));
+            assert_eq!(default_pw.last().map(String::as_str), Some("-"));
+
+            let targeted_pw = pw_record_loopback_args("alsa_output.pci-0000_00_1f.3.analog-stereo.monitor");
+            assert!(targeted_pw.windows(2).any(|w| w == ["-P", "stream.capture.sink=true"]));
+            assert!(
+                targeted_pw
+                    .windows(2)
+                    .any(|w| w == ["--target", "alsa_output.pci-0000_00_1f.3.analog-stereo"])
+            );
+            assert_eq!(targeted_pw.last().map(String::as_str), Some("-"));
         }
 
         #[test]

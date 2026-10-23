@@ -119,10 +119,13 @@ fn sync() {
 
 /// Removes this app's shortcuts (when uninstalling).
 pub fn remove_all() -> io::Result<()> {
-    match (shortcut::send_to_dir(), std::env::current_exe()) {
+    let res = match (shortcut::send_to_dir(), std::env::current_exe()) {
         (Some(dir), Ok(exe)) => reconcile(&dir, &[], &exe),
         _ => Ok(()),
-    }
+    };
+    #[cfg(target_os = "linux")]
+    let _ = shortcut::remove_all_file_manager_menus();
+    res
 }
 
 /// Makes `dir` hold exactly one shortcut per device in `desired` (named

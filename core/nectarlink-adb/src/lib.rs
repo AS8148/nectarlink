@@ -159,8 +159,29 @@ pub async fn forward_tcp(
     };
     let mut stream = TcpStream::connect(server).await?;
     let cmd = format!("host-serial:{serial}:forward:tcp:{port};tcp:{remote_port}");
-    send_command(&mut stream, &cmd).await?;
-    Ok(port)
+    match send_command(&mut stream, &cmd).await {
+        Ok(()) => Ok(port),
+        Err(AdbError::Remote(_)) if local_port == 0 => {
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+                ^ std::process::id()
+                ^ u32::from(remote_port);
+            let mut last_err = None;
+            for attempt in 0..8u32 {
+                let candidate = 58000 + ((seed.wrapping_add(attempt * 197)) % 2500) as u16;
+                let mut retry_stream = TcpStream::connect(server).await?;
+                let retry_cmd = format!("host-serial:{serial}:forward:tcp:{candidate};tcp:{remote_port}");
+                match send_command(&mut retry_stream, &retry_cmd).await {
+                    Ok(()) => return Ok(candidate),
+                    Err(e) => last_err = Some(e),
+                }
+            }
+            Err(last_err.expect("at least one retry attempt"))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Removes a TCP port forward (`adb -s <serial> forward --remove tcp:<local>`).

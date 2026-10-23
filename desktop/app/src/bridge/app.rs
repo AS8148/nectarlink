@@ -2222,7 +2222,7 @@ fn load_guide_doc_content(raw_key: &str) -> (String, String) {
             tr!("Guide", "Install and first-time setup"),
             tr!(
                 "Guide",
-                "1. Install NectarLink on your Windows 11 PC and your Android phone (Android 8.0 or newer).\n\
+                "1. Install NectarLink on your PC (Windows 11 or Linux) and your Android phone (Android 8.0 or newer).\n\
              2. Connect both devices to the same Wi-Fi network, or plug your phone into your PC with a USB cable.\n\
              3. Open the Pair step in the setup walkthrough, or click + (Pair a new device) at the bottom of the left rail.\n\
              4. Scan the QR code from the NectarLink Android app, or select your phone from the nearby devices list and confirm that the 6-digit code matches on both screens.\n\

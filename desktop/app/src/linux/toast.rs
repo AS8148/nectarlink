@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 
 pub const AUMID: &str = "Nectarlink.Desktop";
@@ -42,8 +42,10 @@ impl fmt::Debug for Toast {
         f.debug_struct("Toast")
             .field("device", &self.device)
             .field("key", &self.key)
-            .field("title", &self.title)
-            .field("body", &self.body)
+            .field("title", &"<redacted>")
+            .field("title_len", &self.title.len())
+            .field("body", &"<redacted>")
+            .field("body_len", &self.body.len())
             .field("attribution", &self.attribution)
             .field("icon", &self.icon)
             .field("image", &self.image)
@@ -70,21 +72,42 @@ pub enum MonitorSignal {
     NotificationClosed { id: u32, reason: u32 },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct ToastSnapshot {
     title: String,
     body: String,
     attribution: String,
     icon_path: String,
+    image_path: Option<String>,
     actions: Vec<(String, String)>,
     reply: Option<(String, String)>,
     silent: bool,
     call: bool,
 }
 
+impl fmt::Debug for ToastSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToastSnapshot")
+            .field("title", &"<redacted>")
+            .field("title_len", &self.title.len())
+            .field("body", &"<redacted>")
+            .field("body_len", &self.body.len())
+            .field("attribution", &self.attribution)
+            .field("icon_path", &self.icon_path)
+            .field("image_path", &self.image_path)
+            .field("actions", &self.actions.len())
+            .field("reply", &self.reply.is_some())
+            .field("silent", &self.silent)
+            .field("call", &self.call)
+            .finish()
+    }
+}
+
+type EventCallback = Arc<dyn Fn(ToastEvent) + Send + Sync + 'static>;
+
 struct Toaster {
     icon: PathBuf,
-    on_event: Option<Box<dyn Fn(ToastEvent) + Send + Sync + 'static>>,
+    on_event: Option<EventCallback>,
     active_ids: HashMap<(String, String), u32>,
     id_to_target: HashMap<u32, (String, String)>,
     reply_actions: HashMap<u32, String>,
@@ -93,7 +116,7 @@ struct Toaster {
 }
 
 impl Toaster {
-    fn new(icon: PathBuf, on_event: Option<Box<dyn Fn(ToastEvent) + Send + Sync + 'static>>) -> Self {
+    fn new(icon: PathBuf, on_event: Option<EventCallback>) -> Self {
         Self {
             icon,
             on_event,
@@ -187,10 +210,109 @@ impl Toaster {
     }
 }
 
-static TOASTER: OnceLock<Mutex<Toaster>> = OnceLock::new();
-static MONITOR_STARTED: OnceLock<()> = OnceLock::new();
+enum WorkerCommand {
+    Show(Box<Toast>),
+    UpdateProgress { device: String, key: String, progress: Progress },
+    Remove { device: String, key: String },
+    RemoveDevice { device: String },
+}
 
+static TOASTER: OnceLock<Mutex<Toaster>> = OnceLock::new();
+static WORKER_TX: OnceLock<mpsc::Sender<WorkerCommand>> = OnceLock::new();
+static MONITOR_STARTED: OnceLock<()> = OnceLock::new();
+static DBUS_SESSION: OnceLock<Mutex<Option<zbus::blocking::Connection>>> = OnceLock::new();
+
+/// Returns the shared D-Bus session connection so `Notify`, `CloseNotification`,
+/// and `monitor_loop()` all share the same unique bus name (`:1.x`).
+fn dbus_session() -> Option<zbus::blocking::Connection> {
+    let mutex = DBUS_SESSION.get_or_init(|| Mutex::new(None));
+    let mut guard = mutex.lock().ok()?;
+    if guard.is_none() {
+        *guard = zbus::blocking::Connection::session().ok();
+    }
+    guard.clone()
+}
+
+fn reset_dbus_session() -> Option<zbus::blocking::Connection> {
+    let mutex = DBUS_SESSION.get_or_init(|| Mutex::new(None));
+    let mut guard = mutex.lock().ok()?;
+    *guard = zbus::blocking::Connection::session().ok();
+    guard.clone()
+}
+
+fn with_session_connection<T, F>(mut op: F) -> Option<T>
+where
+    T: Send,
+    F: FnMut(&zbus::blocking::Connection) -> zbus::Result<T> + Send,
+{
+    super::non_tokio(|| {
+        let conn = dbus_session()?;
+        if !super::dbus_name_has_owner(&conn, "org.freedesktop.Notifications") {
+            return None;
+        }
+        match op(&conn) {
+            Ok(val) => Some(val),
+            Err(zbus::Error::InputOutput(_) | zbus::Error::Handshake(_)) => {
+                let retry_conn = reset_dbus_session()?;
+                if !super::dbus_name_has_owner(&retry_conn, "org.freedesktop.Notifications") {
+                    return None;
+                }
+                op(&retry_conn).ok()
+            }
+            Err(_) => None,
+        }
+    })
+}
+
+/// Checks whether desktop notifications are currently enabled (not inhibited via
+/// `org.freedesktop.Notifications` `Inhibited` property and not disabled in GNOME's
+/// `org.gnome.desktop.notifications` `show-banners`).
 pub fn enabled() -> bool {
+    if cfg!(test) {
+        return true;
+    }
+
+    if let Some(inhibited) = with_session_connection(|conn| {
+        let msg = conn.call_method(
+            Some("org.freedesktop.Notifications"),
+            "/org/freedesktop/Notifications",
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &("org.freedesktop.Notifications", "Inhibited"),
+        )?;
+        let body = msg.body();
+        if let Ok(val) = body.deserialize::<zbus::zvariant::OwnedValue>()
+            && let Ok(b) = bool::try_from(val)
+        {
+            return Ok(b);
+        }
+        if let Ok((val,)) = body.deserialize::<(zbus::zvariant::OwnedValue,)>()
+            && let Ok(b) = bool::try_from(val)
+        {
+            return Ok(b);
+        }
+        Ok(false)
+    }) && inhibited
+    {
+        return false;
+    }
+
+    let is_gnome = std::env::var("XDG_CURRENT_DESKTOP")
+        .or_else(|_| std::env::var("DESKTOP_SESSION"))
+        .map(|d| d.to_ascii_lowercase().contains("gnome"))
+        .unwrap_or(false);
+    if is_gnome
+        && let Ok(output) = std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.notifications", "show-banners"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+        && output.status.success()
+        && String::from_utf8_lossy(&output.stdout).trim() == "false"
+    {
+        return false;
+    }
+
     true
 }
 
@@ -219,7 +341,7 @@ where
         });
     }
 
-    let callback: Box<dyn Fn(ToastEvent) + Send + Sync + 'static> = Box::new(on_event);
+    let callback: EventCallback = Arc::new(on_event);
     if let Some(mutex) = TOASTER.get() {
         if let Ok(mut guard) = mutex.lock() {
             guard.icon = icon;
@@ -230,56 +352,99 @@ where
     }
 
     if !cfg!(test) {
+        WORKER_TX.get_or_init(|| {
+            let (tx, rx) = mpsc::channel();
+            let _ = std::thread::Builder::new().name("toasts-worker".into()).spawn(move || worker_loop(rx));
+            tx
+        });
         MONITOR_STARTED.get_or_init(|| {
-            let _ = std::thread::Builder::new().name("toasts".into()).spawn(monitor_loop);
+            let _ = std::thread::Builder::new().name("toasts-monitor".into()).spawn(monitor_loop);
         });
     }
     crate::pc_notifications::start_listener();
+}
+
+fn dispatch(cmd: WorkerCommand) {
+    if !cfg!(test)
+        && let Some(tx) = WORKER_TX.get()
+    {
+        match tx.send(cmd) {
+            Ok(()) => return,
+            Err(e) => {
+                execute_command(e.0);
+                return;
+            }
+        }
+    }
+    execute_command(cmd);
+}
+
+fn worker_loop(rx: mpsc::Receiver<WorkerCommand>) {
+    while let Ok(cmd) = rx.recv() {
+        execute_command(cmd);
+    }
+}
+
+fn execute_command(cmd: WorkerCommand) {
+    match cmd {
+        WorkerCommand::Show(toast) => execute_show(*toast),
+        WorkerCommand::UpdateProgress { device, key, progress } => {
+            execute_update_progress(&device, &key, progress);
+        }
+        WorkerCommand::Remove { device, key } => execute_remove(&device, &key),
+        WorkerCommand::RemoveDevice { device } => execute_remove_device(&device),
+    }
 }
 
 pub fn show(toast: Toast) {
     if toast.device.trim().is_empty() || toast.key.trim().is_empty() {
         return;
     }
+    dispatch(WorkerCommand::Show(Box::new(toast)));
+}
 
-    let (replaces_id, default_icon) = {
-        let Some(mutex) = TOASTER.get() else {
-            let icon_str = toast
-                .icon
-                .as_ref()
-                .or(toast.image.as_ref())
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let title = format_summary(&toast.title, &toast.attribution);
-            let body = format_body(&toast.body, &toast.attribution, toast.progress.as_ref());
-            let _ = send_notification(
-                0,
-                &icon_str,
-                &title,
-                &body,
-                &toast.actions,
-                toast.reply.as_ref(),
-                toast.progress.as_ref(),
-                toast.silent,
-                toast.call,
-            );
-            return;
-        };
-        let Ok(guard) = mutex.lock() else {
-            return;
-        };
-        let existing = guard.active_ids.get(&(toast.device.clone(), toast.key.clone())).copied().unwrap_or(0);
-        (existing, guard.icon.clone())
-    };
-
-    let chosen_icon = toast.icon.clone().or(toast.image.clone()).unwrap_or(default_icon);
-    let icon_str = chosen_icon.to_string_lossy().to_string();
+fn execute_show(toast: Toast) {
+    let image_str = toast.image.as_ref().map(|p| p.to_string_lossy().to_string());
     let title = format_summary(&toast.title, &toast.attribution);
     let body = format_body(&toast.body, &toast.attribution, toast.progress.as_ref());
+
+    let Some(mutex) = TOASTER.get() else {
+        let icon_str = toast
+            .icon
+            .as_ref()
+            .or(toast.image.as_ref())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let _ = send_notification(
+            0,
+            &icon_str,
+            image_str.as_deref(),
+            &title,
+            &body,
+            &toast.actions,
+            toast.reply.as_ref(),
+            toast.progress.as_ref(),
+            toast.silent,
+            toast.call,
+        );
+        return;
+    };
+
+    // Hold the TOASTER lock across `send_notification` and `record_shown` on the worker
+    // thread so a fast `ActionInvoked` or `NotificationClosed` signal in `monitor_loop()`
+    // can never race ahead of `record_shown`.
+    let Ok(mut guard) = mutex.lock() else {
+        return;
+    };
+    let replaces_id = guard.active_ids.get(&(toast.device.clone(), toast.key.clone())).copied().unwrap_or(0);
+    let chosen_icon =
+        toast.icon.clone().or_else(|| toast.image.clone()).unwrap_or_else(|| guard.icon.clone());
+    let icon_str = chosen_icon.to_string_lossy().to_string();
 
     let notified_id = send_notification(
         replaces_id,
         &icon_str,
+        image_str.as_deref(),
         &title,
         &body,
         &toast.actions,
@@ -289,47 +454,45 @@ pub fn show(toast: Toast) {
         toast.call,
     );
 
-    if let Some(mutex) = TOASTER.get()
-        && let Ok(mut guard) = mutex.lock()
-    {
-        let id = notified_id.unwrap_or_else(|| {
-            if replaces_id != 0 {
-                replaces_id
-            } else {
-                guard.next_fallback_id += 1;
-                guard.next_fallback_id
-            }
-        });
-        let snapshot = ToastSnapshot {
-            title: toast.title,
-            body: toast.body,
-            attribution: toast.attribution,
-            icon_path: icon_str,
-            actions: toast.actions,
-            reply: toast.reply,
-            silent: toast.silent,
-            call: toast.call,
-        };
-        guard.record_shown(toast.device, toast.key, id, snapshot);
-    }
+    let id = notified_id.unwrap_or_else(|| {
+        if replaces_id != 0 {
+            replaces_id
+        } else {
+            guard.next_fallback_id += 1;
+            guard.next_fallback_id
+        }
+    });
+    let snapshot = ToastSnapshot {
+        title: toast.title,
+        body: toast.body,
+        attribution: toast.attribution,
+        icon_path: icon_str,
+        image_path: image_str,
+        actions: toast.actions,
+        reply: toast.reply,
+        silent: toast.silent,
+        call: toast.call,
+    };
+    guard.record_shown(toast.device, toast.key, id, snapshot);
 }
 
 pub fn update_progress(device: &str, key: &str, progress: Progress) {
+    dispatch(WorkerCommand::UpdateProgress { device: device.to_string(), key: key.to_string(), progress });
+}
+
+fn execute_update_progress(device: &str, key: &str, progress: Progress) {
     let Some(mutex) = TOASTER.get() else {
         return;
     };
-    let (replaces_id, snapshot) = {
-        let Ok(guard) = mutex.lock() else {
-            return;
-        };
-        let target = (device.to_string(), key.to_string());
-        let Some(&id) = guard.active_ids.get(&target) else {
-            return;
-        };
-        let Some(snap) = guard.snapshots.get(&target).cloned() else {
-            return;
-        };
-        (id, snap)
+    let Ok(mut guard) = mutex.lock() else {
+        return;
+    };
+    let target = (device.to_string(), key.to_string());
+    let Some(&replaces_id) = guard.active_ids.get(&target) else {
+        return;
+    };
+    let Some(snapshot) = guard.snapshots.get(&target).cloned() else {
+        return;
     };
 
     let summary = format_summary(&snapshot.title, &snapshot.attribution);
@@ -338,6 +501,7 @@ pub fn update_progress(device: &str, key: &str, progress: Progress) {
     let new_id = send_notification(
         replaces_id,
         &snapshot.icon_path,
+        snapshot.image_path.as_deref(),
         &summary,
         &body,
         &snapshot.actions,
@@ -349,13 +513,16 @@ pub fn update_progress(device: &str, key: &str, progress: Progress) {
 
     if let Some(id) = new_id
         && id != replaces_id
-        && let Ok(mut guard) = mutex.lock()
     {
         guard.record_shown(device.to_string(), key.to_string(), id, snapshot);
     }
 }
 
 pub fn remove(device: &str, key: &str) {
+    dispatch(WorkerCommand::Remove { device: device.to_string(), key: key.to_string() });
+}
+
+fn execute_remove(device: &str, key: &str) {
     let Some(mutex) = TOASTER.get() else {
         return;
     };
@@ -366,11 +533,15 @@ pub fn remove(device: &str, key: &str) {
         guard.take_by_target(device, key)
     };
     if let Some(id) = id {
-        close_notification(id);
+        close_dbus_notification(id);
     }
 }
 
 pub fn remove_device(device: &str) {
+    dispatch(WorkerCommand::RemoveDevice { device: device.to_string() });
+}
+
+fn execute_remove_device(device: &str) {
     let Some(mutex) = TOASTER.get() else {
         return;
     };
@@ -381,11 +552,15 @@ pub fn remove_device(device: &str) {
         guard.take_by_device(device)
     };
     for id in ids {
-        close_notification(id);
+        close_dbus_notification(id);
     }
 }
 
 pub fn unregister() {
+    execute_unregister();
+}
+
+fn execute_unregister() {
     let Some(mutex) = TOASTER.get() else {
         return;
     };
@@ -396,8 +571,23 @@ pub fn unregister() {
         guard.clear_all()
     };
     for id in ids {
-        close_notification(id);
+        close_dbus_notification(id);
     }
+}
+
+/// Escapes XML/Pango entities (`&`, `<`, `>`) so notification body text cannot
+/// break Pango markup parsing in Freedesktop notification daemons.
+pub fn escape_notification_markup(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn format_summary(title: &str, attribution: &str) -> String {
@@ -413,18 +603,18 @@ fn format_summary(title: &str, attribution: &str) -> String {
 fn format_body(body: &str, attribution: &str, progress: Option<&Progress>) -> String {
     let mut parts = Vec::new();
     if !body.trim().is_empty() {
-        parts.push(body.trim().to_string());
+        parts.push(escape_notification_markup(body.trim()));
     }
     if let Some(prog) = progress {
         let mut prog_line = String::new();
         if !prog.status.trim().is_empty() {
-            prog_line.push_str(prog.status.trim());
+            prog_line.push_str(&escape_notification_markup(prog.status.trim()));
         }
         if !prog.label.trim().is_empty() {
             if !prog_line.is_empty() {
                 prog_line.push_str(" — ");
             }
-            prog_line.push_str(prog.label.trim());
+            prog_line.push_str(&escape_notification_markup(prog.label.trim()));
         } else if let Some(val) = prog.value {
             let pct = (val.clamp(0.0, 1.0) * 100.0).round() as i32;
             if !prog_line.is_empty() {
@@ -438,7 +628,7 @@ fn format_body(body: &str, attribution: &str, progress: Option<&Progress>) -> St
         }
     }
     if !attribution.trim().is_empty() {
-        parts.push(attribution.trim().to_string());
+        parts.push(format!("<i>{}</i>", escape_notification_markup(attribution.trim())));
     }
     parts.join("\n")
 }
@@ -469,18 +659,23 @@ fn build_hints_map(
     progress: Option<&Progress>,
     silent: bool,
     call: bool,
+    image_path: Option<&str>,
 ) -> HashMap<&'static str, zbus::zvariant::Value<'static>> {
     let mut hints = HashMap::new();
-    let urgency: u8 = if call {
-        2
-    } else if silent {
-        0
+    hints.insert("desktop-entry", zbus::zvariant::Value::from("nectarlink"));
+    if call {
+        hints.insert("category", zbus::zvariant::Value::from("call.incoming"));
+        hints.insert("urgency", zbus::zvariant::Value::U8(2));
+        hints.insert("resident", zbus::zvariant::Value::Bool(true));
     } else {
-        1
-    };
-    hints.insert("urgency", zbus::zvariant::Value::U8(urgency));
-    if silent && !call {
-        hints.insert("suppress-sound", zbus::zvariant::Value::Bool(true));
+        let urgency: u8 = if silent { 0 } else { 1 };
+        hints.insert("urgency", zbus::zvariant::Value::U8(urgency));
+        if silent {
+            hints.insert("suppress-sound", zbus::zvariant::Value::Bool(true));
+        }
+    }
+    if let Some(img) = image_path.filter(|s| !s.is_empty()) {
+        hints.insert("image-path", zbus::zvariant::Value::from(img.to_owned()));
     }
     if let Some(prog) = progress {
         let pct = compute_progress_percent(prog);
@@ -489,35 +684,11 @@ fn build_hints_map(
     hints
 }
 
-static DBUS_SESSION: OnceLock<Mutex<Option<zbus::blocking::Connection>>> = OnceLock::new();
-
-fn with_session_connection<T, F>(mut op: F) -> Option<T>
-where
-    F: FnMut(&zbus::blocking::Connection) -> zbus::Result<T>,
-{
-    let mutex = DBUS_SESSION.get_or_init(|| Mutex::new(None));
-    let mut guard = mutex.lock().ok()?;
-    if guard.is_none() {
-        *guard = zbus::blocking::Connection::session().ok();
-    }
-    if let Some(conn) = guard.as_ref() {
-        match op(conn) {
-            Ok(val) => return Some(val),
-            Err(_) => {
-                *guard = zbus::blocking::Connection::session().ok();
-                if let Some(retry_conn) = guard.as_ref() {
-                    return op(retry_conn).ok();
-                }
-            }
-        }
-    }
-    None
-}
-
 #[allow(clippy::too_many_arguments)]
 fn send_notification(
     replaces_id: u32,
     icon_path: &str,
+    image_path: Option<&str>,
     summary: &str,
     body: &str,
     actions: &[(String, String)],
@@ -531,7 +702,7 @@ fn send_notification(
     }
 
     let actions_list = build_actions_list(actions, reply);
-    let hints_map = build_hints_map(progress, silent, call);
+    let hints_map = build_hints_map(progress, silent, call, image_path);
     let expire_timeout: i32 = if call { 0 } else { -1 };
 
     with_session_connection(|conn| {
@@ -547,7 +718,7 @@ fn send_notification(
     })
 }
 
-fn close_notification(id: u32) {
+fn close_dbus_notification(id: u32) {
     if cfg!(test) || id == 0 {
         return;
     }
@@ -565,7 +736,10 @@ fn close_notification(id: u32) {
 
 fn monitor_loop() {
     loop {
-        let Ok(conn) = zbus::blocking::Connection::session() else {
+        // Use the SAME shared D-Bus session connection as `send_notification()` so
+        // unicast `ActionInvoked`, `NotificationReplied`, and `NotificationClosed`
+        // signals sent to our caller unique name (`:1.x`) are received here.
+        let Some(conn) = dbus_session() else {
             std::thread::sleep(Duration::from_secs(5));
             continue;
         };
@@ -578,24 +752,27 @@ fn monitor_loop() {
             return;
         };
         let Ok(iter) = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None) else {
+            let _ = reset_dbus_session();
             std::thread::sleep(Duration::from_secs(5));
             continue;
         };
 
         for msg in iter {
             let Ok(msg) = msg else {
+                let _ = reset_dbus_session();
                 break;
             };
             if let Some(signal) = parse_dbus_signal(&msg) {
-                let event = TOASTER.get().and_then(|mutex| {
-                    let mut guard = mutex.lock().ok()?;
-                    guard.handle_signal(signal)
-                });
-                if let Some(event) = event
-                    && let Some(mutex) = TOASTER.get()
-                    && let Ok(guard) = mutex.lock()
-                    && let Some(cb) = &guard.on_event
-                {
+                let (event, callback) = TOASTER
+                    .get()
+                    .and_then(|mutex| {
+                        let mut guard = mutex.lock().ok()?;
+                        let ev = guard.handle_signal(signal);
+                        let cb = guard.on_event.clone();
+                        Some((ev, cb))
+                    })
+                    .unwrap_or((None, None));
+                if let (Some(event), Some(cb)) = (event, callback) {
                     cb(event);
                 }
             }
@@ -646,10 +823,65 @@ mod tests {
         );
 
         let prog = Progress { status: "Transferring".to_string(), value: Some(0.42), label: String::new() };
-        let hints = build_hints_map(Some(&prog), true, false);
+        let hints = build_hints_map(Some(&prog), true, false, Some("/tmp/photo.jpg"));
+        assert_eq!(hints.get("desktop-entry"), Some(&zbus::zvariant::Value::from("nectarlink")));
         assert_eq!(hints.get("urgency"), Some(&zbus::zvariant::Value::U8(0)));
         assert_eq!(hints.get("suppress-sound"), Some(&zbus::zvariant::Value::Bool(true)));
         assert_eq!(hints.get("value"), Some(&zbus::zvariant::Value::I32(42)));
+        assert_eq!(hints.get("image-path"), Some(&zbus::zvariant::Value::from("/tmp/photo.jpg")));
+
+        let call_hints = build_hints_map(None, false, true, None);
+        assert_eq!(call_hints.get("desktop-entry"), Some(&zbus::zvariant::Value::from("nectarlink")));
+        assert_eq!(call_hints.get("category"), Some(&zbus::zvariant::Value::from("call.incoming")));
+        assert_eq!(call_hints.get("urgency"), Some(&zbus::zvariant::Value::U8(2)));
+        assert_eq!(call_hints.get("resident"), Some(&zbus::zvariant::Value::Bool(true)));
+    }
+
+    #[test]
+    fn escapes_notification_markup_and_formats_attribution_in_italics() {
+        assert_eq!(escape_notification_markup("5 < 10 & 20 > 3"), "5 &lt; 10 &amp; 20 &gt; 3");
+        let formatted = format_body("Meet at <Cafe & Bar>", "Messages & Co · Pixel 9", None);
+        assert_eq!(formatted, "Meet at &lt;Cafe &amp; Bar&gt;\n<i>Messages &amp; Co · Pixel 9</i>");
+    }
+
+    #[test]
+    fn toast_and_snapshot_debug_redact_title_and_body() {
+        let toast = Toast {
+            device: "phone-1".to_string(),
+            key: "notif-secret".to_string(),
+            title: "Secret Sender Name".to_string(),
+            body: "Super confidential message body 12345".to_string(),
+            attribution: "Signal · Pixel".to_string(),
+            icon: None,
+            image: None,
+            actions: vec![("reply".to_string(), "Reply".to_string())],
+            reply: None,
+            silent: false,
+            progress: None,
+            call: false,
+        };
+        let debug_str = format!("{toast:?}");
+        assert!(!debug_str.contains("Secret Sender Name"), "raw title leaked: {debug_str}");
+        assert!(!debug_str.contains("Super confidential message body"), "raw body leaked: {debug_str}");
+        assert!(debug_str.contains("<redacted>"), "{debug_str}");
+        assert!(debug_str.contains("title_len"), "{debug_str}");
+        assert!(debug_str.contains("body_len"), "{debug_str}");
+
+        let snapshot = ToastSnapshot {
+            title: "Private Title".to_string(),
+            body: "Private Body Content".to_string(),
+            attribution: "Signal · Pixel".to_string(),
+            icon_path: "/tmp/icon.png".to_string(),
+            image_path: None,
+            actions: Vec::new(),
+            reply: None,
+            silent: false,
+            call: false,
+        };
+        let snap_debug = format!("{snapshot:?}");
+        assert!(!snap_debug.contains("Private Title"), "raw snapshot title leaked: {snap_debug}");
+        assert!(!snap_debug.contains("Private Body Content"), "raw snapshot body leaked: {snap_debug}");
+        assert!(snap_debug.contains("<redacted>"), "{snap_debug}");
     }
 
     #[test]
@@ -705,6 +937,7 @@ mod tests {
             body: "Hi there".to_string(),
             attribution: "Messages · Pixel 9".to_string(),
             icon_path: "/tmp/icon.png".to_string(),
+            image_path: None,
             actions: vec![("archive".to_string(), "Archive".to_string())],
             reply: Some(("direct_reply".to_string(), "Type a message".to_string())),
             silent: false,

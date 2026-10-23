@@ -167,8 +167,139 @@ pub(crate) fn parse_system_dark_sources(
     true
 }
 
+/// Runs `f` outside any active Tokio runtime context so `zbus::blocking` calls
+/// (which use `zbus`'s internal Tokio `Runtime::block_on` when compiled with
+/// the `tokio` feature) never panic with "Cannot start a runtime from within a
+/// runtime" when invoked from a `nectarlink-core` worker thread.
+pub(crate) fn non_tokio<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        std::thread::scope(|s| match s.spawn(f).join() {
+            Ok(v) => v,
+            Err(payload) => std::panic::resume_unwind(payload),
+        })
+    } else {
+        f()
+    }
+}
+
+/// Returns `true` if `bus_name` currently has an active owner on `conn` without
+/// triggering a 25-second D-Bus service activation timeout.
+pub(crate) fn dbus_name_has_owner(conn: &zbus::blocking::Connection, bus_name: &str) -> bool {
+    let Ok(reply) = conn.call_method(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        Some("org.freedesktop.DBus"),
+        "NameHasOwner",
+        &(bus_name,),
+    ) else {
+        return false;
+    };
+    reply.body().deserialize::<bool>().unwrap_or(false)
+}
+
+/// Runs a short-lived helper command with `PR_SET_PDEATHSIG(SIGTERM)` and a
+/// strict wall-clock timeout, killing and reaping the child if it does not
+/// finish within `timeout`.
+pub(crate) fn run_cmd_timeout(
+    bin: &str,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Option<std::process::Output> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    let mut cmd = Command::new(bin);
+    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // SAFETY: `prctl(PR_SET_PDEATHSIG, SIGTERM)` is async-signal-safe.
+    unsafe {
+        cmd.pre_exec(|| {
+            let _ = libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().ok()?;
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let out_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut s) = stdout_pipe.take() {
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let err_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut s) = stderr_pipe.take() {
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = out_handle.join().unwrap_or_default();
+                let stderr = err_handle.join().unwrap_or_default();
+                return Some(std::process::Output { status, stdout, stderr });
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(15));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+/// Queries the XDG Desktop Portal (`org.freedesktop.portal.Settings`) for an
+/// `org.freedesktop.appearance` `u32` setting (`color-scheme` or `reduced-motion`).
+fn read_portal_appearance_u32(key: &str) -> Option<u32> {
+    non_tokio(|| {
+        let conn = zbus::blocking::Connection::session().ok()?;
+        if !dbus_name_has_owner(&conn, "org.freedesktop.portal.Desktop") {
+            return None;
+        }
+        let msg = conn
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.Settings"),
+                "ReadOne",
+                &("org.freedesktop.appearance", key),
+            )
+            .ok()?;
+        let body = msg.body();
+        if let Ok(val) = body.deserialize::<zbus::zvariant::OwnedValue>() {
+            if let Ok(n) = u32::try_from(&val) {
+                return Some(n);
+            }
+            if let zbus::zvariant::Value::Value(inner) = &*val
+                && let Ok(n) = u32::try_from(&**inner)
+            {
+                return Some(n);
+            }
+        }
+        None
+    })
+}
+
 /// Whether the desktop prefers a dark color scheme.
 pub fn system_dark() -> bool {
+    // XDG Desktop Portal `color-scheme`: 1 = prefer dark, 2 = prefer light, 0 = no preference.
+    match read_portal_appearance_u32("color-scheme") {
+        Some(1) => return true,
+        Some(2) => return false,
+        _ => {}
+    }
     let gtk_theme = std::env::var("GTK_THEME").ok();
     let gsettings = Command::new("gsettings")
         .args(["get", "org.gnome.desktop.interface", "color-scheme"])
@@ -182,6 +313,10 @@ pub fn system_dark() -> bool {
 
 /// Whether desktop animations are turned off.
 pub fn reduce_motion() -> bool {
+    // XDG Desktop Portal `reduced-motion`: 1 = reduced motion enabled.
+    if read_portal_appearance_u32("reduced-motion") == Some(1) {
+        return true;
+    }
     if let Ok(output) =
         Command::new("gsettings").args(["get", "org.gnome.desktop.interface", "enable-animations"]).output()
         && output.status.success()
@@ -196,22 +331,30 @@ pub fn reduce_motion() -> bool {
 
 /// Returns the usable desktop work area `(x, y, width, height)` in physical pixels.
 pub fn work_area() -> Option<(i32, i32, i32, i32)> {
-    if let Ok(output) = Command::new("xprop").args(["-root", "_NET_WORKAREA"]).output()
+    let (mut x, mut y, mut w, mut h) = (0, 0, 0, 0);
+    if crate::bridge::native::ffi::linux_work_area(&mut x, &mut y, &mut w, &mut h) && w > 0 && h > 0 {
+        return Some((x, y, w, h));
+    }
+    if crate::bridge::native::ffi::linux_screen_geometry(&mut x, &mut y, &mut w, &mut h) && w > 0 && h > 0 {
+        return Some((x, y, w, h));
+    }
+    if std::env::var_os("DISPLAY").is_some()
+        && let Ok(output) = Command::new("xprop").args(["-root", "_NET_WORKAREA"]).output()
         && output.status.success()
     {
         let text = String::from_utf8_lossy(&output.stdout);
         if let Some((_, rhs)) = text.split_once('=') {
             let nums: Vec<i32> =
                 rhs.split(',').filter_map(|p| p.trim().parse::<i32>().ok()).take(4).collect();
-            if let [x, y, w, h] = nums.as_slice()
-                && *w > 0
-                && *h > 0
+            if let [rx, ry, rw, rh] = nums.as_slice()
+                && *rw > 0
+                && *rh > 0
             {
-                return Some((*x, *y, *w, *h));
+                return Some((*rx, *ry, *rw, *rh));
             }
         }
     }
-    Some((0, 0, 1920, 1080))
+    if cfg!(test) { Some((0, 0, 1920, 1080)) } else { None }
 }
 
 /// Fills `buf` with cryptographically strong random bytes from `/dev/urandom`.

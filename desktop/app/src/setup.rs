@@ -80,6 +80,14 @@ pub fn installed() -> Option<Installed> {
             return Some(Installed { dir, version });
         }
     }
+    if let Some(local_data) = dirs::data_local_dir() {
+        let user_dir = local_data.join("nectarlink-app");
+        let exe = user_dir.join(APP_EXE);
+        if exe.is_file() {
+            let version = read_installed_version(&user_dir, &exe).unwrap_or_default();
+            return Some(Installed { dir: user_dir, version });
+        }
+    }
     for candidate in ["/opt/nectarlink", "/usr/local/bin", "/usr/bin"] {
         let dir = PathBuf::from(candidate);
         let exe = dir.join(APP_EXE);
@@ -234,10 +242,61 @@ pub enum Outcome {
 }
 
 /// Installs from `installer` with administrator rights, reporting each step.
+#[cfg(windows)]
 pub fn install(installer: &Path, on_event: impl FnMut(Event)) -> Outcome {
     let progress = progress_file("install");
     let params = format!("/S /PROGRESS={}", progress.display());
     run_tracked(installer, &params, &progress, Duration::from_secs(600), true, on_event)
+}
+
+#[cfg(target_os = "linux")]
+pub fn install(installer: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
+    let name = installer.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+    if name.ends_with(".deb") {
+        on_event(Event::Step(Step::Closing));
+        on_event(Event::Step(Step::Files));
+        let path_str = installer.to_string_lossy();
+        match crate::win::elevated::run_elevated(
+            Path::new("sh"),
+            &["-e", "-c", "apt-get install -y -- \"$1\" || dpkg -i -- \"$1\"", "sh", &path_str],
+        ) {
+            Ok(0) => {
+                on_event(Event::Step(Step::Shortcuts));
+                on_event(Event::Done);
+                Outcome::Done
+            }
+            Ok(126 | 127) => Outcome::Declined,
+            Ok(code) => Outcome::Failed(tr!("Setup", "Setup stopped with code %1.", code)),
+            Err(e) => Outcome::Failed(tr!("Setup", "Couldn't start setup: %1", e)),
+        }
+    } else if name.ends_with(".tar.gz") {
+        on_event(Event::Step(Step::Closing));
+        on_event(Event::Step(Step::Files));
+        let path_str = installer.to_string_lossy();
+        match crate::win::elevated::run_elevated(
+            Path::new("sh"),
+            &[
+                "-e",
+                "-c",
+                "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && tar -C \"$dir\" -xzf \"$1\" && set -- \"$dir\"/Nectarlink-*/install.sh && [ -x \"$1\" ] && \"$1\"",
+                "sh",
+                &path_str,
+            ],
+        ) {
+            Ok(0) => {
+                on_event(Event::Step(Step::Shortcuts));
+                on_event(Event::Done);
+                Outcome::Done
+            }
+            Ok(126 | 127) => Outcome::Declined,
+            Ok(code) => Outcome::Failed(tr!("Setup", "Setup stopped with code %1.", code)),
+            Err(e) => Outcome::Failed(tr!("Setup", "Couldn't start setup: %1", e)),
+        }
+    } else {
+        let progress = progress_file("install");
+        let params = format!("/S /PROGRESS={}", progress.display());
+        run_tracked(installer, &params, &progress, Duration::from_secs(600), true, on_event)
+    }
 }
 
 /// Removes the copy in `installed` with administrator rights, then this
@@ -272,6 +331,20 @@ pub fn remove(installed: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
     crate::storage::unregister_all();
 
     on_event(Event::Step(Step::Cleanup));
+    if let Some(local_data) = dirs::data_local_dir() {
+        let user_app_dir = local_data.join("nectarlink-app");
+        if installed == user_app_dir {
+            let _ = std::fs::remove_dir_all(&user_app_dir);
+            if let Some(home) = dirs::home_dir() {
+                let _ = std::fs::remove_file(home.join(".local/bin/nectarlink-desktop"));
+            }
+            let _ = std::fs::remove_file(local_data.join("applications/nectarlink.desktop"));
+            let _ = std::fs::remove_file(local_data.join("metainfo/org.nectarlink.desktop.metainfo.xml"));
+            remove_user_data();
+            on_event(Event::Done);
+            return Outcome::Done;
+        }
+    }
     let res = if dpkg_installed_version("nectarlink").is_some()
         || Path::new("/var/lib/dpkg/info/nectarlink.list").is_file()
     {

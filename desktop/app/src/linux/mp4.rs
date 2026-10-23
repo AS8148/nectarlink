@@ -153,17 +153,78 @@ pub fn merge_sps_pps(dest: &mut Vec<u8>, incoming: &[u8]) {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct RecordedFrame {
-    pts_us: u64,
+    pts_100ns: u64,
     keyframe: bool,
-    data: Vec<u8>,
+    size: u32,
+}
+
+fn temp_payload_path_for(mp4_path: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let parent = mp4_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let stem = mp4_path.file_stem().and_then(|s| s.to_str()).unwrap_or("rec");
+    let pid = std::process::id();
+    parent.join(format!(".{stem}.{pid}.{seq}.mdat.tmp"))
+}
+
+fn open_private_temp_file(path: &Path) -> std::io::Result<File> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .mode(0o600)
+            .open(path)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)
+    }
+}
+
+fn annexb_to_avcc_sample(data: &[u8]) -> Vec<u8> {
+    let nals = split_annexb(data);
+    let mut sample_bytes = Vec::with_capacity(data.len());
+    for nal in &nals {
+        if nal.is_empty() || matches!(nal_type(nal), Some(7..=9)) {
+            continue;
+        }
+        let len = nal.len() as u32;
+        sample_bytes.extend_from_slice(&len.to_be_bytes());
+        sample_bytes.extend_from_slice(nal);
+    }
+    if sample_bytes.is_empty() {
+        for nal in &nals {
+            if nal.is_empty() {
+                continue;
+            }
+            let len = nal.len() as u32;
+            sample_bytes.extend_from_slice(&len.to_be_bytes());
+            sample_bytes.extend_from_slice(nal);
+        }
+    }
+    sample_bytes
 }
 
 /// Records a mirrored H.264 stream (and optional PCM audio stream) into an `.mp4` file.
 #[derive(Debug)]
 pub struct MirrorRecorder {
     path: PathBuf,
+    payload_tmp_path: PathBuf,
+    payload_file: Option<File>,
+    payload_bytes: u64,
     width: u32,
     height: u32,
     fps: u32,
@@ -188,8 +249,12 @@ impl MirrorRecorder {
     ) -> MirrorRecorder {
         let started_epoch_ms =
             SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+        let payload_tmp_path = temp_payload_path_for(&path);
         MirrorRecorder {
             path,
+            payload_tmp_path,
+            payload_file: None,
+            payload_bytes: 0,
             width: width.max(1),
             height: height.max(1),
             fps: fps.max(1),
@@ -235,7 +300,28 @@ impl MirrorRecorder {
         }
     }
 
-    /// Processes an incoming Annex-B H.264 access unit.
+    fn write_video_sample(&mut self, pts_100ns: u64, keyframe: bool, data: &[u8]) -> Result<(), String> {
+        let sample_bytes = annexb_to_avcc_sample(data);
+        if sample_bytes.is_empty() {
+            return Ok(());
+        }
+        if self.payload_file.is_none() {
+            let f = open_private_temp_file(&self.payload_tmp_path).map_err(|e| {
+                format!("create temporary MP4 payload {}: {e}", self.payload_tmp_path.display())
+            })?;
+            self.payload_file = Some(f);
+        }
+        if let Some(f) = self.payload_file.as_mut() {
+            f.write_all(&sample_bytes).map_err(|e| format!("write MP4 payload: {e}"))?;
+        }
+        let size = sample_bytes.len() as u32;
+        self.payload_bytes = self.payload_bytes.saturating_add(u64::from(size));
+        self.frames.push(RecordedFrame { pts_100ns, keyframe, size });
+        Ok(())
+    }
+
+    /// Processes an incoming Annex-B H.264 access unit, streaming its AVCC
+    /// payload bytes directly to the temporary `mdat` file on disk.
     pub fn on_packet(&mut self, keyframe: bool, time_us: u64, data: &[u8]) -> Result<(), String> {
         if data.is_empty() {
             return Ok(());
@@ -261,18 +347,9 @@ impl MirrorRecorder {
             rel_us = self.last_pts_us + frame_duration_us;
         }
         self.last_pts_us = rel_us;
+        let pts_100ns = rel_us.saturating_mul(10);
 
-        let payload = if is_keyframe && !has_inband_sps_pps(data) && !self.sps_pps.is_empty() {
-            let mut combined = Vec::with_capacity(self.sps_pps.len() + data.len());
-            combined.extend_from_slice(&self.sps_pps);
-            combined.extend_from_slice(data);
-            combined
-        } else {
-            data.to_vec()
-        };
-
-        self.frames.push(RecordedFrame { pts_us: rel_us, keyframe: is_keyframe, data: payload });
-        Ok(())
+        self.write_video_sample(pts_100ns, is_keyframe, data)
     }
 
     /// Processes an incoming 16-bit interleaved PCM audio packet.
@@ -284,16 +361,32 @@ impl MirrorRecorder {
     }
 
     /// Finalizes the MP4 container and flushes it to disk.
-    pub fn finish(self) -> Result<PathBuf, String> {
-        if self.frames.is_empty() {
+    pub fn finish(mut self) -> Result<PathBuf, String> {
+        if self.frames.is_empty() || self.payload_bytes == 0 {
+            self.payload_file = None;
+            let _ = fs::remove_file(&self.payload_tmp_path);
             let _ = fs::remove_file(&self.path);
             return Err("No video frames were recorded yet.".into());
+        }
+        if let Some(mut f) = self.payload_file.take() {
+            let _ = f.flush();
         }
         if let Some(parent) = self.path.parent() {
             let _ = fs::create_dir_all(parent);
         }
 
-        write_mp4_container(&self.path, self.width, self.height, self.fps, &self.sps_pps, &self.frames)?;
+        let write_res = write_mp4_container(
+            &self.path,
+            &self.payload_tmp_path,
+            self.payload_bytes,
+            self.width,
+            self.height,
+            self.fps,
+            &self.sps_pps,
+            &self.frames,
+        );
+        let _ = fs::remove_file(&self.payload_tmp_path);
+        write_res?;
 
         if !self.audio_pcm.is_empty()
             && let Some((rate, channels)) = self.audio_cfg
@@ -303,7 +396,14 @@ impl MirrorRecorder {
             mux_audio_with_ffmpeg(&self.path, rate, channels, &self.audio_pcm);
         }
 
-        Ok(self.path)
+        Ok(self.path.clone())
+    }
+}
+
+impl Drop for MirrorRecorder {
+    fn drop(&mut self) {
+        self.payload_file = None;
+        let _ = fs::remove_file(&self.payload_tmp_path);
     }
 }
 
@@ -398,8 +498,11 @@ fn mp4_full_box(fourcc: &[u8; 4], version: u8, flags: u32, body: &[u8]) -> Vec<u
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_mp4_container(
     path: &Path,
+    payload_tmp_path: &Path,
+    payload_bytes: u64,
     width: u32,
     height: u32,
     fps: u32,
@@ -407,37 +510,16 @@ fn write_mp4_container(
     frames: &[RecordedFrame],
 ) -> Result<(), String> {
     let default_delta = (TIMESCALE / fps.max(1)).max(1);
-    let mut mdat_payload = Vec::new();
     let mut sample_sizes = Vec::with_capacity(frames.len());
     let mut sample_deltas = Vec::with_capacity(frames.len());
     let mut sync_samples = Vec::new();
 
     for (idx, frame) in frames.iter().enumerate() {
-        let mut sample_bytes = Vec::new();
-        for nal in split_annexb(&frame.data) {
-            if nal.is_empty() || matches!(nal_type(nal), Some(7..=9)) {
-                continue;
-            }
-            let len = nal.len() as u32;
-            sample_bytes.extend_from_slice(&len.to_be_bytes());
-            sample_bytes.extend_from_slice(nal);
-        }
-        if sample_bytes.is_empty() {
-            for nal in split_annexb(&frame.data) {
-                if nal.is_empty() {
-                    continue;
-                }
-                let len = nal.len() as u32;
-                sample_bytes.extend_from_slice(&len.to_be_bytes());
-                sample_bytes.extend_from_slice(nal);
-            }
-        }
-        mdat_payload.extend_from_slice(&sample_bytes);
-        sample_sizes.push(sample_bytes.len() as u32);
+        sample_sizes.push(frame.size);
 
         let delta = if let Some(next) = frames.get(idx + 1) {
-            let diff_us = next.pts_us.saturating_sub(frame.pts_us);
-            ((diff_us * u64::from(TIMESCALE)) / 1_000_000).max(1) as u32
+            let diff_100ns = next.pts_100ns.saturating_sub(frame.pts_100ns);
+            ((diff_100ns * u64::from(TIMESCALE)) / 10_000_000).max(1) as u32
         } else {
             default_delta
         };
@@ -452,7 +534,7 @@ fn write_mp4_container(
         sync_samples.push(1);
     }
 
-    let (sps, pps) = extract_sps_and_pps_vecs(sps_pps, frames);
+    let (sps, pps) = extract_sps_and_pps_vecs(sps_pps);
     let ftyp = build_ftyp();
     let dummy_moov = build_moov(
         width.max(1) as u16,
@@ -464,7 +546,9 @@ fn write_mp4_container(
         &sample_sizes,
         0,
     );
-    let chunk_offset = (ftyp.len() + dummy_moov.len() + 8) as u32;
+    let use_large_mdat = payload_bytes + 8 > u64::from(u32::MAX);
+    let mdat_header_len = if use_large_mdat { 16 } else { 8 };
+    let chunk_offset = (ftyp.len() + dummy_moov.len() + mdat_header_len) as u32;
     let moov = build_moov(
         width.max(1) as u16,
         height.max(1) as u16,
@@ -475,17 +559,27 @@ fn write_mp4_container(
         &sample_sizes,
         chunk_offset,
     );
-    let mdat = mp4_box(b"mdat", &mdat_payload);
 
+    let mut payload_reader = File::open(payload_tmp_path)
+        .map_err(|e| format!("open temporary MP4 payload {}: {e}", payload_tmp_path.display()))?;
     let mut file = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
     file.write_all(&ftyp).map_err(|e| e.to_string())?;
     file.write_all(&moov).map_err(|e| e.to_string())?;
-    file.write_all(&mdat).map_err(|e| e.to_string())?;
+    if use_large_mdat {
+        file.write_all(&1u32.to_be_bytes()).map_err(|e| e.to_string())?;
+        file.write_all(b"mdat").map_err(|e| e.to_string())?;
+        file.write_all(&(payload_bytes + 16).to_be_bytes()).map_err(|e| e.to_string())?;
+    } else {
+        let total = (payload_bytes as u32).saturating_add(8);
+        file.write_all(&total.to_be_bytes()).map_err(|e| e.to_string())?;
+        file.write_all(b"mdat").map_err(|e| e.to_string())?;
+    }
+    std::io::copy(&mut payload_reader, &mut file).map_err(|e| e.to_string())?;
     file.flush().map_err(|e| e.to_string())?;
     Ok(())
 }
 
-fn extract_sps_and_pps_vecs(sps_pps: &[u8], frames: &[RecordedFrame]) -> (Vec<u8>, Vec<u8>) {
+fn extract_sps_and_pps_vecs(sps_pps: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let mut sps = None;
     let mut pps = None;
     for nal in split_annexb(sps_pps) {
@@ -493,20 +587,6 @@ fn extract_sps_and_pps_vecs(sps_pps: &[u8], frames: &[RecordedFrame]) -> (Vec<u8
             Some(7) => sps = Some(nal.to_vec()),
             Some(8) => pps = Some(nal.to_vec()),
             _ => {}
-        }
-    }
-    if sps.is_none() || pps.is_none() {
-        for frame in frames {
-            for nal in split_annexb(&frame.data) {
-                match nal_type(nal) {
-                    Some(7) if sps.is_none() => sps = Some(nal.to_vec()),
-                    Some(8) if pps.is_none() => pps = Some(nal.to_vec()),
-                    _ => {}
-                }
-            }
-            if sps.is_some() && pps.is_some() {
-                break;
-            }
         }
     }
     let sps = sps.unwrap_or_else(|| vec![0x67, 0x42, 0xC0, 0x1F, 0xDA, 0x01, 0x40, 0x16, 0xEC, 0x04, 0x40]);

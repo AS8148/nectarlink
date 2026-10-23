@@ -7,8 +7,9 @@ change things that need a step from you, and its notes say so.
 ## 0.1.5 (2026-10-23)
 
 Play on phone, the phone as a microphone, photo backup, pairing a phone
-with a tablet, German and a language setting on both apps, and the first
-Windows installer for ARM64 PCs. The PC app also builds on macOS, as a preview.
+with a tablet, German and a language setting on both apps, the PC app on
+Linux, and the first Windows installer for ARM64 PCs. The PC app also
+builds on macOS, as a preview.
 
 ### Downloads
 
@@ -16,13 +17,29 @@ Windows installer for ARM64 PCs. The PC app also builds on macOS, as a preview.
 |---|---|---|
 | [Nectarlink-0.1.5-x64-setup.exe](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-x64-setup.exe) | Windows on Intel or AMD | Windows 11, 64-bit (Windows 10 works, without Phone as webcam) |
 | [Nectarlink-0.1.5-arm64-setup.exe](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-arm64-setup.exe) | Windows on ARM | Windows 11 on ARM (Snapdragon) |
+| [nectarlink_0.1.5_amd64.deb](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/nectarlink_0.1.5_amd64.deb) | Debian and Ubuntu (x86_64) | Ubuntu 24.04+, Debian 12+, Linux Mint, Pop!_OS |
+| [Nectarlink-0.1.5-x86_64.AppImage](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-x86_64.AppImage) | Linux AppImage (x86_64) | Any 64-bit Linux desktop with FUSE |
+| [Nectarlink-0.1.5-linux-x86_64.tar.gz](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-linux-x86_64.tar.gz) | Linux portable archive (x86_64) | Any 64-bit Linux desktop |
 | [Nectarlink-0.1.5-android.apk](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-android.apk) | Android | Android 8.0 or newer |
 
-All three are listed with their SHA-256 hashes in [SHA256SUMS.txt](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/SHA256SUMS.txt).
+All are listed with their SHA-256 hashes in [SHA256SUMS.txt](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/SHA256SUMS.txt).
 Installed copies update themselves.
 
 ### New
 
+- **The PC app on Linux.** NectarLink runs on Linux desktops (Wayland
+  and X11) with pairing, files and folders, on-demand FUSE3 phone storage
+  in your file manager (`~/Nectarlink/<phone>`), Send to menus in
+  Nautilus, Dolphin, Nemo and Thunar, clipboard text, HTML, images and
+  files (respecting password manager privacy hints), freedesktop
+  notifications with inline replies and actions, MPRIS media controls,
+  screen mirroring and app streaming (FFmpeg or OpenH264 decoding and
+  MP4 recording), PC screen sharing, PipeWire and PulseAudio sound,
+  Phone as webcam (`v4l2loopback`), Phone as microphone, Bluetooth
+  Hands-Free call audio, remote input (`/dev/uinput`, Wayland RemoteDesktop
+  portal, and XTest), global shortcuts, Connection Doctor (`ufw` and
+  `firewalld`), and self-updating `.deb`, AppImage and `.tar.gz` packages.
+  Thanks to Jochen Kirstätter for the Linux port.
 - **A Windows installer for ARM64 PCs**, so Snapdragon PCs run NectarLink
   natively instead of through emulation. Both installers update
   themselves to their own kind. Thanks to

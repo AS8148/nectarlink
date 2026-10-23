@@ -93,6 +93,7 @@ bundle_qt_runtime() {
     for pattern in \
         "libQt6Core.so*" \
         "libQt6Gui.so*" \
+        "libQt6Widgets.so*" \
         "libQt6Qml*.so*" \
         "libQt6Quick*.so*" \
         "libQt6Network.so*" \
@@ -154,6 +155,7 @@ cat > "${APPDIR}/AppRun" <<'EOF'
 #!/usr/bin/env sh
 HERE="$(dirname "$(readlink -f "$0")")"
 export PATH="${HERE}/usr/bin:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export QT_PLUGIN_PATH="${HERE}/usr/plugins${QT_PLUGIN_PATH:+:${QT_PLUGIN_PATH}}"
 export QML2_IMPORT_PATH="${HERE}/usr/qml${QML2_IMPORT_PATH:+:${QML2_IMPORT_PATH}}"
 exec "${HERE}/usr/bin/nectarlink-desktop" "$@"

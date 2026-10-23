@@ -36,11 +36,57 @@ pub fn state_snapshot_path(data_dir: &Path) -> PathBuf {
     data_dir.join("widget-state.json")
 }
 
-/// Writes `state` to `<data_dir>/widget-state.json`.
+/// Writes `state` atomically to `<data_dir>/widget-state.json` with `O_NOFOLLOW` and `0o600` permissions.
 pub fn write_snapshot_file(data_dir: &Path, state: &WidgetState) -> io::Result<()> {
+    fs::create_dir_all(data_dir)?;
     let path = state_snapshot_path(data_dir);
     let json = serde_json::to_vec_pretty(state).map_err(io::Error::other)?;
-    fs::write(path, json)
+
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        if let Ok(meta) = fs::symlink_metadata(&path)
+            && meta.file_type().is_symlink()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "refusing to overwrite symlink widget-state.json",
+            ));
+        }
+
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let tmp_path = data_dir.join(format!(".widget-state.json.tmp.{}.{seq}", std::process::id()));
+        let write_res = (|| -> io::Result<()> {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .mode(0o600)
+                .open(&tmp_path)?;
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            file.write_all(&json)?;
+            file.sync_all()?;
+            Ok(())
+        })();
+        if let Err(e) = write_res {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+        if let Err(e) = fs::rename(&tmp_path, &path) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, json)
+    }
 }
 
 /// Reads `<data_dir>/widget-state.json`, or returns [`WidgetState::default`] if missing/corrupt.
@@ -151,34 +197,54 @@ pub fn render_adaptive_card(state: &WidgetState) -> String {
         "actions": [
             {
                 "type": "Action.Execute",
-                "title": "Send File",
-                "verb": "send_file"
+                "title": "Send Clipboard",
+                "verb": "send-clipboard"
             },
             {
                 "type": "Action.Execute",
                 "title": "Find My Phone",
-                "verb": "find_phone"
+                "verb": "find-phone"
             },
             {
                 "type": "Action.Execute",
-                "title": "Mirror Screen",
-                "verb": "mirror_screen"
+                "title": "Take Photo",
+                "verb": "take-photo"
+            },
+            {
+                "type": "Action.Execute",
+                "title": "Open Timeline",
+                "verb": "open-timeline"
+            },
+            {
+                "type": "Action.Execute",
+                "title": "Open Shelf",
+                "verb": "open-shelf"
             }
         ]
     });
     card.to_string()
 }
 
-/// Dispatches an Adaptive Card `Action.Execute` verb (`"send_file"`, `"find_phone"`, `"mirror_screen"`, `"open"`)
-/// to the running NectarLink instance (or launches NectarLink with `--task <verb>` if not running).
+/// Normalizes a widget `Action.Execute` verb into the canonical task action
+/// recognized by `send_to::handle` / `bridge::app::handle_jump_task`.
+pub(crate) fn normalize_action_verb(verb: &str) -> Result<&'static str, String> {
+    match verb.trim() {
+        "send-clipboard" | "send_clipboard" => Ok("send-clipboard"),
+        "find-phone" | "find_phone" => Ok("find-phone"),
+        "take-photo" | "take_photo" => Ok("take-photo"),
+        "open-timeline" | "open_timeline" => Ok("open-timeline"),
+        "open-shelf" | "open_shelf" | "shelf" => Ok("open-shelf"),
+        "send-files" | "send-file" | "send_file" => Ok("send-files"),
+        "open" | "" => Ok("open"),
+        other => Err(format!("unknown widget action verb: {other}")),
+    }
+}
+
+/// Dispatches an Adaptive Card `Action.Execute` verb (`"send-clipboard"`, `"find-phone"`,
+/// `"take-photo"`, `"open-timeline"`, `"open-shelf"`, `"open"`) to the running NectarLink
+/// instance (or launches NectarLink with `--task <verb>` if not running).
 pub fn handle_action_verb(verb: &str, data_dir: Option<&Path>) -> Result<(), String> {
-    let action = match verb.trim() {
-        "send_file" => "send_file",
-        "find_phone" => "find_phone",
-        "mirror_screen" => "mirror_screen",
-        "open" | "" => "open",
-        other => return Err(format!("unknown widget action verb: {other}")),
-    };
+    let action = normalize_action_verb(verb)?;
 
     if let Some(dir) = data_dir {
         let req = if action == "open" { Request::Show } else { Request::Task { action: action.to_owned() } };
@@ -241,7 +307,12 @@ mod tests {
         assert_eq!(empty_json["type"], "AdaptiveCard");
         assert_eq!(empty_json["version"], "1.5");
         assert_eq!(empty_json["body"][0]["text"], "No phone paired");
-        assert_eq!(empty_json["actions"].as_array().unwrap().len(), 3);
+        let actions = empty_json["actions"].as_array().unwrap();
+        let verbs: Vec<&str> = actions.iter().filter_map(|a| a["verb"].as_str()).collect();
+        assert_eq!(verbs, vec!["send-clipboard", "find-phone", "take-photo", "open-timeline", "open-shelf"]);
+        for v in &verbs {
+            assert_eq!(normalize_action_verb(v).unwrap(), *v);
+        }
 
         let connected = WidgetState {
             connected: true,
@@ -270,5 +341,12 @@ mod tests {
         write_snapshot_file(dir.path(), &state).unwrap();
         let loaded = read_snapshot_file(dir.path());
         assert_eq!(loaded, state);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(state_snapshot_path(dir.path())).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
     }
 }

@@ -118,29 +118,13 @@ pub fn current_recording_stem() -> String {
 
 #[cfg(not(windows))]
 pub fn current_recording_stem() -> String {
-    #[repr(C)]
-    struct Tm {
-        tm_sec: i32,
-        tm_min: i32,
-        tm_hour: i32,
-        tm_mday: i32,
-        tm_mon: i32,
-        tm_year: i32,
-        tm_wday: i32,
-        tm_yday: i32,
-        tm_isdst: i32,
-        tm_gmtoff: i64,
-        tm_zone: *const std::ffi::c_char,
-    }
-    unsafe extern "C" {
-        fn time(tloc: *mut i64) -> i64;
-        fn localtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
-    }
+    // SAFETY: `libc::time` and `libc::localtime_r` are thread-safe POSIX calls
+    // operating on stack-allocated `time_t` and `tm` values.
     unsafe {
-        let mut t: i64 = 0;
-        time(&mut t);
-        let mut tm = std::mem::zeroed::<Tm>();
-        localtime_r(&t, &mut tm);
+        let mut t: libc::time_t = 0;
+        libc::time(&mut t);
+        let mut tm = std::mem::zeroed::<libc::tm>();
+        libc::localtime_r(&t, &mut tm);
         format_recording_stem(
             (tm.tm_year + 1900) as u16,
             (tm.tm_mon + 1) as u16,
@@ -282,8 +266,40 @@ fn move_file(src: &Path, dest: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Builds `gst-launch-1.0` arguments to transcode `src` into `dest` in `format`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn gstreamer_transcode_args(src: &Path, dest: &Path, format: RecordingFormat) -> Vec<String> {
+    let mut args = vec![
+        "-q".to_owned(),
+        "filesrc".to_owned(),
+        format!("location={}", src.to_string_lossy()),
+        "!".to_owned(),
+        "decodebin".to_owned(),
+        "!".to_owned(),
+        "audioconvert".to_owned(),
+        "!".to_owned(),
+        "audioresample".to_owned(),
+        "!".to_owned(),
+    ];
+    match format {
+        RecordingFormat::Wav | RecordingFormat::M4a => {
+            args.push("wavenc".to_owned());
+        }
+        RecordingFormat::Flac => {
+            args.push("flacenc".to_owned());
+        }
+        RecordingFormat::Mp3 => {
+            args.push("lamemp3enc".to_owned());
+        }
+    }
+    args.push("!".to_owned());
+    args.push("filesink".to_owned());
+    args.push(format!("location={}", dest.to_string_lossy()));
+    args
+}
+
 /// Converts `src` (`.m4a`) to `dest` in `format` (`Mp3`, `Wav`, or `Flac`)
-/// using `ffmpeg` on Linux.
+/// using `ffmpeg` (with a `gst-launch-1.0` fallback) on Linux.
 #[cfg(target_os = "linux")]
 pub fn convert_audio(src: &Path, dest: &Path, format: RecordingFormat) -> std::io::Result<()> {
     match format {
@@ -302,7 +318,7 @@ pub fn convert_audio(src: &Path, dest: &Path, format: RecordingFormat) -> std::i
             } else {
                 dest.to_path_buf()
             };
-            let status = std::process::Command::new("ffmpeg")
+            let ffmpeg_ok = std::process::Command::new("ffmpeg")
                 .args(["-v", "error", "-y", "-i"])
                 .arg(&safe_src)
                 .arg("--")
@@ -310,11 +326,25 @@ pub fn convert_audio(src: &Path, dest: &Path, format: RecordingFormat) -> std::i
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if ffmpeg_ok && safe_dest.exists() && fs::metadata(&safe_dest).is_ok_and(|m| m.len() > 0) {
+                return Ok(());
+            }
+
+            let gst_args = gstreamer_transcode_args(&safe_src, &safe_dest, format);
+            let status = std::process::Command::new("gst-launch-1.0")
+                .args(&gst_args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .status()?;
             if status.success() {
                 Ok(())
             } else {
-                Err(std::io::Error::other(format!("ffmpeg exited with {status}")))
+                Err(std::io::Error::other(format!(
+                    "audio transcoding failed (gst-launch-1.0 exited with {status})"
+                )))
             }
         }
     }
@@ -844,6 +874,18 @@ mod tests {
         ];
         let text = format_markers(&markers);
         assert_eq!(text, "00:01.250  Intro\n01:05.000  Marker 2\n01:01:01.005  Wrap-up\n");
+
+        let stem = current_recording_stem();
+        assert!(stem.starts_with("Recording "));
+        assert_eq!(stem_from_phone(&format!("{stem}.m4a")).as_deref(), Some(stem.as_str()));
+
+        let gst_mp3 = gstreamer_transcode_args(
+            Path::new("/tmp/in.m4a"),
+            Path::new("/tmp/out.mp3"),
+            RecordingFormat::Mp3,
+        );
+        assert!(gst_mp3.iter().any(|a| a == "lamemp3enc"));
+        assert_eq!(gst_mp3.last().map(String::as_str), Some("location=/tmp/out.mp3"));
     }
 
     #[cfg(any(windows, target_os = "linux"))]

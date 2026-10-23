@@ -83,7 +83,7 @@ Item {
         if (event.modifiers & Qt.ControlModifier) mods.push("Ctrl")
         if (event.modifiers & Qt.AltModifier) mods.push("Alt")
         if (event.modifiers & Qt.ShiftModifier) mods.push("Shift")
-        if (event.modifiers & Qt.MetaModifier) mods.push("Win")
+        if (event.modifiers & Qt.MetaModifier) mods.push(Qt.platform.os === "linux" ? "Super" : "Win")
         if (mods.length === 0)
             return ""
         let keyName = ""
@@ -167,7 +167,7 @@ Item {
         mirroring: qsTr("Screen mirroring"),
         pc_mirror: qsTr("Share PC screen to phone"),
         webcam: qsTr("Webcam"),
-        storage: qsTr("File Explorer integration"),
+        storage: Qt.platform.os === "linux" ? qsTr("File manager integration") : qsTr("File Explorer integration"),
         remote_input: qsTr("Remote mouse, keyboard & Deck"),
         commands: qsTr("Run Deck shell commands"),
         remote_files: qsTr("Remote PC file access")
@@ -800,7 +800,9 @@ Item {
                             iconPath: Icons.sparkle
                             title: qsTr("Animated comb")
                             description: AppController.reduceMotion
-                                ? qsTr("Still while animations are off in Windows.")
+                                ? (Qt.platform.os === "linux"
+                                    ? qsTr("Still while animations are off in system settings.")
+                                    : qsTr("Still while animations are off in Windows."))
                                 : (AppController.powerSaver
                                     ? qsTr("Still while energy saver is on.")
                                     : qsTr("The honeycomb breathes and pulses."))
@@ -814,16 +816,19 @@ Item {
                         // Side-by-side when Graphite Dark shows Pure Black + Mica backdrop
                         Item {
                             id: appearanceBottomPair
-                            visible: !Theme.hive
-                            width: parent.width
                             readonly property bool showGraphiteAmoled: Theme.graphite && Theme.dark
-                            readonly property bool splitCols: showGraphiteAmoled && width >= 460
+                            readonly property bool showMica: Qt.platform.os === "windows"
+                            visible: !Theme.hive && (showMica || showGraphiteAmoled)
+                            width: parent.width
+                            readonly property bool splitCols: showGraphiteAmoled && showMica && width >= 460
                             readonly property real colWidth: splitCols ? Math.floor((width - 37) / 2) : width
                             implicitHeight: !showGraphiteAmoled
-                                ? micaRow.implicitHeight
-                                : (splitCols
-                                    ? Math.max(graphiteAmoledRow.implicitHeight, micaRow.implicitHeight)
-                                    : (graphiteAmoledRow.implicitHeight + 1 + micaRow.implicitHeight))
+                                ? (showMica ? micaRow.implicitHeight : 0)
+                                : (!showMica
+                                    ? graphiteAmoledRow.implicitHeight
+                                    : (splitCols
+                                        ? Math.max(graphiteAmoledRow.implicitHeight, micaRow.implicitHeight)
+                                        : (graphiteAmoledRow.implicitHeight + 1 + micaRow.implicitHeight)))
 
                             ListRow {
                                 id: graphiteAmoledRow
@@ -851,13 +856,14 @@ Item {
                             }
 
                             Divider {
-                                visible: appearanceBottomPair.showGraphiteAmoled && !appearanceBottomPair.splitCols
+                                visible: appearanceBottomPair.showGraphiteAmoled && appearanceBottomPair.showMica && !appearanceBottomPair.splitCols
                                 y: graphiteAmoledRow.implicitHeight
                                 width: parent.width
                             }
 
                             ListRow {
                                 id: micaRow
+                                visible: appearanceBottomPair.showMica
                                 x: appearanceBottomPair.splitCols ? (parent.width - width) : 0
                                 y: !appearanceBottomPair.showGraphiteAmoled
                                     ? 0
@@ -898,7 +904,9 @@ Item {
                             width: parent.width
                             iconPath: Icons.globe
                             title: qsTr("Language")
-                            description: qsTr("NectarLink follows Windows unless you pick one.")
+                            description: Qt.platform.os === "linux"
+                                ? qsTr("NectarLink follows system language unless you pick one.")
+                                : qsTr("NectarLink follows Windows unless you pick one.")
                             Segmented {
                                 readonly property var other: page.languages.find(
                                     (l) => l.code === Preferences.language && l.code !== "en")
@@ -936,10 +944,10 @@ Item {
                                 y: startupPairRow.splitCols ? Math.round((parent.height - height) / 2) : 0
                                 width: startupPairRow.colWidth
                                 iconPath: Icons.power
-                                title: qsTr("Start with Windows")
+                                title: Qt.platform.os === "linux" ? qsTr("Start at login") : qsTr("Start with Windows")
                                 description: qsTr("Launch in the tray when you sign in.")
                                 Toggle {
-                                    label: qsTr("Start with Windows")
+                                    label: Qt.platform.os === "linux" ? qsTr("Start at login") : qsTr("Start with Windows")
                                     checked: Preferences.startWithWindows
                                     onToggled: (on) => Preferences.startWithWindows = on
                                 }
@@ -1390,7 +1398,9 @@ Item {
                                 title: qsTr("Join this phone's hotspot")
                                 description: hotspotRow.network.length > 0
                                     ? qsTr("When Instant Hotspot turns it on, this PC joins %1.").arg(hotspotRow.network)
-                                    : qsTr("Join the phone's hotspot once from Windows' Wi-Fi list, then choose it here.")
+                                    : (Qt.platform.os === "linux"
+                                        ? qsTr("Join the phone's hotspot once from your system Wi-Fi list, then choose it here.")
+                                        : qsTr("Join the phone's hotspot once from Windows' Wi-Fi list, then choose it here."))
                                 Button {
                                     variant: "tonal"
                                     size: "sm"
@@ -1960,9 +1970,10 @@ Item {
                             }
                         }
 
-                        Divider { width: parent.width }
+                        Divider { width: parent.width; visible: Qt.platform.os === "windows" }
                         ListRow {
                             width: parent.width
+                            visible: Qt.platform.os === "windows"
                             iconPath: Icons.moon
                             title: qsTr("Quiet hours")
                             description: qsTr("Configure automatic DND schedule in Windows.")
@@ -2056,10 +2067,10 @@ Item {
                                 y: filesSharePairRow.splitCols ? Math.round((parent.height - height) / 2) : 0
                                 width: filesSharePairRow.colWidth
                                 iconPath: Icons.send
-                                title: qsTr("File Explorer Send to")
+                                title: Qt.platform.os === "linux" ? qsTr("File manager Send to") : qsTr("File Explorer Send to")
                                 description: qsTr("Send files from right-click menu.")
                                 Toggle {
-                                    label: qsTr("File Explorer Send to")
+                                    label: Qt.platform.os === "linux" ? qsTr("File manager Send to") : qsTr("File Explorer Send to")
                                     checked: Preferences.sendToMenu
                                     onToggled: (on) => Preferences.sendToMenu = on
                                 }

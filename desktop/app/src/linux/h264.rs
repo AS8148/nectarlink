@@ -52,15 +52,6 @@ struct AvCodecApi {
 struct OpenH264Api {
     create_decoder: unsafe extern "C" fn(*mut *mut c_void) -> c_int,
     destroy_decoder: unsafe extern "C" fn(*mut c_void),
-    initialize: unsafe extern "C" fn(*mut c_void, *const u8) -> c_int,
-    uninitialize: unsafe extern "C" fn(*mut c_void) -> c_int,
-    decode_frame_no_delay: unsafe extern "C" fn(
-        *mut c_void,
-        *const c_uchar,
-        c_int,
-        *mut *mut c_uchar,
-        *mut OpenH264BufferInfo,
-    ) -> c_int,
 }
 
 #[repr(C)]
@@ -92,7 +83,8 @@ unsafe fn load_sym<T: Copy>(lib: *mut c_void, name: &CStr) -> Option<T> {
 fn avcodec_api() -> Option<&'static AvCodecApi> {
     static API: OnceLock<Option<AvCodecApi>> = OnceLock::new();
     API.get_or_init(|| unsafe {
-        let avutil_candidates = [c"libavutil.so.58", c"libavutil.so.59", c"libavutil.so.57", c"libavutil.so"];
+        let avutil_candidates =
+            [c"libavutil.so.60", c"libavutil.so.59", c"libavutil.so.58", c"libavutil.so.57", c"libavutil.so"];
         let mut avutil = ptr::null_mut();
         for name in avutil_candidates {
             avutil = libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL);
@@ -104,8 +96,13 @@ fn avcodec_api() -> Option<&'static AvCodecApi> {
             return None;
         }
 
-        let avcodec_candidates =
-            [c"libavcodec.so.60", c"libavcodec.so.61", c"libavcodec.so.59", c"libavcodec.so"];
+        let avcodec_candidates = [
+            c"libavcodec.so.62",
+            c"libavcodec.so.61",
+            c"libavcodec.so.60",
+            c"libavcodec.so.59",
+            c"libavcodec.so",
+        ];
         let mut avcodec = ptr::null_mut();
         for name in avcodec_candidates {
             avcodec = libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
@@ -122,7 +119,7 @@ fn avcodec_api() -> Option<&'static AvCodecApi> {
             load_sym(avcodec, c"avcodec_version")?;
         let avutil_major = avutil_version() >> 16;
         let avcodec_major = avcodec_version() >> 16;
-        if !(56..=59).contains(&avutil_major) || !(58..=61).contains(&avcodec_major) {
+        if !(56..=60).contains(&avutil_major) || !(58..=62).contains(&avcodec_major) {
             tracing::warn!(
                 avcodec_major,
                 avutil_major,
@@ -155,7 +152,7 @@ fn avcodec_api() -> Option<&'static AvCodecApi> {
 fn openh264_api() -> Option<&'static OpenH264Api> {
     static API: OnceLock<Option<OpenH264Api>> = OnceLock::new();
     API.get_or_init(|| unsafe {
-        let candidates = [c"libopenh264.so.7", c"libopenh264.so.6", c"libopenh264.so"];
+        let candidates = [c"libopenh264.so.8", c"libopenh264.so.7", c"libopenh264.so.6", c"libopenh264.so"];
         let mut lib = ptr::null_mut();
         for name in candidates {
             lib = libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
@@ -179,12 +176,6 @@ fn openh264_api() -> Option<&'static OpenH264Api> {
         Some(OpenH264Api {
             create_decoder: load_sym(lib, c"WelsCreateDecoder")?,
             destroy_decoder: load_sym(lib, c"WelsDestroyDecoder")?,
-            initialize: load_sym(lib, c"_ZN7WelsDec12CWelsDecoder10InitializeEPK19TagSVCDecodingParam")?,
-            uninitialize: load_sym(lib, c"_ZN7WelsDec12CWelsDecoder12UninitializeEv")?,
-            decode_frame_no_delay: load_sym(
-                lib,
-                c"_ZN7WelsDec12CWelsDecoder18DecodeFrameNoDelayEPKhiPPhP13TagBufferInfo",
-            )?,
         })
     })
     .as_ref()
@@ -230,7 +221,10 @@ impl Drop for Backend {
                     && !dec.is_null()
                 {
                     unsafe {
-                        let _ = (api.uninitialize)(*dec);
+                        let vtable = *(*dec as *const *const usize);
+                        let uninitialize: unsafe extern "C" fn(*mut c_void) -> c_int =
+                            std::mem::transmute(*vtable.add(1));
+                        let _ = uninitialize(*dec);
                         (api.destroy_decoder)(*dec);
                     }
                 }
@@ -289,8 +283,11 @@ impl Decoder {
             if (api.create_decoder)(&mut dec) != 0 || dec.is_null() {
                 return None;
             }
+            let vtable = *(dec as *const *const usize);
+            let initialize: unsafe extern "C" fn(*mut c_void, *const u8) -> c_int =
+                std::mem::transmute(*vtable.add(0));
             let param = [0u8; 64];
-            if (api.initialize)(dec, param.as_ptr()) != 0 {
+            if initialize(dec, param.as_ptr()) != 0 {
                 (api.destroy_decoder)(dec);
                 return None;
             }
@@ -365,22 +362,26 @@ impl Decoder {
     }
 
     fn decode_openh264(dec: *mut c_void, data: &[u8], stream_colors: Option<Colors>) -> Result<Vec<Picture>> {
-        let api = openh264_api().ok_or_else(|| Error::new(ErrorKind::Unsupported, "OpenH264 unavailable"))?;
+        let _api =
+            openh264_api().ok_or_else(|| Error::new(ErrorKind::Unsupported, "OpenH264 unavailable"))?;
         let mut pictures = Vec::new();
         // OpenH264's DecodeFrameNoDelay processes one NAL or a full access unit; feeding each
         // Annex-B NAL unit in order guarantees SPS, PPS, SEI, and IDR/slice NALs in a single
         // packet are all consumed cleanly.
         for nal in split_annexb_nals(data) {
             unsafe {
+                let vtable = *(dec as *const *const usize);
+                let decode_frame_no_delay: unsafe extern "C" fn(
+                    *mut c_void,
+                    *const c_uchar,
+                    c_int,
+                    *mut *mut c_uchar,
+                    *mut OpenH264BufferInfo,
+                ) -> c_int = std::mem::transmute(*vtable.add(3));
                 let mut dst: [*mut c_uchar; 3] = [ptr::null_mut(); 3];
                 let mut info: OpenH264BufferInfo = std::mem::zeroed();
-                let rc = (api.decode_frame_no_delay)(
-                    dec,
-                    nal.as_ptr(),
-                    nal.len() as c_int,
-                    dst.as_mut_ptr(),
-                    &mut info,
-                );
+                let rc =
+                    decode_frame_no_delay(dec, nal.as_ptr(), nal.len() as c_int, dst.as_mut_ptr(), &mut info);
                 if rc != 0 {
                     return Err(Error::new(
                         ErrorKind::InvalidData,
@@ -468,13 +469,16 @@ impl Decoder {
                 }
             }
             Backend::OpenH264 { dec } => {
-                if let Some(api) = openh264_api()
-                    && !dec.is_null()
-                {
+                if openh264_api().is_some() && !dec.is_null() {
                     unsafe {
-                        let _ = (api.uninitialize)(*dec);
+                        let vtable = *(*dec as *const *const usize);
+                        let initialize: unsafe extern "C" fn(*mut c_void, *const u8) -> c_int =
+                            std::mem::transmute(*vtable.add(0));
+                        let uninitialize: unsafe extern "C" fn(*mut c_void) -> c_int =
+                            std::mem::transmute(*vtable.add(1));
+                        let _ = uninitialize(*dec);
                         let param = [0u8; 64];
-                        let _ = (api.initialize)(*dec, param.as_ptr());
+                        let _ = initialize(*dec, param.as_ptr());
                     }
                 }
             }

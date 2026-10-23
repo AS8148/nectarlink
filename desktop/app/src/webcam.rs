@@ -382,7 +382,11 @@ fn mapping() -> Option<Arc<SharedFrameMapping>> {
         let due = s.global_tried.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(1));
         if !s.mapping_global && due {
             s.global_tried = Some(std::time::Instant::now());
-            if let Ok(global) = SharedFrameMapping::open_existing(DEFAULT_MAPPING_NAME) {
+            #[cfg(windows)]
+            let global_res = SharedFrameMapping::open_existing(DEFAULT_MAPPING_NAME);
+            #[cfg(not(windows))]
+            let global_res = SharedFrameMapping::open_or_create(DEFAULT_MAPPING_NAME);
+            if let Ok(global) = global_res {
                 tracing::debug!("joined the virtual camera's frame mapping");
                 s.mapping = Some(Arc::new(global));
                 s.mapping_global = true;
@@ -402,7 +406,11 @@ fn idle_mapping() -> Option<Arc<SharedFrameMapping>> {
         let due = s.global_tried.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(1));
         if !s.mapping_global && due {
             s.global_tried = Some(std::time::Instant::now());
-            if let Ok(global) = SharedFrameMapping::open_existing(DEFAULT_MAPPING_NAME) {
+            #[cfg(windows)]
+            let global_res = SharedFrameMapping::open_existing(DEFAULT_MAPPING_NAME);
+            #[cfg(not(windows))]
+            let global_res = SharedFrameMapping::open_or_create(DEFAULT_MAPPING_NAME);
+            if let Ok(global) = global_res {
                 tracing::debug!("joined the virtual camera's frame mapping");
                 s.mapping = Some(Arc::new(global));
                 s.mapping_global = true;

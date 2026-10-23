@@ -52,80 +52,90 @@ Sheet {
                     : qsTr("Issues blocking your phone from reaching this PC:")
         }
 
-        Column {
+        Flickable {
             width: parent.width
-            spacing: 2
-            opacity: AppController.doctorBusy ? 0.55 : 1
-            Behavior on opacity { NumberAnimation { duration: Theme.fadeNormal } }
-            Repeater {
-                model: sheet.checks
-                delegate: Rectangle {
-                    id: row
-                    required property var modelData
-                    readonly property bool hasFix: row.modelData.fix !== undefined && row.modelData.fix !== ""
-                    width: parent.width
-                    height: Math.max(badge.height, words.height, actionsRow.height) + 20
-                    radius: Theme.radiusMd
-                    color: "transparent"
+            height: Math.min(checksColumn.height, 360)
+            contentWidth: width
+            contentHeight: checksColumn.height
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
 
-                    Rectangle {
-                        id: badge
-                        x: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 28; height: 28
-                        radius: 14
-                        color: row.modelData.outcome === "ok" ? Theme.secondaryContainer
-                             : row.modelData.outcome === "warn" ? Qt.alpha(Theme.warning, 0.18)
-                             : Qt.alpha(Theme.error, 0.16)
-                        Icon {
-                            anchors.centerIn: parent
-                            width: 16; height: 16
-                            path: row.modelData.outcome === "ok" ? Icons.check : Icons.warning
-                            color: row.modelData.outcome === "ok" ? Theme.secondaryContainerContent
-                                 : row.modelData.outcome === "warn" ? Theme.warning : Theme.error
-                        }
-                    }
-                    Column {
-                        id: words
-                        anchors.left: badge.right
-                        anchors.leftMargin: 14
-                        anchors.right: actionsRow.visible ? actionsRow.left : parent.right
-                        anchors.rightMargin: actionsRow.visible ? 12 : 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 3
-                        Txt { width: parent.width; text: row.modelData.title; role: "title"; size: 14; wrapMode: Text.WordWrap }
-                        Txt {
-                            width: parent.width
-                            visible: row.modelData.detail.length > 0
-                            text: row.modelData.detail
-                            role: "bodySmall"
-                            muted: true
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-                    Row {
-                        id: actionsRow
-                        anchors.right: parent.right
-                        anchors.rightMargin: 6
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 6
-                        visible: row.hasFix
+            Column {
+                id: checksColumn
+                width: parent.width
+                spacing: 2
+                opacity: AppController.doctorBusy ? 0.55 : 1
+                Behavior on opacity { NumberAnimation { duration: Theme.fadeNormal } }
+                Repeater {
+                    model: sheet.checks
+                    delegate: Rectangle {
+                        id: row
+                        required property var modelData
+                        readonly property bool hasFix: row.modelData.fix !== undefined && row.modelData.fix !== ""
+                        width: parent.width
+                        height: Math.max(badge.height, words.height, actionsRow.height) + 20
+                        radius: Theme.radiusMd
+                        color: "transparent"
 
-                        Button {
-                            visible: row.modelData.fix === "firewall"
-                            enabled: !AppController.doctorBusy
-                            variant: "tonal"
-                            size: "sm"
-                            text: qsTr("Firewall settings")
-                            onClicked: AppController.doctorFix("firewall-settings")
+                        Rectangle {
+                            id: badge
+                            x: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 28; height: 28
+                            radius: 14
+                            color: row.modelData.outcome === "ok" ? Theme.secondaryContainer
+                                 : row.modelData.outcome === "warn" ? Qt.alpha(Theme.warning, 0.18)
+                                 : Qt.alpha(Theme.error, 0.16)
+                            Icon {
+                                anchors.centerIn: parent
+                                width: 16; height: 16
+                                path: row.modelData.outcome === "ok" ? Icons.check : Icons.warning
+                                color: row.modelData.outcome === "ok" ? Theme.secondaryContainerContent
+                                     : row.modelData.outcome === "warn" ? Theme.warning : Theme.error
+                            }
                         }
-                        Button {
-                            id: fixButton
-                            enabled: !AppController.doctorBusy
-                            variant: row.modelData.outcome === "fail" ? "fill" : "tonal"
-                            size: "sm"
-                            text: sheet.fixLabel(row.modelData.fix)
-                            onClicked: AppController.doctorFix(row.modelData.fix)
+                        Column {
+                            id: words
+                            anchors.left: badge.right
+                            anchors.leftMargin: 14
+                            anchors.right: actionsRow.visible ? actionsRow.left : parent.right
+                            anchors.rightMargin: actionsRow.visible ? 12 : 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 3
+                            Txt { width: parent.width; text: row.modelData.title; role: "title"; size: 14; wrapMode: Text.WordWrap }
+                            Txt {
+                                width: parent.width
+                                visible: row.modelData.detail.length > 0
+                                text: row.modelData.detail
+                                role: "bodySmall"
+                                muted: true
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                        Row {
+                            id: actionsRow
+                            anchors.right: parent.right
+                            anchors.rightMargin: 6
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 6
+                            visible: row.hasFix
+
+                            Button {
+                                visible: row.modelData.fix === "firewall"
+                                enabled: !AppController.doctorBusy
+                                variant: "tonal"
+                                size: "sm"
+                                text: qsTr("Firewall settings")
+                                onClicked: AppController.doctorFix("firewall-settings")
+                            }
+                            Button {
+                                id: fixButton
+                                enabled: !AppController.doctorBusy
+                                variant: row.modelData.outcome === "fail" ? "fill" : "tonal"
+                                size: "sm"
+                                text: sheet.fixLabel(row.modelData.fix)
+                                onClicked: AppController.doctorFix(row.modelData.fix)
+                            }
                         }
                     }
                 }

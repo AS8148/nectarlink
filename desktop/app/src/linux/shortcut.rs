@@ -32,12 +32,8 @@ fn sanitize_single_line(s: &str) -> String {
     s.chars().filter(|&c| c != '\n' && c != '\r' && !c.is_control()).collect()
 }
 
-fn sanitize_shell_path(s: &str) -> String {
-    s.chars()
-        .filter(|&c| {
-            c != '\n' && c != '\r' && c != '"' && c != '$' && c != '`' && c != '\\' && !c.is_control()
-        })
-        .collect()
+fn escape_posix_sh_single_quoted(target: &str) -> String {
+    sanitize_single_line(target).replace('\'', "'\\''")
 }
 
 fn sanitize_exec_args(s: &str) -> String {
@@ -70,7 +66,7 @@ fn write_file_nofollow(path: &Path, content: &str, mode: u32) -> Result<()> {
             .mode(mode)
             .open(path)?;
         file.write_all(content.as_bytes())?;
-        let _ = file.set_permissions(std::fs::Permissions::from_mode(mode));
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
         Ok(())
     }
     #[cfg(not(unix))]
@@ -188,6 +184,15 @@ pub fn sync_file_manager_menus(send_to_dir: &Path) -> Result<()> {
     write_file_manager_integrations(&data_home, &entries)
 }
 
+/// Remove all NectarLink file-manager context menu integrations (Nautilus scripts,
+/// KDE Dolphin KIO ServiceMenus, and Nemo/Thunar File Manager Actions).
+pub fn remove_all_file_manager_menus() -> Result<()> {
+    let Some(data_home) = xdg_data_home() else {
+        return Ok(());
+    };
+    write_file_manager_integrations(&data_home, &[])
+}
+
 fn collect_shortcuts(send_to_dir: &Path) -> Result<Vec<(PathBuf, Shortcut)>> {
     let mut out = Vec::new();
     let Ok(read_dir) = std::fs::read_dir(send_to_dir) else {
@@ -249,9 +254,11 @@ pub fn write_file_manager_integrations(
     let kio_dir = root_data_dir.join("kio/servicemenus");
     let actions_dir = root_data_dir.join("file-manager/actions");
 
-    std::fs::create_dir_all(&nautilus_dir)?;
-    std::fs::create_dir_all(&kio_dir)?;
-    std::fs::create_dir_all(&actions_dir)?;
+    if !shortcuts.is_empty() {
+        std::fs::create_dir_all(&nautilus_dir)?;
+        std::fs::create_dir_all(&kio_dir)?;
+        std::fs::create_dir_all(&actions_dir)?;
+    }
 
     let mut desired_nautilus = std::collections::HashSet::new();
     let mut desired_desktop = std::collections::HashSet::new();
@@ -264,7 +271,7 @@ pub fn write_file_manager_integrations(
         desired_nautilus.insert(label.clone());
         desired_desktop.insert(desktop_filename.clone());
 
-        let shell_target = sanitize_shell_path(&sc.target.to_string_lossy());
+        let shell_target = escape_posix_sh_single_quoted(&sc.target.to_string_lossy());
         let exec_target = super::autostart::escape_desktop_exec_arg(&sc.target.to_string_lossy());
         let args = sanitize_exec_args(&sc.arguments);
         let comment = sanitize_single_line(&sc.description);
@@ -277,14 +284,14 @@ pub fn write_file_manager_integrations(
              if [ -n \"${{NAUTILUS_SCRIPT_SELECTED_FILE_PATHS:-}}\" ]; then\n\
                  IFS='\n'\n\
                  set -f\n\
-                 exec \"{shell_target}\" {args} $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS\n\
+                 exec '{shell_target}' {args} $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS\n\
              else\n\
-                 exec \"{shell_target}\" {args} \"$@\"\n\
+                 exec '{shell_target}' {args} \"$@\"\n\
              fi\n",
         );
         write_file_nofollow(&nautilus_path, &script, 0o755)?;
 
-        // 2. KDE Dolphin (KIO ServiceMenu)
+        // 2. KDE Dolphin (KIO ServiceMenu) — must be 0o755 so Plasma 6 KFileItemActions executes it
         let kio_path = kio_dir.join(&desktop_filename);
         let kio_content = format!(
             "[Desktop Entry]\n\
@@ -298,7 +305,7 @@ pub fn write_file_manager_integrations(
              Icon=nectarlink\n\
              Exec=\"{exec_target}\" {args} %F\n"
         );
-        write_file_nofollow(&kio_path, &kio_content, 0o644)?;
+        write_file_nofollow(&kio_path, &kio_content, 0o755)?;
 
         // 3. Nemo / Thunar (DES-EMA File Manager Action)
         let action_path = actions_dir.join(&desktop_filename);
@@ -331,13 +338,13 @@ pub fn write_file_manager_integrations(
         }
     }
 
-    // Prune stale KDE ServiceMenus and File Manager Actions prefixed with `nectarlink-send-`
+    // Prune stale KDE ServiceMenus and File Manager Actions prefixed with `nectarlink-`
     for dir in [&kio_dir, &actions_dir] {
         if let Ok(rd) = std::fs::read_dir(dir) {
             for entry in rd.flatten() {
                 let p = entry.path();
                 if let Some(name) = p.file_name().and_then(|s| s.to_str())
-                    && name.starts_with("nectarlink-send-")
+                    && name.starts_with("nectarlink-")
                     && name.ends_with(".desktop")
                     && !desired_desktop.contains(name)
                 {
@@ -379,7 +386,7 @@ mod tests {
 
         let lnk1 = send_to.join("Pixel 9.lnk");
         let sc1 = Shortcut {
-            target: PathBuf::from("/usr/bin/nectarlink-desktop"),
+            target: PathBuf::from("/opt/user's bin/nectarlink-desktop"),
             arguments: "--send-to pixel9".to_string(),
             description: "Send to Pixel 9".to_string(),
         };
@@ -408,12 +415,17 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&nautilus_p1).unwrap().permissions().mode();
-            assert_ne!(mode & 0o111, 0, "Nautilus script must be executable");
+            let nautilus_mode = std::fs::metadata(&nautilus_p1).unwrap().permissions().mode();
+            assert_ne!(nautilus_mode & 0o111, 0, "Nautilus script must be executable");
+            let kio_mode = std::fs::metadata(&kio_p1).unwrap().permissions().mode();
+            assert_eq!(kio_mode & 0o777, 0o755, "KDE ServiceMenu .desktop must be 0o755");
         }
 
+        let nautilus_text = std::fs::read_to_string(&nautilus_p1).unwrap();
+        assert!(nautilus_text.contains("exec '/opt/user'\\''s bin/nectarlink-desktop' --send-to pixel9"));
+
         let kio_text = std::fs::read_to_string(&kio_p1).unwrap();
-        assert!(kio_text.contains("Exec=\"/usr/bin/nectarlink-desktop\" --send-to pixel9 %F"));
+        assert!(kio_text.contains("Exec=\"/opt/user's bin/nectarlink-desktop\" --send-to pixel9 %F"));
 
         // Now prune Galaxy S25 and verify its files are removed while Pixel 9 remains.
         write_file_manager_integrations(tmp.path(), &[(lnk1, sc1)]).expect("prune integrations");
@@ -421,5 +433,11 @@ mod tests {
         assert!(!nautilus_p2.exists());
         assert!(kio_p1.exists());
         assert!(!kio_p2.exists());
+
+        // Removing all entries prunes everything.
+        write_file_manager_integrations(tmp.path(), &[]).expect("remove all integrations");
+        assert!(!nautilus_p1.exists());
+        assert!(!kio_p1.exists());
+        assert!(!act_p1.exists());
     }
 }

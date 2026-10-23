@@ -232,6 +232,42 @@ const DEB_SUFFIXES: &[&str] = if cfg!(target_arch = "aarch64") {
     &["_amd64.deb", "-x86_64.AppImage", "-linux-x86_64.tar.gz"]
 };
 
+#[cfg(target_os = "linux")]
+const TARBALL_SUFFIXES: &[&str] = if cfg!(target_arch = "aarch64") {
+    &["-linux-aarch64.tar.gz", "_arm64.deb", "-aarch64.AppImage"]
+} else {
+    &["-linux-x86_64.tar.gz", "_amd64.deb", "-x86_64.AppImage"]
+};
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinuxInstallKind {
+    AppImage,
+    Deb,
+    Tarball,
+}
+
+#[cfg(target_os = "linux")]
+fn detect_linux_install_kind() -> LinuxInstallKind {
+    if std::env::var_os("APPIMAGE").is_some() {
+        return LinuxInstallKind::AppImage;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let resolved = std::fs::canonicalize(&exe).unwrap_or(exe);
+        if resolved.starts_with("/opt/nectarlink")
+            || resolved.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "nectarlink-app")
+        {
+            return LinuxInstallKind::Tarball;
+        }
+    }
+    if Path::new("/var/lib/dpkg/info/nectarlink.list").is_file()
+        || Path::new("/var/lib/dpkg/status").is_file()
+    {
+        return LinuxInstallKind::Deb;
+    }
+    LinuxInstallKind::Tarball
+}
+
 /// The release as an update, if it's a newer published one with an
 /// installer for this architecture and its sums.
 #[cfg(windows)]
@@ -241,12 +277,23 @@ fn newer_release(release: Release, current: &str) -> Option<Update> {
 
 #[cfg(target_os = "linux")]
 fn newer_release(release: Release, current: &str) -> Option<Update> {
-    newer_release_linux(release, current, std::env::var_os("APPIMAGE").is_some())
+    newer_release_linux_kind(release, current, detect_linux_install_kind())
 }
 
 #[cfg(target_os = "linux")]
+#[cfg_attr(not(test), allow(dead_code))]
 fn newer_release_linux(release: Release, current: &str, is_appimage: bool) -> Option<Update> {
-    let suffixes = if is_appimage { APPIMAGE_SUFFIXES } else { DEB_SUFFIXES };
+    let kind = if is_appimage { LinuxInstallKind::AppImage } else { LinuxInstallKind::Deb };
+    newer_release_linux_kind(release, current, kind)
+}
+
+#[cfg(target_os = "linux")]
+fn newer_release_linux_kind(release: Release, current: &str, kind: LinuxInstallKind) -> Option<Update> {
+    let suffixes = match kind {
+        LinuxInstallKind::AppImage => APPIMAGE_SUFFIXES,
+        LinuxInstallKind::Deb => DEB_SUFFIXES,
+        LinuxInstallKind::Tarball => TARBALL_SUFFIXES,
+    };
     for &suffix in suffixes {
         if let Some(u) = newer_release_for(release.clone(), current, suffix) {
             return Some(u);
@@ -655,11 +702,43 @@ pub fn run_service() -> ExitCode {
         }
     };
     // Not waited for: the installer replaces this program, which must not be running.
-    let mut cmd = std::process::Command::new(&path);
-    cmd.arg("/S");
     #[cfg(windows)]
-    cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
-    match cmd.spawn() {
+    let spawned = {
+        let mut cmd = std::process::Command::new(&path);
+        cmd.arg("/S");
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+        cmd.spawn()
+    };
+    #[cfg(target_os = "linux")]
+    let spawned = {
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+        if name.ends_with(".deb") {
+            std::process::Command::new("sh")
+                .args(["-c", "apt-get install -y -- \"$1\" || dpkg -i -- \"$1\"", "sh"])
+                .arg(&path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        } else if name.ends_with(".tar.gz") {
+            std::process::Command::new("sh")
+                .args([
+                    "-e",
+                    "-c",
+                    "tar -C \"$2\" -xzf \"$1\" && set -- \"$2\"/Nectarlink-*/install.sh && [ -x \"$1\" ] && \"$1\"",
+                    "sh",
+                ])
+                .arg(&path)
+                .arg(&dir)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        } else {
+            std::process::Command::new(&path).arg("/S").spawn()
+        }
+    };
+    match spawned {
         Ok(_) => {
             log(&format!("installing {}", update.version));
             ExitCode::SUCCESS
@@ -786,11 +865,24 @@ trap 'rm -rf -- \"$dir\"' EXIT\n\
 dst=\"$dir/nectarlink-update.deb\"\n\
 install -m 0600 -o 0 -g 0 \"$1\" \"$dst\"\n\
 printf '%s  %s\\n' \"$2\" \"$dst\" | sha256sum -c --status -\n\
-dpkg -i -- \"$dst\"\n";
+apt-get install -y -- \"$dst\" || dpkg -i -- \"$dst\"\n";
+
+#[cfg(target_os = "linux")]
+const PRIVILEGED_TAR_INSTALL_SCRIPT: &str = "\
+dir=\"/var/cache/nectarlink-update\"\n\
+rm -rf -- \"$dir\"\n\
+install -d -m 0700 -o 0 -g 0 \"$dir\"\n\
+trap 'rm -rf -- \"$dir\"' EXIT\n\
+dst=\"$dir/nectarlink-update.tar.gz\"\n\
+install -m 0600 -o 0 -g 0 \"$1\" \"$dst\"\n\
+printf '%s  %s\\n' \"$2\" \"$dst\" | sha256sum -c --status -\n\
+tar -C \"$dir\" -xzf \"$dst\"\n\
+set -- \"$dir\"/Nectarlink-*/install.sh\n\
+[ -x \"$1\" ] && \"$1\"\n";
 
 #[cfg(target_os = "linux")]
 fn install_with_prompt(update: &Update, staged: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
     let failed = |e: String| {
         tracing::warn!(error = e, "update failed");
@@ -831,6 +923,54 @@ fn install_with_prompt(update: &Update, staged: &Path) -> Result<(), String> {
             return Err(failed(format!("privileged .deb install exited with status {code}")));
         }
         if let Ok(exe) = std::env::current_exe() {
+            let _ = spawn_relauncher(&exe, &update.version, true);
+        }
+        crate::bridge::app::request_quit();
+        return Ok(());
+    }
+
+    if staged_name.ends_with(".tar.gz") {
+        let exe = std::env::current_exe().ok();
+        let resolved_exe = exe.as_ref().map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()));
+        let needs_root =
+            resolved_exe.as_ref().is_some_and(|p| p.starts_with("/opt/") || p.starts_with("/usr/"));
+
+        if needs_root {
+            let staged_str = staged.to_string_lossy();
+            let code = crate::win::elevated::run_elevated(
+                Path::new("sh"),
+                &["-e", "-c", PRIVILEGED_TAR_INSTALL_SCRIPT, "sh", &staged_str, &expected],
+            )
+            .map_err(failed)?;
+            if code != 0 {
+                return Err(failed(format!("privileged .tar.gz install exited with status {code}")));
+            }
+        } else {
+            let extract_dir = staging_dir().join(format!("extract-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&extract_dir);
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(&extract_dir)
+                .map_err(|e| failed(e.to_string()))?;
+            let status = std::process::Command::new("sh")
+                .args([
+                    "-e",
+                    "-c",
+                    "tar -C \"$2\" -xzf \"$1\" && set -- \"$2\"/Nectarlink-*/install.sh && [ -x \"$1\" ] && \"$1\"",
+                    "sh",
+                ])
+                .arg(staged)
+                .arg(&extract_dir)
+                .stdin(std::process::Stdio::null())
+                .status()
+                .map_err(|e| failed(e.to_string()))?;
+            let _ = std::fs::remove_dir_all(&extract_dir);
+            if !status.success() {
+                return Err(failed(format!("user .tar.gz install exited with status {status}")));
+            }
+        }
+        if let Some(exe) = exe {
             let _ = spawn_relauncher(&exe, &update.version, true);
         }
         crate::bridge::app::request_quit();

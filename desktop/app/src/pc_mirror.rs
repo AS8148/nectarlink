@@ -94,8 +94,8 @@ mod imp {
 
     /// Whether this PC's display session supports screen capture for `mirror.capture`.
     ///
-    /// On Linux, `pc_mirror` captures the screen via X11 (`XGetImage`), which requires
-    /// an X11 or XWayland `DISPLAY`.
+    /// On Linux, `pc_mirror` captures the screen via X11 (`XGetImage`) or Wayland
+    /// (`org.freedesktop.portal.ScreenCast` + PipeWire) and encodes via `libopenh264`.
     pub fn is_capture_available() -> bool {
         #[cfg(windows)]
         {
@@ -103,7 +103,11 @@ mod imp {
         }
         #[cfg(target_os = "linux")]
         {
-            std::env::var_os("DISPLAY").is_some()
+            if openh264_enc_api().is_none() {
+                return false;
+            }
+            let has_x11 = std::env::var_os("DISPLAY").is_some() && x11_api().is_some();
+            has_x11 || is_wayland_screencast_available()
         }
     }
 
@@ -609,6 +613,24 @@ mod imp {
         i_pic_width: std::ffi::c_int,
         i_pic_height: std::ffi::c_int,
         ui_time_stamp: i64,
+        b_psnr_y: bool,
+        b_psnr_u: bool,
+        b_psnr_v: bool,
+    }
+
+    #[cfg(target_os = "linux")]
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct SLayerBSInfoV20 {
+        ui_temporal_id: u8,
+        ui_spatial_id: u8,
+        ui_quality_id: u8,
+        e_frame_type: std::ffi::c_int,
+        ui_layer_type: u8,
+        i_sub_seq_id: std::ffi::c_int,
+        i_nal_count: std::ffi::c_int,
+        p_nal_length_in_byte: *mut std::ffi::c_int,
+        p_bs_buf: *mut u8,
     }
 
     #[cfg(target_os = "linux")]
@@ -624,6 +646,17 @@ mod imp {
         i_nal_count: std::ffi::c_int,
         p_nal_length_in_byte: *mut std::ffi::c_int,
         p_bs_buf: *mut u8,
+        r_psnr: [f32; 3],
+    }
+
+    #[cfg(target_os = "linux")]
+    #[repr(C)]
+    struct SFrameBSInfoV20 {
+        i_layer_num: std::ffi::c_int,
+        s_layer_info: [SLayerBSInfoV20; 128],
+        e_frame_type: std::ffi::c_int, // 1 = IDR, 2 = I, 3 = P, 4 = Skip
+        i_frame_size_in_bytes: std::ffi::c_int,
+        ui_time_stamp: i64,
     }
 
     #[cfg(target_os = "linux")]
@@ -654,6 +687,7 @@ mod imp {
 
     #[cfg(target_os = "linux")]
     struct OpenH264EncApi {
+        minor: u32,
         create_encoder: unsafe extern "C" fn(*mut *mut std::ffi::c_void) -> std::ffi::c_int,
         destroy_encoder: unsafe extern "C" fn(*mut std::ffi::c_void),
     }
@@ -668,7 +702,8 @@ mod imp {
     fn openh264_enc_api() -> Option<&'static OpenH264EncApi> {
         static API: std::sync::OnceLock<Option<OpenH264EncApi>> = std::sync::OnceLock::new();
         API.get_or_init(|| unsafe {
-            let candidates = [c"libopenh264.so.7", c"libopenh264.so.6", c"libopenh264.so"];
+            let candidates =
+                [c"libopenh264.so.8", c"libopenh264.so.7", c"libopenh264.so.6", c"libopenh264.so"];
             let mut lib = std::ptr::null_mut();
             for name in candidates {
                 lib = libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
@@ -690,6 +725,7 @@ mod imp {
                 return None;
             }
             Some(OpenH264EncApi {
+                minor: ver.u_minor,
                 create_encoder: dl_sym(lib, c"WelsCreateSVCEncoder")?,
                 destroy_encoder: dl_sym(lib, c"WelsDestroySVCEncoder")?,
             })
@@ -861,6 +897,7 @@ mod imp {
             }
 
             unsafe {
+                let api = openh264_enc_api().ok_or_else(|| "libopenh264 encoder unavailable".to_owned())?;
                 let y_ptr = self.i420_buf.as_mut_ptr();
                 let u_ptr = y_ptr.add(y_size);
                 let v_ptr = y_ptr.add(y_size + quarter);
@@ -876,53 +913,102 @@ mod imp {
                     i_pic_width: w as std::ffi::c_int,
                     i_pic_height: h as std::ffi::c_int,
                     ui_time_stamp: hns / 10_000,
+                    b_psnr_y: false,
+                    b_psnr_u: false,
+                    b_psnr_v: false,
                 };
 
-                let mut bs_info: SFrameBSInfo = std::mem::zeroed();
                 let vtable = *(self.encoder as *const *const usize);
-                let encode_frame: unsafe extern "C" fn(
-                    *mut std::ffi::c_void,
-                    *const SSourcePicture,
-                    *mut SFrameBSInfo,
-                ) -> std::ffi::c_int = std::mem::transmute(*vtable.add(4));
-
-                let rc = encode_frame(self.encoder, &pic, &mut bs_info);
-                if rc != 0 {
-                    return Err(format!("OpenH264 EncodeFrame failed: {rc}"));
-                }
-                if bs_info.e_frame_type == 4 || bs_info.i_layer_num <= 0 {
-                    return Ok(Vec::new());
-                }
-
-                let layer_count = (bs_info.i_layer_num as usize).min(bs_info.s_layer_info.len());
                 let mut raw = Vec::new();
-                for idx in 0..layer_count {
-                    let layer = &bs_info.s_layer_info[idx];
-                    if layer.p_bs_buf.is_null()
-                        || layer.p_nal_length_in_byte.is_null()
-                        || layer.i_nal_count <= 0
-                    {
-                        continue;
+                let e_frame_type: std::ffi::c_int;
+
+                if api.minor >= 3 {
+                    let mut bs_info: SFrameBSInfo = std::mem::zeroed();
+                    let encode_frame: unsafe extern "C" fn(
+                        *mut std::ffi::c_void,
+                        *const SSourcePicture,
+                        *mut SFrameBSInfo,
+                    ) -> std::ffi::c_int = std::mem::transmute(*vtable.add(4));
+
+                    let rc = encode_frame(self.encoder, &pic, &mut bs_info);
+                    if rc != 0 {
+                        return Err(format!("OpenH264 EncodeFrame failed: {rc}"));
                     }
-                    let nal_lens =
-                        std::slice::from_raw_parts(layer.p_nal_length_in_byte, layer.i_nal_count as usize);
-                    let total_bytes: usize = nal_lens.iter().map(|&n| n.max(0) as usize).sum();
-                    if total_bytes == 0 {
-                        continue;
+                    if bs_info.e_frame_type == 4 || bs_info.i_layer_num <= 0 {
+                        return Ok(Vec::new());
                     }
-                    let layer_bytes = std::slice::from_raw_parts(layer.p_bs_buf, total_bytes);
-                    if layer.ui_layer_type == 0 {
-                        self.seq_header.clear();
-                        self.seq_header.extend_from_slice(layer_bytes);
+                    e_frame_type = bs_info.e_frame_type;
+                    let layer_count = (bs_info.i_layer_num as usize).min(bs_info.s_layer_info.len());
+                    for idx in 0..layer_count {
+                        let layer = &bs_info.s_layer_info[idx];
+                        if layer.p_bs_buf.is_null()
+                            || layer.p_nal_length_in_byte.is_null()
+                            || layer.i_nal_count <= 0
+                        {
+                            continue;
+                        }
+                        let nal_lens = std::slice::from_raw_parts(
+                            layer.p_nal_length_in_byte,
+                            layer.i_nal_count as usize,
+                        );
+                        let total_bytes: usize = nal_lens.iter().map(|&n| n.max(0) as usize).sum();
+                        if total_bytes == 0 {
+                            continue;
+                        }
+                        let layer_bytes = std::slice::from_raw_parts(layer.p_bs_buf, total_bytes);
+                        if layer.ui_layer_type == 0 {
+                            self.seq_header.clear();
+                            self.seq_header.extend_from_slice(layer_bytes);
+                        }
+                        raw.extend_from_slice(layer_bytes);
                     }
-                    raw.extend_from_slice(layer_bytes);
+                } else {
+                    let mut bs_info: SFrameBSInfoV20 = std::mem::zeroed();
+                    let encode_frame: unsafe extern "C" fn(
+                        *mut std::ffi::c_void,
+                        *const SSourcePicture,
+                        *mut SFrameBSInfoV20,
+                    ) -> std::ffi::c_int = std::mem::transmute(*vtable.add(4));
+
+                    let rc = encode_frame(self.encoder, &pic, &mut bs_info);
+                    if rc != 0 {
+                        return Err(format!("OpenH264 EncodeFrame failed: {rc}"));
+                    }
+                    if bs_info.e_frame_type == 4 || bs_info.i_layer_num <= 0 {
+                        return Ok(Vec::new());
+                    }
+                    e_frame_type = bs_info.e_frame_type;
+                    let layer_count = (bs_info.i_layer_num as usize).min(bs_info.s_layer_info.len());
+                    for idx in 0..layer_count {
+                        let layer = &bs_info.s_layer_info[idx];
+                        if layer.p_bs_buf.is_null()
+                            || layer.p_nal_length_in_byte.is_null()
+                            || layer.i_nal_count <= 0
+                        {
+                            continue;
+                        }
+                        let nal_lens = std::slice::from_raw_parts(
+                            layer.p_nal_length_in_byte,
+                            layer.i_nal_count as usize,
+                        );
+                        let total_bytes: usize = nal_lens.iter().map(|&n| n.max(0) as usize).sum();
+                        if total_bytes == 0 {
+                            continue;
+                        }
+                        let layer_bytes = std::slice::from_raw_parts(layer.p_bs_buf, total_bytes);
+                        if layer.ui_layer_type == 0 {
+                            self.seq_header.clear();
+                            self.seq_header.extend_from_slice(layer_bytes);
+                        }
+                        raw.extend_from_slice(layer_bytes);
+                    }
                 }
 
                 if raw.is_empty() {
                     return Ok(Vec::new());
                 }
 
-                let is_idr = !self.sent_first_frame || bs_info.e_frame_type == 1 || has_h264_idr(&raw);
+                let is_idr = !self.sent_first_frame || e_frame_type == 1 || has_h264_idr(&raw);
                 let mut bytes = Vec::new();
                 if is_idr && !has_h264_sps(&raw) && !self.seq_header.is_empty() {
                     bytes.extend_from_slice(&self.seq_header);
@@ -1274,12 +1360,329 @@ mod imp {
     }
 
     #[cfg(target_os = "linux")]
+    fn has_executable(name: &str) -> bool {
+        let Some(path_var) = std::env::var_os("PATH") else {
+            return false;
+        };
+        std::env::split_paths(&path_var).any(|dir| dir.join(name).is_file())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn is_wayland_screencast_available() -> bool {
+        if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return false;
+        }
+        static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *AVAILABLE.get_or_init(|| {
+            if !has_executable("gst-launch-1.0") && !has_executable("ffmpeg") {
+                return false;
+            }
+            let Ok(conn) = zbus::blocking::Connection::session() else {
+                return false;
+            };
+            let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn) else {
+                return false;
+            };
+            "org.freedesktop.portal.Desktop"
+                .try_into()
+                .ok()
+                .and_then(|name| dbus.name_has_owner(name).ok())
+                .unwrap_or(false)
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    struct WaylandScreenCaster {
+        _conn: zbus::blocking::Connection,
+        node_id: u32,
+        src_w: u32,
+        src_h: u32,
+        dst_w: u32,
+        dst_h: u32,
+        child: Option<std::process::Child>,
+        latest_frame: Arc<Mutex<Option<Vec<u8>>>>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for WaylandScreenCaster {
+        fn drop(&mut self) {
+            if let Some(mut child) = self.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wait_portal_response(
+        iter: &mut zbus::blocking::MessageIterator,
+        expected_path: &str,
+    ) -> Option<std::collections::HashMap<String, zbus::zvariant::OwnedValue>> {
+        for msg in iter.by_ref() {
+            let msg = msg.ok()?;
+            let hdr = msg.header();
+            if hdr.interface().map(|i| i.as_str()) == Some("org.freedesktop.portal.Request")
+                && hdr.member().map(|m| m.as_str()) == Some("Response")
+                && hdr.path().map(|p| p.as_str()) == Some(expected_path)
+            {
+                let (code, results): (u32, std::collections::HashMap<String, zbus::zvariant::OwnedValue>) =
+                    msg.body().deserialize().ok()?;
+                return if code == 0 { Some(results) } else { None };
+            }
+        }
+        None
+    }
+
+    #[cfg(target_os = "linux")]
+    impl WaylandScreenCaster {
+        fn negotiate_portal() -> Option<(zbus::blocking::Connection, u32, u32, u32)> {
+            use std::collections::HashMap;
+            use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+
+            let conn = zbus::blocking::Connection::session().ok()?;
+            let rule = zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .interface("org.freedesktop.portal.Request")
+                .and_then(|b| b.member("Response"))
+                .map(|b| b.build())
+                .ok()?;
+            let dbus = zbus::blocking::fdo::DBusProxy::new(&conn).ok()?;
+            dbus.add_match_rule(rule).ok()?;
+            let mut iter = zbus::blocking::MessageIterator::from(&conn);
+
+            let pid = std::process::id();
+
+            // 1. CreateSession
+            let mut create_opts: HashMap<&str, Value<'_>> = HashMap::new();
+            let req_tok_1 = format!("nectarlink_sc_req1_{pid}");
+            let sess_tok = format!("nectarlink_sc_sess_{pid}");
+            create_opts.insert("handle_token", Value::from(req_tok_1.as_str()));
+            create_opts.insert("session_handle_token", Value::from(sess_tok.as_str()));
+
+            let reply = conn
+                .call_method(
+                    Some("org.freedesktop.portal.Desktop"),
+                    "/org/freedesktop/portal/desktop",
+                    Some("org.freedesktop.portal.ScreenCast"),
+                    "CreateSession",
+                    &(&create_opts,),
+                )
+                .ok()?;
+            let req_path_1: OwnedObjectPath = reply.body().deserialize().ok()?;
+            let create_res = wait_portal_response(&mut iter, req_path_1.as_str())?;
+            let session_path_str = create_res.get("session_handle").and_then(|v| {
+                String::try_from(v.clone())
+                    .ok()
+                    .or_else(|| OwnedObjectPath::try_from(v.clone()).ok().map(|p| p.to_string()))
+            })?;
+            let session_obj = ObjectPath::try_from(session_path_str.as_str()).ok()?;
+
+            // 2. SelectSources (types = 1 MONITOR, cursor_mode = 2 EMBEDDED)
+            let mut select_opts: HashMap<&str, Value<'_>> = HashMap::new();
+            let req_tok_2 = format!("nectarlink_sc_req2_{pid}");
+            select_opts.insert("handle_token", Value::from(req_tok_2.as_str()));
+            select_opts.insert("types", Value::from(1u32));
+            select_opts.insert("multiple", Value::from(false));
+            select_opts.insert("cursor_mode", Value::from(2u32));
+
+            let reply = conn
+                .call_method(
+                    Some("org.freedesktop.portal.Desktop"),
+                    "/org/freedesktop/portal/desktop",
+                    Some("org.freedesktop.portal.ScreenCast"),
+                    "SelectSources",
+                    &(&session_obj, &select_opts),
+                )
+                .ok()?;
+            let req_path_2: OwnedObjectPath = reply.body().deserialize().ok()?;
+            wait_portal_response(&mut iter, req_path_2.as_str())?;
+
+            // 3. Start
+            let mut start_opts: HashMap<&str, Value<'_>> = HashMap::new();
+            let req_tok_3 = format!("nectarlink_sc_req3_{pid}");
+            start_opts.insert("handle_token", Value::from(req_tok_3.as_str()));
+
+            let reply = conn
+                .call_method(
+                    Some("org.freedesktop.portal.Desktop"),
+                    "/org/freedesktop/portal/desktop",
+                    Some("org.freedesktop.portal.ScreenCast"),
+                    "Start",
+                    &(&session_obj, "", &start_opts),
+                )
+                .ok()?;
+            let req_path_3: OwnedObjectPath = reply.body().deserialize().ok()?;
+            let start_res = wait_portal_response(&mut iter, req_path_3.as_str())?;
+
+            let streams_val = start_res.get("streams")?;
+            let streams: Vec<(u32, HashMap<String, OwnedValue>)> = streams_val.clone().try_into().ok()?;
+            let (node_id, props) = streams.into_iter().next()?;
+            let (src_w, src_h) = props
+                .get("size")
+                .and_then(|v| <(i32, i32)>::try_from(v.clone()).ok())
+                .filter(|&(w, h)| w > 0 && h > 0)
+                .map(|(w, h)| (w as u32, h as u32))
+                .unwrap_or((1920, 1080));
+
+            // Request PipeWire remote fd so the portal grants access to our PipeWire client context.
+            let empty_opts: HashMap<&str, Value<'_>> = HashMap::new();
+            let _ = conn.call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.ScreenCast"),
+                "OpenPipeWireRemote",
+                &(&session_obj, &empty_opts),
+            );
+
+            Some((conn, node_id, src_w, src_h))
+        }
+
+        #[allow(clippy::type_complexity)]
+        fn spawn_pipeline(
+            node_id: u32,
+            dst_w: u32,
+            dst_h: u32,
+        ) -> Option<(std::process::Child, Arc<Mutex<Option<Vec<u8>>>>)> {
+            use std::io::Read;
+            use std::process::{Command, Stdio};
+
+            let mut child = Command::new("gst-launch-1.0")
+                .args([
+                    "-q",
+                    "pipewiresrc",
+                    &format!("path={node_id}"),
+                    "do-timestamp=true",
+                    "!",
+                    "videoconvert",
+                    "!",
+                    "videoscale",
+                    "!",
+                    &format!("video/x-raw,format=BGRx,width={dst_w},height={dst_h}"),
+                    "!",
+                    "fdsink",
+                    "fd=1",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .or_else(|_| {
+                    Command::new("ffmpeg")
+                        .args([
+                            "-loglevel",
+                            "error",
+                            "-f",
+                            "pipewire",
+                            "-i",
+                            &node_id.to_string(),
+                            "-vf",
+                            &format!("scale={dst_w}:{dst_h}"),
+                            "-pix_fmt",
+                            "bgr0",
+                            "-f",
+                            "rawvideo",
+                            "-",
+                        ])
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::null())
+                        .spawn()
+                })
+                .ok()?;
+
+            let mut stdout = child.stdout.take()?;
+            let latest_frame: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
+            let frame_slot = Arc::clone(&latest_frame);
+            let frame_bytes = (dst_w as usize) * (dst_h as usize) * 4;
+
+            std::thread::Builder::new()
+                .name("wayland-screencast-reader".into())
+                .spawn(move || {
+                    let mut buf = vec![0u8; frame_bytes];
+                    while stdout.read_exact(&mut buf).is_ok() {
+                        for chunk in buf.as_chunks_mut::<4>().0 {
+                            chunk[3] = 0xFF;
+                        }
+                        *frame_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(buf.clone());
+                    }
+                })
+                .ok()?;
+
+            Some((child, latest_frame))
+        }
+
+        fn start(dst_w: u32, dst_h: u32) -> Option<Self> {
+            let (conn, node_id, src_w, src_h) = Self::negotiate_portal()?;
+            let (child, latest_frame) = Self::spawn_pipeline(node_id, dst_w, dst_h)?;
+            Some(Self { _conn: conn, node_id, src_w, src_h, dst_w, dst_h, child: Some(child), latest_frame })
+        }
+
+        fn capture(&mut self, dst_w: u32, dst_h: u32, bgra: &mut Vec<u8>) -> Option<(u32, u32)> {
+            if (self.dst_w, self.dst_h) != (dst_w, dst_h) {
+                if let Some(mut old) = self.child.take() {
+                    let _ = old.kill();
+                    let _ = old.wait();
+                }
+                let (child, latest_frame) = Self::spawn_pipeline(self.node_id, dst_w, dst_h)?;
+                self.dst_w = dst_w;
+                self.dst_h = dst_h;
+                self.child = Some(child);
+                self.latest_frame = latest_frame;
+            }
+
+            let deadline = Instant::now() + Duration::from_millis(250);
+            loop {
+                if let Some(frame) = self.latest_frame.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                    bgra.clear();
+                    bgra.extend_from_slice(frame);
+                    return Some((self.src_w, self.src_h));
+                }
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    static WAYLAND_CASTER: Mutex<Option<WaylandScreenCaster>> = Mutex::new(None);
+
+    #[cfg(target_os = "linux")]
+    fn capture_screen_wayland(dst_w: u32, dst_h: u32, bgra: &mut Vec<u8>) -> Option<(u32, u32)> {
+        if !is_wayland_screencast_available() {
+            return None;
+        }
+        let mut guard = WAYLAND_CASTER.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.is_none() {
+            *guard = WaylandScreenCaster::start(dst_w, dst_h);
+        }
+        let caster = guard.as_mut()?;
+        let res = caster.capture(dst_w, dst_h, bgra);
+        if res.is_none() {
+            *guard = None;
+        }
+        res
+    }
+
+    #[cfg(target_os = "linux")]
+    fn stop_wayland_screencast() {
+        *WAYLAND_CASTER.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    #[cfg(target_os = "linux")]
     fn capture_screen(
         region: Option<crate::win::browser::RECT>,
         dst_w: u32,
         dst_h: u32,
         bgra: &mut Vec<u8>,
     ) -> Option<(u32, u32)> {
+        if region.is_none()
+            && std::env::var_os("WAYLAND_DISPLAY").is_some()
+            && let Some(dims) = capture_screen_wayland(dst_w, dst_h, bgra)
+        {
+            return Some(dims);
+        }
         with_x11_display(|api, dpy| unsafe {
             let root = (api.default_root_window)(dpy);
             let mut attrs: XWindowAttributes = std::mem::zeroed();
@@ -1611,6 +2014,8 @@ mod imp {
             }
         }
 
+        #[cfg(target_os = "linux")]
+        stop_wayland_screencast();
         tracing::info!(%peer, "stopped sharing this PC's screen");
         crate::input_share::leave_remote();
         sender.close();

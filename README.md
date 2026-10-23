@@ -7,7 +7,7 @@
 **Your Android phone and your PC, working as one.**
 
 Notifications, messages, calls, clipboard, files, photos, screen mirroring and
-phone apps in windows, between Android and Windows 11. Free and open source.
+phone apps in windows, between Android, Windows 11 and Linux. Free and open source.
 Local-first, end-to-end encrypted, no account and no cloud.
 
 Hi, I'm Bee, and yes, a bee built an app called NectarLink. I build cool stuff
@@ -40,6 +40,7 @@ of new features I wanted that I think you'll enjoy having too.
 |---|---|---|
 | **Windows (x64)** | [Installer (.exe)](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-x64-setup.exe) | Windows 11, 64-bit Intel or AMD |
 | **Windows (ARM64)** | [Installer (.exe)](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-arm64-setup.exe) | Windows 11 on ARM (Snapdragon) |
+| **Linux (x86_64)** | [.deb](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/nectarlink_0.1.5_amd64.deb) · [AppImage](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-x86_64.AppImage) · [.tar.gz](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-linux-x86_64.tar.gz) | Ubuntu 24.04+, Debian 12+, Fedora 40+, Arch, or any 64-bit Linux desktop |
 | **Android** | [App (.apk)](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-android.apk) | Android 8.0 or newer |
 
 Both apps update themselves from GitHub Releases and check every download
@@ -125,20 +126,21 @@ and dark.
 
 ### Platform support
 
-| Feature | Windows | macOS (Preview) |
-|---|---|---|
-| Pairing & mutual TLS | Yes | Yes |
-| Files & folder transfer | Yes | Yes |
-| Photos browser & download | Yes | Yes |
-| Continuity Camera | Yes | Yes |
-| Calls & SMS viewer | Yes | Yes |
-| Phone quick toggles & volume | Yes | Yes |
-| Clipboard text sync | Yes | Yes (two-way text, incoming photo) |
-| System notifications | Yes | Yes (system banners) |
-| Phone screen mirroring | Yes | Not yet (in development) |
-| Screen recording (MP4) | Yes | Not yet |
-| PC audio stream / phone mic | Yes | Not yet |
-| Storage mount in Explorer | Yes | Windows Cloud Files only |
+| Feature | Windows | Linux | macOS (Preview) |
+|---|---|---|---|
+| Pairing & mutual TLS | Yes | Yes | Yes |
+| Files & folder transfer | Yes | Yes | Yes |
+| Photos browser & download | Yes | Yes | Yes |
+| Continuity Camera | Yes | Yes | Yes |
+| Calls & SMS viewer | Yes | Yes | Yes |
+| Phone quick toggles & volume | Yes | Yes | Yes |
+| Clipboard text & image sync | Yes | Yes | Yes (two-way text, incoming photo) |
+| System notifications | Yes | Yes (freedesktop notifications) | Yes (system banners) |
+| Phone screen mirroring | Yes | Yes (FFmpeg / OpenH264) | Not yet (in development) |
+| Screen recording (MP4) | Yes | Yes | Not yet |
+| PC audio stream / phone mic | Yes | Yes (PipeWire / PulseAudio) | Not yet |
+| Phone as webcam | Yes | Yes (`v4l2loopback`) | Not yet |
+| Storage mount in file manager | Yes (Cloud Files) | Yes (FUSE3) | Windows / Linux only |
 
 ## Private by design
 
@@ -245,6 +247,7 @@ docs/                    Guide, technical docs, protocol, design system    (CC B
 |---|---|
 | Core and CLI | [Rust](https://rustup.rs) (stable, pinned in `rust-toolchain.toml`) |
 | Windows app | Windows 11, Visual Studio 2022 Build Tools (C++), [Qt 6.12](https://www.qt.io/download-open-source) for MSVC 2022 x64 |
+| Linux app | C++17 compiler, pkg-config, X11/Wayland/D-Bus development headers, [Qt 6.12](https://www.qt.io/download-open-source) (`gcc_64`) |
 | macOS app | macOS 14+, Xcode Command Line Tools, [Qt 6.12](https://www.qt.io/download-open-source) (or Homebrew Qt 6) |
 | Android app | Android SDK (platform 37, NDK 30.0.16248370), JDK 17 or newer, `cargo-ndk` (see [android/README.md](android/README.md)) |
 
