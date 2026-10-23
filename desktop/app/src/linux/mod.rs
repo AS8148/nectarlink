@@ -87,6 +87,7 @@ pub fn quit_on_signals(quit: fn()) {
             }
             signals += 1;
             if signals > 1 {
+                crate::storage::shutdown();
                 std::process::exit(130);
             }
             tracing::info!("quitting on a signal");
@@ -94,6 +95,7 @@ pub fn quit_on_signals(quit: fn()) {
             let _ = std::thread::Builder::new().name("signal-quit-grace".into()).spawn(|| {
                 std::thread::sleep(SIGNAL_QUIT_GRACE);
                 tracing::warn!("quit took too long; ending");
+                crate::storage::shutdown();
                 std::process::exit(0);
             });
         }

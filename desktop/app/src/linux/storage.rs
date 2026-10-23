@@ -728,11 +728,13 @@ impl MountedDevice {
         if let Some(handle) = lock(&self.worker).take() {
             let _ = handle.join();
         }
+        unmount_fuse_path(&self.mount_path);
     }
 }
 
 static MOUNTS: OnceLock<Mutex<HashMap<DeviceId, Arc<MountedDevice>>>> = OnceLock::new();
 static LINUX_RECONCILING: Mutex<()> = Mutex::new(());
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 static STAGE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn mounts() -> MutexGuard<'static, HashMap<DeviceId, Arc<MountedDevice>>> {
@@ -1714,6 +1716,9 @@ fn handle_fuse_request(
 }
 
 fn mount_worker(mounted: &Arc<MountedDevice>) {
+    if mounted.stop.load(Ordering::Acquire) {
+        return;
+    }
     let Some(fuse_fd) = open_fuse_mount(&mounted.mount_path) else {
         tracing::warn!(
             path = %mounted.mount_path.display(),
@@ -1778,6 +1783,7 @@ fn mount_worker(mounted: &Arc<MountedDevice>) {
 }
 
 pub fn start() {
+    SHUTTING_DOWN.store(false, Ordering::Release);
     drop(mounts());
     core_host::host().hub.subscribe(
         Changes::DEVICES | Changes::STATUS | Changes::CAPABILITIES | Changes::TOGGLES,
@@ -1790,6 +1796,9 @@ pub fn start() {
 }
 
 pub fn sync() {
+    if SHUTTING_DOWN.load(Ordering::Acquire) {
+        return;
+    }
     let host = core_host::host();
     let Some(node) = core_host::node() else { return };
     let ready = host.hub.read(|s| matches!(s.status, Some(CoreStatus::Ready { .. })));
@@ -1824,6 +1833,9 @@ pub fn sync() {
 }
 
 fn reconcile(desired: &[(DeviceId, String, bool)], disabled: &[(DeviceId, String)]) {
+    if SHUTTING_DOWN.load(Ordering::Acquire) {
+        return;
+    }
     let Some(base) = base_sync_dir() else { return };
 
     for (id, name) in disabled {
@@ -1921,6 +1933,8 @@ pub fn on_event(event: &NodeEvent) {
 }
 
 pub fn shutdown() {
+    SHUTTING_DOWN.store(true, Ordering::Release);
+    let _guard = lock(&LINUX_RECONCILING);
     let active: Vec<Arc<MountedDevice>> = mounts().drain().map(|(_, v)| v).collect();
     for mounted in active {
         mounted.stop_and_join();

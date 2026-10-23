@@ -693,7 +693,7 @@ fn main() -> ExitCode {
             bridge::app::request_quit();
         });
     }
-    let code = app.as_mut().map_or(1, |app| app.exec());
+    let code = if bridge::app::is_quit_requested() { 0 } else { app.as_mut().map_or(1, |app| app.exec()) };
 
     tracing::info!(code, "shutting down");
     // QML first (it holds references into Qt), then the core.
