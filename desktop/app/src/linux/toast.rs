@@ -237,7 +237,56 @@ fn reset_dbus_session() -> Option<zbus::blocking::Connection> {
     let mutex = DBUS_SESSION.get_or_init(|| Mutex::new(None));
     let mut guard = mutex.lock().ok()?;
     *guard = zbus::blocking::Connection::session().ok();
+    // A new connection may reach a different notification server.
+    *CAPABILITIES.lock().unwrap_or_else(|e| e.into_inner()) = None;
     guard.clone()
+}
+
+/// What the notification server says it can show (`GetCapabilities`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Capabilities {
+    /// Bold, italics and entities in the body; without it, markup shows as text.
+    pub body_markup: bool,
+    /// Buttons, including the default action when the notification is clicked.
+    pub actions: bool,
+    /// A reply field in the notification (KDE Plasma).
+    pub inline_reply: bool,
+}
+
+impl Capabilities {
+    pub(crate) fn from_list(list: &[String]) -> Self {
+        let has = |name: &str| list.iter().any(|c| c == name);
+        Capabilities {
+            body_markup: has("body-markup"),
+            actions: has("actions"),
+            inline_reply: has("inline-reply"),
+        }
+    }
+}
+
+static CAPABILITIES: Mutex<Option<Capabilities>> = Mutex::new(None);
+
+/// The server's capabilities, asked once per connection. When there is no
+/// server to ask, plain text and no buttons.
+fn capabilities() -> Capabilities {
+    if let Some(caps) = *CAPABILITIES.lock().unwrap_or_else(|e| e.into_inner()) {
+        return caps;
+    }
+    let Some(list) = with_session_connection(|conn| {
+        let msg = conn.call_method(
+            Some("org.freedesktop.Notifications"),
+            "/org/freedesktop/Notifications",
+            Some("org.freedesktop.Notifications"),
+            "GetCapabilities",
+            &(),
+        )?;
+        msg.body().deserialize::<Vec<String>>()
+    }) else {
+        return Capabilities::default();
+    };
+    let caps = Capabilities::from_list(&list);
+    *CAPABILITIES.lock().unwrap_or_else(|e| e.into_inner()) = Some(caps);
+    caps
 }
 
 fn with_session_connection<T, F>(mut op: F) -> Option<T>
@@ -271,7 +320,21 @@ pub fn enabled() -> bool {
     if cfg!(test) {
         return true;
     }
+    // Asked each time the window comes to the front, on the GUI thread: keep
+    // the answer for a while instead of asking D-Bus and gsettings every time.
+    static CACHED: Mutex<Option<(std::time::Instant, bool)>> = Mutex::new(None);
+    const KEEP: Duration = Duration::from_secs(30);
+    if let Some((at, value)) = *CACHED.lock().unwrap_or_else(|e| e.into_inner())
+        && at.elapsed() < KEEP
+    {
+        return value;
+    }
+    let value = query_enabled();
+    *CACHED.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), value));
+    value
+}
 
+fn query_enabled() -> bool {
     if let Some(inhibited) = with_session_connection(|conn| {
         let msg = conn.call_method(
             Some("org.freedesktop.Notifications"),
@@ -406,7 +469,8 @@ pub fn show(toast: Toast) {
 fn execute_show(toast: Toast) {
     let image_str = toast.image.as_ref().map(|p| p.to_string_lossy().to_string());
     let title = format_summary(&toast.title, &toast.attribution);
-    let body = format_body(&toast.body, &toast.attribution, toast.progress.as_ref());
+    let markup = capabilities().body_markup;
+    let body = format_body(&toast.title, &toast.body, &toast.attribution, toast.progress.as_ref(), markup);
 
     let Some(mutex) = TOASTER.get() else {
         let icon_str = toast
@@ -496,7 +560,8 @@ fn execute_update_progress(device: &str, key: &str, progress: Progress) {
     };
 
     let summary = format_summary(&snapshot.title, &snapshot.attribution);
-    let body = format_body(&snapshot.body, &snapshot.attribution, Some(&progress));
+    let markup = capabilities().body_markup;
+    let body = format_body(&snapshot.title, &snapshot.body, &snapshot.attribution, Some(&progress), markup);
 
     let new_id = send_notification(
         replaces_id,
@@ -590,6 +655,8 @@ pub fn escape_notification_markup(s: &str) -> String {
     out
 }
 
+/// The summary line: the title, or where the notification came from when
+/// there's no title (then [`format_body`] doesn't repeat it).
 fn format_summary(title: &str, attribution: &str) -> String {
     if !title.trim().is_empty() {
         title.trim().to_string()
@@ -600,21 +667,30 @@ fn format_summary(title: &str, attribution: &str) -> String {
     }
 }
 
-fn format_body(body: &str, attribution: &str, progress: Option<&Progress>) -> String {
+/// The body: the text, a progress line, and where it came from, in italics
+/// when the server shows markup and as plain text when it doesn't.
+fn format_body(
+    title: &str,
+    body: &str,
+    attribution: &str,
+    progress: Option<&Progress>,
+    markup: bool,
+) -> String {
+    let text = |s: &str| if markup { escape_notification_markup(s.trim()) } else { s.trim().to_owned() };
     let mut parts = Vec::new();
     if !body.trim().is_empty() {
-        parts.push(escape_notification_markup(body.trim()));
+        parts.push(text(body));
     }
     if let Some(prog) = progress {
         let mut prog_line = String::new();
         if !prog.status.trim().is_empty() {
-            prog_line.push_str(&escape_notification_markup(prog.status.trim()));
+            prog_line.push_str(&text(&prog.status));
         }
         if !prog.label.trim().is_empty() {
             if !prog_line.is_empty() {
-                prog_line.push_str(" — ");
+                prog_line.push_str(" · ");
             }
-            prog_line.push_str(&escape_notification_markup(prog.label.trim()));
+            prog_line.push_str(&text(&prog.label));
         } else if let Some(val) = prog.value {
             let pct = (val.clamp(0.0, 1.0) * 100.0).round() as i32;
             if !prog_line.is_empty() {
@@ -627,8 +703,9 @@ fn format_body(body: &str, attribution: &str, progress: Option<&Progress>) -> St
             parts.push(prog_line);
         }
     }
-    if !attribution.trim().is_empty() {
-        parts.push(format!("<i>{}</i>", escape_notification_markup(attribution.trim())));
+    // Without a title the attribution is already the summary.
+    if !attribution.trim().is_empty() && !title.trim().is_empty() {
+        parts.push(if markup { format!("<i>{}</i>", text(attribution)) } else { text(attribution) });
     }
     parts.join("\n")
 }
@@ -637,20 +714,37 @@ fn compute_progress_percent(progress: &Progress) -> i32 {
     progress.value.map(|v| (v.clamp(0.0, 1.0) * 100.0).round() as i32).unwrap_or(0)
 }
 
-fn build_actions_list(actions: &[(String, String)], reply: Option<&(String, String)>) -> Vec<String> {
+/// The `actions` argument of `Notify`: pairs of action key and label. Only
+/// what the server can show: no buttons without `actions`, and a reply field
+/// only with `inline-reply` (elsewhere clicking the notification opens the
+/// conversation in the app, where the reply goes).
+fn build_actions_list(
+    actions: &[(String, String)],
+    reply: Option<&(String, String)>,
+    caps: Capabilities,
+) -> Vec<String> {
+    if !caps.actions {
+        return Vec::new();
+    }
     let mut items = Vec::with_capacity(2 + actions.len() * 2 + 2);
     items.push("default".to_string());
-    items.push("Open".to_string());
+    items.push(crate::i18n::tr!("Notifications", "Open"));
     for (id, label) in actions {
         if !id.trim().is_empty() {
             items.push(id.clone());
             items.push(label.clone());
         }
     }
-    if let Some((_action_id, placeholder)) = reply {
-        let label = if placeholder.trim().is_empty() { "Reply" } else { placeholder.trim() };
+    if caps.inline_reply
+        && let Some((_action_id, placeholder)) = reply
+    {
+        let label = if placeholder.trim().is_empty() {
+            crate::i18n::tr!("Notifications", "Reply")
+        } else {
+            placeholder.trim().to_owned()
+        };
         items.push("inline-reply".to_string());
-        items.push(label.to_string());
+        items.push(label);
     }
     items
 }
@@ -701,7 +795,7 @@ fn send_notification(
         return None;
     }
 
-    let actions_list = build_actions_list(actions, reply);
+    let actions_list = build_actions_list(actions, reply, capabilities());
     let hints_map = build_hints_map(progress, silent, call, image_path);
     let expire_timeout: i32 = if call { 0 } else { -1 };
 
@@ -816,10 +910,23 @@ mod tests {
     fn builds_actions_and_hints_without_gvariant_text_mangling() {
         let actions = vec![("mark_read".to_string(), "Mark 'read' [1]".to_string())];
         let reply = ("direct_reply".to_string(), "Reply \"now\"".to_string());
-        let list = build_actions_list(&actions, Some(&reply));
+        let kde = Capabilities { body_markup: true, actions: true, inline_reply: true };
+        let list = build_actions_list(&actions, Some(&reply), kde);
         assert_eq!(
             list,
             vec!["default", "Open", "mark_read", "Mark 'read' [1]", "inline-reply", "Reply \"now\""]
+        );
+
+        let gnome = Capabilities { body_markup: true, actions: true, inline_reply: false };
+        assert_eq!(
+            build_actions_list(&actions, Some(&reply), gnome),
+            vec!["default", "Open", "mark_read", "Mark 'read' [1]"],
+            "no reply field where the server can't show one"
+        );
+        assert!(build_actions_list(&actions, Some(&reply), Capabilities::default()).is_empty());
+        assert_eq!(
+            Capabilities::from_list(&["actions".into(), "body".into(), "body-markup".into()]),
+            Capabilities { body_markup: true, actions: true, inline_reply: false }
         );
 
         let prog = Progress { status: "Transferring".to_string(), value: Some(0.42), label: String::new() };
@@ -840,8 +947,17 @@ mod tests {
     #[test]
     fn escapes_notification_markup_and_formats_attribution_in_italics() {
         assert_eq!(escape_notification_markup("5 < 10 & 20 > 3"), "5 &lt; 10 &amp; 20 &gt; 3");
-        let formatted = format_body("Meet at <Cafe & Bar>", "Messages & Co · Pixel 9", None);
+        let formatted = format_body("Sam", "Meet at <Cafe & Bar>", "Messages & Co · Pixel 9", None, true);
         assert_eq!(formatted, "Meet at &lt;Cafe &amp; Bar&gt;\n<i>Messages &amp; Co · Pixel 9</i>");
+        let plain = format_body("Sam", "Meet at <Cafe & Bar>", "Messages & Co · Pixel 9", None, false);
+        assert_eq!(
+            plain, "Meet at <Cafe & Bar>\nMessages & Co · Pixel 9",
+            "no markup for servers without it"
+        );
+        let untitled = format_body("", "Battery low", "Pixel 9", None, true);
+        assert_eq!(untitled, "Battery low", "the attribution is the summary then, not repeated");
+        let prog = Progress { status: "Sending".into(), value: None, label: "photo.jpg".into() };
+        assert_eq!(format_body("Files", "", "", Some(&prog), false), "Sending · photo.jpg");
     }
 
     #[test]
