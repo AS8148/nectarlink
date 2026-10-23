@@ -328,7 +328,11 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         MirrorService.session.map { it.active }.distinctUntilChanged(),
         WebcamService.session.map { it.active || it.connecting }.distinctUntilChanged(),
         MicService.streaming.map { it != null }.distinctUntilChanged(),
-        pcSpeakerPlayer.playing.map { it }.distinctUntilChanged(),
+        // Phone as speaker: frames arriving, or the PC still has it on
+        // (frames stop while the PC is silent, for example a paused song).
+        combine(pcSpeakerPlayer.playing, _state.map { it.pcSpeakerRelayOn }) { playing, relayOn ->
+            playing || relayOn
+        }.distinctUntilChanged(),
     ) { hasTransfers: Boolean, isMirroring: Boolean, isWebcam: Boolean, isMic: Boolean, isSpeaker: Boolean ->
         hasTransfers || isMirroring || isWebcam || isMic || isSpeaker
     }.stateIn(scope, SharingStarted.Eagerly, false)
@@ -2221,16 +2225,16 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             val current = s.device(id)?.deckState
             if (current != null) {
                 val updatedOutputs = when (volume) {
-                    201 -> if (current.outputDevices.any { it.id == "nectarlink:phone_speaker" }) {
+                    201 -> if (current.outputDevices.any { it.id == PHONE_SPEAKER_OUTPUT }) {
                         current.outputDevices
                     } else {
                         current.outputDevices + app.nectarlink.core.AudioOutputDevice(
-                            id = "nectarlink:phone_speaker",
+                            id = PHONE_SPEAKER_OUTPUT,
                             name = "Phone speaker (NectarLink)",
                             isDefault = false,
                         )
                     }
-                    200 -> current.outputDevices.filterNot { it.id == "nectarlink:phone_speaker" }
+                    200 -> current.outputDevices.filterNot { it.id == PHONE_SPEAKER_OUTPUT }
                     else -> current.outputDevices
                 }
                 s.reduce(
