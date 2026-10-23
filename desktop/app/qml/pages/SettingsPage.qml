@@ -905,7 +905,7 @@ Item {
                             iconPath: Icons.globe
                             title: qsTr("Language")
                             description: Qt.platform.os === "linux"
-                                ? qsTr("NectarLink follows system language unless you pick one.")
+                                ? qsTr("NectarLink follows the system unless you pick one.")
                                 : qsTr("NectarLink follows Windows unless you pick one.")
                             Segmented {
                                 readonly property var other: page.languages.find(
@@ -3153,7 +3153,8 @@ Item {
                                     role: "bodySmall"
                                     muted: true
                                     text: AppController.wakeState === "enabled" ? qsTr("Ready")
-                                        : AppController.wakeState === "disabled" ? qsTr("Off in Windows")
+                                        : AppController.wakeState === "disabled"
+                                          ? (Qt.platform.os === "linux" ? qsTr("Off in the adapter's settings") : qsTr("Off in Windows"))
                                         : AppController.wakeState === "unknown" ? qsTr("Check settings")
                                         : qsTr("No adapter")
                                 }
@@ -3372,9 +3373,13 @@ Item {
                 wrapMode: Text.WordWrap
                 role: "body"
                 muted: true
-                text: hotspotSheet.networks.length > 0
-                    ? qsTr("Wi-Fi networks this PC has joined before. Windows keeps their passwords; NectarLink never sees them.")
-                    : qsTr("This PC hasn't saved any Wi-Fi networks yet. Join the phone's hotspot once from Windows' Wi-Fi list first.")
+                text: Qt.platform.os === "linux"
+                    ? (hotspotSheet.networks.length > 0
+                        ? qsTr("Wi-Fi networks this PC has joined before. Your system keeps their passwords; NectarLink never sees them.")
+                        : qsTr("This PC hasn't saved any Wi-Fi networks yet. Join the phone's hotspot once from your system Wi-Fi list first."))
+                    : (hotspotSheet.networks.length > 0
+                        ? qsTr("Wi-Fi networks this PC has joined before. Windows keeps their passwords; NectarLink never sees them.")
+                        : qsTr("This PC hasn't saved any Wi-Fi networks yet. Join the phone's hotspot once from Windows' Wi-Fi list first."))
             }
             // A PC can have saved dozens of networks: the list scrolls.
             ListView {

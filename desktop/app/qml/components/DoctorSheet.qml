@@ -10,6 +10,10 @@ Sheet {
 
     readonly property var checks: { try { return JSON.parse(AppController.doctorChecks) } catch (e) { return [] } }
     readonly property bool allWell: checks.length > 0 && checks.every(c => c.outcome === "ok")
+    // Checks for features that need setup (ids "linux-..."), as opposed to
+    // what stands between the phone and this PC.
+    readonly property bool connectionWell: checks.length > 0
+        && checks.every(c => c.outcome === "ok" || c.id.startsWith("linux-"))
 
     function fixLabel(fix) {
         switch (fix) {
@@ -49,7 +53,9 @@ Sheet {
                   ? qsTr("Checking network and firewall…")
                   : sheet.allWell
                     ? qsTr("Everything looks right.")
-                    : qsTr("Issues blocking your phone from reaching this PC:")
+                    : sheet.connectionWell
+                      ? qsTr("Your phone can reach this PC. A few features need a step from you:")
+                      : qsTr("Issues blocking your phone from reaching this PC:")
         }
 
         Flickable {

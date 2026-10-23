@@ -525,110 +525,74 @@ fn has_v4l2loopback() -> bool {
     false
 }
 
-/// Runs Linux-specific readiness checks:
-/// `(id, title, ok, detail, fix)`.
+/// Linux-specific checks for features that need something installed or
+/// allowed first: `(id, title, ok, detail, fix)`. These don't stop the phone
+/// from connecting; the Doctor lists them after the connection checks.
 pub fn linux_checks() -> Vec<(String, String, bool, String, Option<&'static str>)> {
+    use crate::i18n::tr;
     let mut out = Vec::new();
+    let mut check = |id: &str, ok: bool, ready: String, needs: String, how: String| {
+        out.push((
+            id.to_owned(),
+            if ok { ready } else { needs },
+            ok,
+            if ok { String::new() } else { how },
+            None,
+        ));
+    };
 
-    // 1. Desktop Tray / AppIndicator on GNOME
+    // GNOME hides tray icons unless the AppIndicator extension is on.
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
     if desktop.to_ascii_uppercase().contains("GNOME") {
-        let has_watcher = session_dbus_has_owner("org.kde.StatusNotifierWatcher");
-        if has_watcher {
-            out.push((
-                "linux-appindicator".into(),
-                "System tray (AppIndicator) is active".into(),
-                true,
-                String::new(),
-                None,
-            ));
-        } else {
-            out.push((
-                "linux-appindicator".into(),
-                "GNOME system tray extension not detected".into(),
-                false,
-                "GNOME hides system tray icons by default. Install and enable gnome-shell-extension-appindicator so NectarLink appears in your top bar.".into(),
-                None,
-            ));
-        }
+        check(
+            "linux-appindicator",
+            session_dbus_has_owner("org.kde.StatusNotifierWatcher"),
+            tr!("Doctor", "NectarLink is in the top bar"),
+            tr!("Doctor", "NectarLink can't show its icon in the top bar"),
+            tr!(
+                "Doctor",
+                "GNOME shows app icons there only with the AppIndicator extension. Install it (gnome-shell-extension-appindicator) and turn it on in Extensions."
+            ),
+        );
     }
 
-    // 2. Remote Input permissions
     let uinput_writable = OpenOptions::new().write(true).open("/dev/uinput").is_ok();
     let portal_available = session_dbus_has_owner("org.freedesktop.portal.Desktop");
     let x11_xtst = std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty()) && has_libxtst();
-    let remote_input_ok = uinput_writable || portal_available || x11_xtst;
-    out.push((
-        "linux-remote-input".into(),
-        if remote_input_ok {
-            "Remote Input is ready".into()
-        } else {
-            "Remote Input permissions not configured".into()
-        },
-        remote_input_ok,
-        if remote_input_ok {
-            String::new()
-        } else {
-            "Grant write access to /dev/uinput (via udev / input group) or install xdg-desktop-portal for Wayland remote input.".into()
-        },
-        None,
-    ));
+    check(
+        "linux-remote-input",
+        uinput_writable || portal_available || x11_xtst,
+        tr!("Doctor", "Your phone can control this PC"),
+        tr!("Doctor", "Your phone can't control this PC yet"),
+        tr!(
+            "Doctor",
+            "The touchpad and keyboard on your phone need the desktop portal (xdg-desktop-portal) or access to /dev/uinput."
+        ),
+    );
 
-    // 3. Phone Storage Mount (FUSE3)
-    let fuse_ok =
-        Path::new("/dev/fuse").exists() && (has_command("fusermount3") || has_command("fusermount"));
-    out.push((
-        "linux-fuse".into(),
-        if fuse_ok {
-            "Phone Storage Mount (FUSE3) is ready".into()
-        } else {
-            "Phone Storage Mount (FUSE3) unavailable".into()
-        },
-        fuse_ok,
-        if fuse_ok {
-            String::new()
-        } else {
-            "Install fuse3 (fusermount3) and ensure /dev/fuse exists to mount your phone's storage in your file manager.".into()
-        },
-        None,
-    ));
+    check(
+        "linux-fuse",
+        Path::new("/dev/fuse").exists() && (has_command("fusermount3") || has_command("fusermount")),
+        tr!("Doctor", "Phone storage can open in your file manager"),
+        tr!("Doctor", "Phone storage needs one more step"),
+        tr!("Doctor", "Install fuse3 to browse your phone's files in your file manager."),
+    );
 
-    // 4. Audio (PipeWire / PulseAudio)
-    let audio_ok =
-        has_command("pactl") || has_command("wpctl") || has_command("pw-play") || has_command("aplay");
-    out.push((
-        "linux-audio".into(),
-        if audio_ok {
-            "Audio tools (PipeWire / PulseAudio) are ready".into()
-        } else {
-            "Audio helper tools not found".into()
-        },
-        audio_ok,
-        if audio_ok {
-            String::new()
-        } else {
-            "Install pipewire-pulse (pactl), wireplumber (wpctl), or alsa-utils (aplay) for call audio routing and Find My PC alerts.".into()
-        },
-        None,
-    ));
+    check(
+        "linux-audio",
+        has_command("pactl") || has_command("wpctl") || has_command("pw-play") || has_command("aplay"),
+        tr!("Doctor", "Sound is ready"),
+        tr!("Doctor", "Calls and alerts can't play sound yet"),
+        tr!("Doctor", "Install pipewire-pulse (or pulseaudio-utils) for call audio and Find my PC."),
+    );
 
-    // 5. Virtual Camera (v4l2loopback)
-    let vcam_ok = has_v4l2loopback();
-    out.push((
-        "linux-v4l2loopback".into(),
-        if vcam_ok {
-            "Virtual Camera (v4l2loopback) is available".into()
-        } else {
-            "Virtual Camera (v4l2loopback) kernel module not found".into()
-        },
-        vcam_ok,
-        if vcam_ok {
-            String::new()
-        } else {
-            "Install v4l2loopback-dkms (or v4l2loopback) to use your phone as a webcam on Linux.".into()
-        },
-        None,
-    ));
+    check(
+        "linux-v4l2loopback",
+        has_v4l2loopback(),
+        tr!("Doctor", "Phone as webcam is ready"),
+        tr!("Doctor", "Phone as webcam needs one more step"),
+        tr!("Doctor", "Install v4l2loopback-dkms, then restart, so apps can use your phone as a camera."),
+    );
 
     out
 }

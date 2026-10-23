@@ -224,7 +224,7 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         let profile_detail = tr!(
             "Doctor",
             "On public networks the firewall keeps other devices from finding this PC. If it's your home or work \
-             network, Open network settings and set its firewall zone to Home or Trusted."
+             network, open network settings and set its firewall zone to Home or Trusted."
         );
         #[cfg(not(target_os = "linux"))]
         let profile_detail = tr!(
@@ -246,7 +246,7 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         None => {}
         Some(f) if !f.on => {
             #[cfg(target_os = "linux")]
-            let title = tr!("Doctor", "Firewall is off for this network");
+            let title = tr!("Doctor", "The firewall is off for this network");
             #[cfg(not(target_os = "linux"))]
             let title = tr!("Doctor", "Windows Firewall is off for this network");
             checks.push(check("firewall", Outcome::Ok, title, "", None));
@@ -254,7 +254,7 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         Some(f) if f.blocked => {
             #[cfg(target_os = "linux")]
             let (title, detail) = (
-                tr!("Doctor", "Firewall blocks NectarLink"),
+                tr!("Doctor", "The firewall blocks NectarLink"),
                 tr!(
                     "Doctor",
                     "A firewall rule blocks incoming NectarLink connections. Allow it, and your phone can connect."
@@ -272,7 +272,7 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         }
         Some(f) if !f.allowed => {
             #[cfg(target_os = "linux")]
-            let title = tr!("Doctor", "NectarLink isn't allowed through Firewall");
+            let title = tr!("Doctor", "NectarLink isn't allowed through the firewall");
             #[cfg(not(target_os = "linux"))]
             let title = tr!("Doctor", "NectarLink isn't allowed through Windows Firewall");
             checks.push(check(
@@ -285,7 +285,7 @@ pub fn diagnose(facts: &Facts, now_secs: i64) -> Vec<Check> {
         }
         Some(_) => {
             #[cfg(target_os = "linux")]
-            let title = tr!("Doctor", "Firewall lets your phone connect");
+            let title = tr!("Doctor", "The firewall lets your phone connect");
             #[cfg(not(target_os = "linux"))]
             let title = tr!("Doctor", "Windows Firewall lets your phone connect");
             checks.push(check("firewall", Outcome::Ok, title, "", None));
@@ -650,11 +650,17 @@ mod tests {
                 "Install gnome-shell-extension-appindicator".into(),
                 None,
             ),
-            ("linux-fuse".into(), "Phone Storage Mount (FUSE3) is ready".into(), true, String::new(), None),
+            (
+                "linux-fuse".into(),
+                "Phone storage can open in your file manager".into(),
+                true,
+                String::new(),
+                None,
+            ),
         ];
         let checks = diagnose(&f, 0);
         let fw = checks.iter().find(|c| c.id == "firewall").expect("firewall check");
-        assert_eq!(fw.title, "Firewall lets your phone connect");
+        assert_eq!(fw.title, "The firewall lets your phone connect");
         let appind = checks.iter().find(|c| c.id == "linux-appindicator").expect("appindicator check");
         assert_eq!(appind.outcome, Outcome::Warn);
         let fuse = checks.iter().find(|c| c.id == "linux-fuse").expect("fuse check");

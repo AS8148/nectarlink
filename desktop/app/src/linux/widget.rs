@@ -150,7 +150,7 @@ pub fn render_adaptive_card(state: &WidgetState) -> String {
     let battery_text = match state.battery_level {
         Some(pct) if state.battery_charging => format!("Battery: {pct}% (Charging)"),
         Some(pct) => format!("Battery: {pct}%"),
-        None => "Battery: —".to_owned(),
+        None => "Battery: unknown".to_owned(),
     };
 
     let clip_text = if state.last_clip_preview.trim().is_empty() {

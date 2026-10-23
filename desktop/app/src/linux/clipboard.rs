@@ -901,7 +901,7 @@ mod tests {
 
     #[test]
     fn cf_html_round_trips_utf8_fragment() {
-        let fragment = "<p>Hello <b>world</b> — 🐝</p>";
+        let fragment = "<p>Hello <b>world</b> · café 日本</p>";
         let encoded = encode_cf_html(fragment);
         assert_eq!(encoded.last(), Some(&0));
         let decoded = decode_cf_html(&encoded).expect("decoded fragment");
@@ -1005,7 +1005,7 @@ mod tests {
         assert_eq!(from_file_uri("# comment line"), None);
 
         let paths =
-            vec![PathBuf::from("/tmp/nectarlink_a.txt"), PathBuf::from("/tmp/nectarlink dir/b 🐝.png")];
+            vec![PathBuf::from("/tmp/nectarlink_a.txt"), PathBuf::from("/tmp/nectarlink dir/b café.png")];
         let list = format_uri_list(&paths);
         assert_eq!(parse_uri_list(&list), paths);
 
