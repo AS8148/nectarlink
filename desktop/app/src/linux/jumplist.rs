@@ -34,6 +34,14 @@ fn hicolor_icon_path() -> Option<PathBuf> {
     Some(base.join("icons/hicolor/256x256/apps/nectarlink.png"))
 }
 
+fn ensure_desktop_icon() -> PathBuf {
+    let icon_path = hicolor_icon_path().unwrap_or_else(|| PathBuf::from("nectarlink"));
+    if icon_path.is_absolute() && !icon_path.exists() {
+        let _ = super::icon::write_png(&icon_path, 256);
+    }
+    icon_path
+}
+
 /// Register the application `.desktop` entry and 256x256 PNG icon in the user's XDG data dir.
 ///
 /// Only installs into the user's real `~/.local/share/applications` when running as the
@@ -48,25 +56,14 @@ pub fn register(custom_data_dir: Option<&Path>) {
     let Some(apps_dir) = applications_dir() else {
         return;
     };
-    let icon_path = hicolor_icon_path().unwrap_or_else(|| PathBuf::from("nectarlink"));
-    if icon_path.is_absolute() && !icon_path.exists() {
-        let _ = super::icon::write_png(&icon_path, 128);
-    }
+    let icon_path = ensure_desktop_icon();
     if let Err(e) = write_desktop_file_to(&apps_dir, &exe, &icon_path, custom_data_dir) {
         tracing::debug!(error = %e, "couldn't update the desktop launcher actions");
     }
 }
 
-/// Write `nectarlink.desktop` into `dir` pointing at `exe` and `icon_path`.
-/// Extracted so unit tests can verify `.desktop` generation inside a temp directory.
-pub fn write_desktop_file_to(
-    dir: &Path,
-    exe: &Path,
-    icon_path: &Path,
-    custom_data_dir: Option<&Path>,
-) -> std::io::Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
-    let desktop_path = dir.join("nectarlink.desktop");
+/// Render the `.desktop` entry content pointing at `exe` and `icon_path`.
+pub fn build_desktop_file(exe: &Path, icon_path: &Path, custom_data_dir: Option<&Path>) -> String {
     let exe_str = super::autostart::escape_desktop_exec_arg(&exe.to_string_lossy());
     let icon_str: String =
         icon_path.to_string_lossy().chars().filter(|&c| c != '\n' && c != '\r' && !c.is_control()).collect();
@@ -82,9 +79,9 @@ pub fn write_desktop_file_to(
          Exec=\"{exe_str}\" %U\n\
          Icon={icon_str}\n\
          Terminal=false\n\
-         Categories=Utility;FileTransfer;\n\
-         MimeType=x-scheme-handler/nectarlink;\n\
-         StartupWMClass=NectarLink\n\
+         Categories=Network;FileTransfer;Telephony;\n\
+         MimeType=x-scheme-handler/nectarlink;x-scheme-handler/tel;x-scheme-handler/sms;x-scheme-handler/mms;x-scheme-handler/geo;\n\
+         StartupWMClass=nectarlink\n\
          Actions={};\n",
         actions_list.join(";")
     );
@@ -97,6 +94,20 @@ pub fn write_desktop_file_to(
              Exec=\"{exe_str}\" {args}\n"
         ));
     }
+    content
+}
+
+/// Write `nectarlink.desktop` into `dir` pointing at `exe` and `icon_path`.
+/// Extracted so unit tests can verify `.desktop` generation inside a temp directory.
+pub fn write_desktop_file_to(
+    dir: &Path,
+    exe: &Path,
+    icon_path: &Path,
+    custom_data_dir: Option<&Path>,
+) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let desktop_path = dir.join("nectarlink.desktop");
+    let content = build_desktop_file(exe, icon_path, custom_data_dir);
 
     #[cfg(unix)]
     {
@@ -180,7 +191,10 @@ mod tests {
 
         let text = std::fs::read_to_string(&desktop_path).expect("read desktop file");
         assert!(text.contains("[Desktop Entry]"));
-        assert!(text.contains("MimeType=x-scheme-handler/nectarlink;"));
+        assert!(text.contains(
+            "MimeType=x-scheme-handler/nectarlink;x-scheme-handler/tel;x-scheme-handler/sms;x-scheme-handler/mms;x-scheme-handler/geo;"
+        ));
+        assert!(text.contains("StartupWMClass=nectarlink"));
         assert!(text.contains("Actions=send-files;send-clipboard;find-phone;take-photo;open-timeline;"));
         assert!(text.contains(&format!("Icon={}", icon.display())));
 

@@ -1,42 +1,116 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Opening URLs, files, folders, and power actions (lock, sleep) on Linux via
-//! `xdg-open`, D-Bus (`org.freedesktop.FileManager1`), `loginctl`, and `systemctl`.
+//! XDG Desktop Portals, `org.freedesktop.FileManager1`, `xdg-open`, `loginctl`, and `systemctl`.
 
 use std::{
+    collections::HashMap,
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+const ALLOWED_URL_SCHEMES: &[&str] = &["http", "https", "mailto", "tel", "sms", "mms", "geo", "nectarlink"];
+
+/// Spawns `cmd` with null stdio and reaps the child in a background thread so
+/// terminated subprocesses never remain as `<defunct>` zombies.
+fn spawn_and_reap(mut cmd: Command) -> std::io::Result<()> {
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
+    let _ = std::thread::Builder::new().name("child-reaper".into()).spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 fn spawn_detached(program: &str, args: &[&str]) -> Result<(), String> {
-    Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    spawn_and_reap(cmd).map_err(|e| format!("{program}: {e}"))
+}
+
+/// Validates that `url` uses an allowed scheme (`http`, `https`, `mailto`, `tel`,
+/// `sms`, `mms`, `geo`, `nectarlink`), does not begin with `-`, and contains no
+/// control or whitespace characters.
+fn validate_url(url: &str) -> Result<&str, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("empty URL".into());
+    }
+    if trimmed.starts_with('-') {
+        return Err("URL must not start with '-'".into());
+    }
+    if trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err("URL contains invalid whitespace or control characters".into());
+    }
+    let Some((scheme, rest)) = trimmed.split_once(':') else {
+        return Err("missing URL scheme".into());
+    };
+    let scheme_lower = scheme.to_ascii_lowercase();
+    if !ALLOWED_URL_SCHEMES.contains(&scheme_lower.as_str()) {
+        return Err(format!("unsupported URL scheme: {scheme}"));
+    }
+    if rest.is_empty() {
+        return Err("empty URL target".into());
+    }
+    if (scheme_lower == "http" || scheme_lower == "https") && (!rest.starts_with("//") || rest.len() <= 2) {
+        return Err("http/https URL must include a host".into());
+    }
+    Ok(trimmed)
+}
+
+/// Opens a validated URL (`http`, `https`, `mailto`, `tel`, `sms`, `mms`, `geo`,
+/// `nectarlink`) via `org.freedesktop.portal.OpenURI` over D-Bus first so the
+/// URL is not exposed in process command-line arguments, falling back to
+/// `gio open` / `xdg-open`.
+pub fn open_url(url: &str) -> Result<(), String> {
+    let trimmed = url.trim();
+    let validated = validate_url(trimmed)?;
+
+    if !cfg!(test)
+        && super::non_tokio(|| {
+            let Ok(conn) = zbus::blocking::Connection::session() else {
+                return false;
+            };
+            if !super::dbus_name_has_owner(&conn, "org.freedesktop.portal.Desktop") {
+                return false;
+            }
+            let options: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+            conn.call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.OpenURI"),
+                "OpenURI",
+                &("", validated, &options),
+            )
+            .is_ok()
+        })
+    {
+        return Ok(());
+    }
+
+    if Command::new("gio")
+        .args(["open", "--", validated])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("{program}: {e}"))
-}
+        .status()
+        .is_ok_and(|s| s.success())
+    {
+        return Ok(());
+    }
 
-/// Opens an `http://` or `https://` URL (or local settings URI) with `xdg-open`.
-pub fn open_url(url: &str) -> Result<(), String> {
-    let lower = url.get(..8).map(str::to_ascii_lowercase).unwrap_or_default();
-    if lower.starts_with("http://") || lower.starts_with("https://") {
-        return spawn_detached("xdg-open", &[url]);
-    }
-    // Map Windows settings deep-links used by Doctor / Bluetooth UI to desktop equivalents or no-op.
-    if url.starts_with("ms-settings:") || url.eq_ignore_ascii_case("firewall.cpl") {
-        return spawn_detached("xdg-open", &[url]).or(Ok(()));
-    }
-    Err("only http and https links can be opened".into())
+    spawn_detached("xdg-open", &[validated])
 }
 
 /// Opens the default mail client for an email address (`mailto:<email>`).
 pub fn open_mailto(email: &str) -> Result<(), String> {
     let trimmed = email.trim();
-    if trimmed.is_empty() || !trimmed.contains('@') || trimmed.chars().any(char::is_whitespace) {
+    if trimmed.is_empty()
+        || trimmed.starts_with('-')
+        || !trimmed.contains('@')
+        || trimmed.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
         return Err("invalid email address".into());
     }
     let uri = if trimmed.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("mailto:")) {
@@ -44,7 +118,7 @@ pub fn open_mailto(email: &str) -> Result<(), String> {
     } else {
         format!("mailto:{trimmed}")
     };
-    spawn_detached("xdg-open", &[&uri])
+    open_url(&uri)
 }
 
 /// Opens a street address in OpenStreetMap in the default browser.
@@ -72,31 +146,148 @@ pub fn is_url_scheme_registered(scheme: &str) -> bool {
         .is_some_and(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
 }
 
-/// Opens a file with the user's default application (`xdg-open`).
-pub fn open_file(path: &Path) -> Result<(), String> {
-    spawn_detached("xdg-open", &[&path.to_string_lossy()])
+/// Percent-encodes a filesystem path for use in `file://` URIs and FreeDesktop
+/// `.trashinfo` `Path=` entries (preserving `/` and unreserved URI bytes).
+pub(crate) fn percent_encode_path(path: &Path) -> String {
+    #[cfg(unix)]
+    let bytes: &[u8] = std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str());
+    #[cfg(not(unix))]
+    let owned = path.to_string_lossy().into_owned().into_bytes();
+    #[cfg(not(unix))]
+    let bytes: &[u8] = &owned;
+
+    let mut out = String::with_capacity(bytes.len());
+    for &b in bytes {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+    }
+    out
 }
 
-/// Opens a directory in the file manager (`xdg-open`).
+/// Formats `path` as a properly percent-encoded `file://` URI.
+pub(crate) fn format_file_uri(path: &Path) -> String {
+    let encoded = percent_encode_path(path);
+    if encoded.starts_with('/') { format!("file://{encoded}") } else { format!("file:///{encoded}") }
+}
+
+/// Opens a file with the user's default application via
+/// `org.freedesktop.portal.OpenURI.OpenFile` (passing a file descriptor so the
+/// path is not exposed on a subprocess command line), falling back to `xdg-open`.
+pub fn open_file(path: &Path) -> Result<(), String> {
+    let path_str = path.to_string_lossy();
+    if path_str.is_empty() || path_str.starts_with('-') {
+        return Err("invalid file path".into());
+    }
+
+    if !cfg!(test)
+        && let Ok(file) = fs::File::open(path)
+        && super::non_tokio(|| {
+            let Ok(conn) = zbus::blocking::Connection::session() else {
+                return false;
+            };
+            if !super::dbus_name_has_owner(&conn, "org.freedesktop.portal.Desktop") {
+                return false;
+            }
+            let options: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+            conn.call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.OpenURI"),
+                "OpenFile",
+                &("", zbus::zvariant::Fd::from(&file), &options),
+            )
+            .is_ok()
+        })
+    {
+        return Ok(());
+    }
+
+    spawn_detached("xdg-open", &[&path_str])
+}
+
+/// Opens a directory in the file manager via `org.freedesktop.FileManager1.ShowFolders`
+/// or `org.freedesktop.portal.OpenURI.OpenDirectory` first, falling back to `xdg-open`.
 pub fn open_folder(path: &Path) -> Result<(), String> {
-    spawn_detached("xdg-open", &[&path.to_string_lossy()])
+    let path_str = path.to_string_lossy();
+    if path_str.is_empty() || path_str.starts_with('-') {
+        return Err("invalid folder path".into());
+    }
+
+    let abs = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let folder_uri = format_file_uri(&abs);
+
+    if !cfg!(test)
+        && super::non_tokio(|| {
+            let Ok(conn) = zbus::blocking::Connection::session() else {
+                return false;
+            };
+            if super::dbus_name_has_owner(&conn, "org.freedesktop.FileManager1")
+                && conn
+                    .call_method(
+                        Some("org.freedesktop.FileManager1"),
+                        "/org/freedesktop/FileManager1",
+                        Some("org.freedesktop.FileManager1"),
+                        "ShowFolders",
+                        &(vec![folder_uri.as_str()], ""),
+                    )
+                    .is_ok()
+            {
+                return true;
+            }
+
+            if super::dbus_name_has_owner(&conn, "org.freedesktop.portal.Desktop")
+                && let Ok(dir_file) = fs::File::open(&abs)
+            {
+                let options: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+                if conn
+                    .call_method(
+                        Some("org.freedesktop.portal.Desktop"),
+                        "/org/freedesktop/portal/desktop",
+                        Some("org.freedesktop.portal.OpenURI"),
+                        "OpenDirectory",
+                        &("", zbus::zvariant::Fd::from(&dir_file), &options),
+                    )
+                    .is_ok()
+                {
+                    return true;
+                }
+            }
+            false
+        })
+    {
+        return Ok(());
+    }
+
+    spawn_detached("xdg-open", &[&path_str])
 }
 
 /// Reveals and selects `path` in the file manager via `org.freedesktop.FileManager1.ShowItems`,
-/// falling back to opening the parent directory with `xdg-open`.
+/// falling back to opening the parent directory with [`open_folder`].
 pub fn select_in_explorer(path: &Path) -> Result<(), String> {
     let abs = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let file_uri = format!("file://{}", abs.to_string_lossy());
-    if let Ok(conn) = zbus::blocking::Connection::session()
-        && conn
-            .call_method(
-                Some("org.freedesktop.FileManager1"),
-                "/org/freedesktop/FileManager1",
-                Some("org.freedesktop.FileManager1"),
-                "ShowItems",
-                &(vec![file_uri.as_str()], ""),
-            )
-            .is_ok()
+    let file_uri = format_file_uri(&abs);
+    if !cfg!(test)
+        && super::non_tokio(|| {
+            let Ok(conn) = zbus::blocking::Connection::session() else {
+                return false;
+            };
+            super::dbus_name_has_owner(&conn, "org.freedesktop.FileManager1")
+                && conn
+                    .call_method(
+                        Some("org.freedesktop.FileManager1"),
+                        "/org/freedesktop/FileManager1",
+                        Some("org.freedesktop.FileManager1"),
+                        "ShowItems",
+                        &(vec![file_uri.as_str()], ""),
+                    )
+                    .is_ok()
+        })
     {
         return Ok(());
     }
@@ -104,28 +295,12 @@ pub fn select_in_explorer(path: &Path) -> Result<(), String> {
     open_folder(folder)
 }
 
-/// Runs `program` with `arguments`. Special-cases Windows `"explorer.exe"` calls from shared UI code.
+/// Runs `program` with `arguments` (split on spaces, `"` groups).
 pub fn run(program: &Path, arguments: &str) -> Result<(), String> {
-    let prog_str = program.to_string_lossy();
-    if prog_str.eq_ignore_ascii_case("explorer.exe") || prog_str.eq_ignore_ascii_case("explorer") {
-        let trimmed = arguments.trim();
-        if let Some(rest) = trimmed.strip_prefix("/select,") {
-            let target = rest.trim().trim_matches('"');
-            return select_in_explorer(Path::new(target));
-        }
-        let target = trimmed.trim_matches('"');
-        return open_folder(Path::new(target));
-    }
-
     let args = split_args(arguments);
-    Command::new(program)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let mut cmd = Command::new(program);
+    cmd.args(&args);
+    spawn_and_reap(cmd).map_err(|e| e.to_string())
 }
 
 fn split_args(arguments: &str) -> Vec<String> {
@@ -179,8 +354,152 @@ pub fn sleep_system() -> Result<(), String> {
     sleep()
 }
 
-/// Launches an interactive or full-screen screenshot tool on Linux, falling back to `Print`.
+fn decode_file_uri(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let path_part =
+        rest.strip_prefix("localhost/").map(|s| format!("/{s}")).unwrap_or_else(|| rest.to_owned());
+    let bytes = path_part.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16)?;
+            let lo = (bytes[i + 2] as char).to_digit(16)?;
+            out.push(((hi << 4) | lo) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Some(PathBuf::from(std::ffi::OsString::from_vec(out)))
+    }
+    #[cfg(not(unix))]
+    {
+        String::from_utf8(out).ok().map(PathBuf::from)
+    }
+}
+
+fn screenshot_via_portal(save_path: &Path) -> bool {
+    let Ok(conn) = zbus::blocking::Connection::session() else {
+        return false;
+    };
+    let Ok(rule) = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.portal.Request")
+        .and_then(|b| b.member("Response"))
+        .map(|b| b.build())
+    else {
+        return false;
+    };
+    let Ok(iter) = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None) else {
+        return false;
+    };
+
+    let mut options: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+    options.insert("interactive", zbus::zvariant::Value::Bool(false));
+
+    let Ok(reply) = conn.call_method(
+        Some("org.freedesktop.portal.Desktop"),
+        "/org/freedesktop/portal/desktop",
+        Some("org.freedesktop.portal.Screenshot"),
+        "Screenshot",
+        &("", &options),
+    ) else {
+        return false;
+    };
+
+    let expected_handle =
+        reply.body().deserialize::<zbus::zvariant::OwnedObjectPath>().ok().map(|p| p.to_string());
+
+    for msg in iter.take(16) {
+        let Ok(msg) = msg else {
+            break;
+        };
+        if let Some(ref handle) = expected_handle
+            && msg.header().path().map(|p| p.as_str()) != Some(handle.as_str())
+        {
+            continue;
+        }
+        if let Ok((code, results)) =
+            msg.body().deserialize::<(u32, HashMap<String, zbus::zvariant::OwnedValue>)>()
+        {
+            if code != 0 {
+                return false;
+            }
+            if let Some(uri_val) = results.get("uri")
+                && let Ok(uri_str) = <&str>::try_from(uri_val)
+                && let Some(src_path) = decode_file_uri(uri_str)
+                && src_path.is_file()
+            {
+                if src_path == save_path {
+                    return true;
+                }
+                if fs::copy(&src_path, save_path).is_ok() {
+                    let _ = fs::remove_file(&src_path);
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+    false
+}
+
+/// Captures a screenshot to `save_path` using `org.freedesktop.portal.Screenshot`,
+/// `grim`, `gnome-screenshot`, `spectacle`, or ImageMagick `import`, and verifies
+/// that `save_path` exists and is non-empty.
+pub fn take_screenshot_to(save_path: &Path) -> Result<(), String> {
+    if let Some(parent) = save_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let check_saved = || save_path.exists() && save_path.metadata().is_ok_and(|m| m.len() > 0);
+
+    if screenshot_via_portal(save_path) && check_saved() {
+        return Ok(());
+    }
+
+    let dest = save_path.to_string_lossy();
+    let cli_candidates: &[(&str, &[&str])] = &[
+        ("grim", &[&dest]),
+        ("gnome-screenshot", &["-f", &dest]),
+        ("spectacle", &["-b", "-n", "-o", &dest]),
+        ("import", &["-window", "root", &dest]),
+    ];
+
+    for (prog, args) in cli_candidates {
+        if Command::new(prog)
+            .args(*args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+            && check_saved()
+        {
+            return Ok(());
+        }
+    }
+
+    Err("failed to capture screenshot".into())
+}
+
+/// Captures a screenshot to the user's Pictures directory (or temporary directory),
+/// falling back to interactive screenshot utilities or the `Print` key.
 pub fn take_screenshot() -> Result<(), String> {
+    let dir = dirs::picture_dir().or_else(dirs::home_dir).unwrap_or_else(std::env::temp_dir);
+    let stamp = format_deletion_date(SystemTime::now()).replace(':', "-");
+    let save_path = dir.join(format!("Screenshot_{stamp}.png"));
+    if take_screenshot_to(&save_path).is_ok() {
+        return Ok(());
+    }
+
     let candidates: &[(&str, &[&str])] = &[
         ("spectacle", &[]),
         ("gnome-screenshot", &["-i"]),
@@ -196,8 +515,35 @@ pub fn take_screenshot() -> Result<(), String> {
     Ok(())
 }
 
+/// Strips FreeDesktop `.desktop` `Exec=` field codes (`%f`, `%F`, `%u`, `%U`,
+/// `%i`, `%c`, `%k`, etc.) even when embedded in an argument (e.g. `--url=%u`),
+/// and unescapes `%%` to `%`.
+fn strip_desktop_field_codes(token: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    let mut chars = token.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            match chars.peek().copied() {
+                Some('%') => {
+                    chars.next();
+                    out.push('%');
+                }
+                Some('f' | 'F' | 'u' | 'U' | 'i' | 'c' | 'k' | 'd' | 'D' | 'n' | 'N' | 'v' | 'm') => {
+                    chars.next();
+                }
+                Some(_) | None => {
+                    out.push('%');
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Parses the `[Desktop Entry]` `Exec=` command from a `.desktop` file and strips
-/// freedesktop field codes (`%f`, `%F`, `%u`, `%U`, `%i`, `%c`, `%k`, etc.).
+/// freedesktop field codes (`%f`, `%F`, `%u`, `%U`, `%i`, `%c`, `%k`, `%%`).
 pub(crate) fn parse_desktop_exec(contents: &str) -> Option<(String, Vec<String>)> {
     let mut in_desktop_entry = false;
     for raw_line in contents.lines() {
@@ -216,10 +562,7 @@ pub(crate) fn parse_desktop_exec(contents: &str) -> Option<(String, Vec<String>)
             let tokens = split_args(rest.trim());
             let mut filtered: Vec<String> = Vec::new();
             for tok in tokens {
-                if tok.starts_with('%') && tok.len() == 2 && tok != "%%" {
-                    continue;
-                }
-                let cleaned = tok.replace("%%", "%");
+                let cleaned = strip_desktop_field_codes(&tok);
                 if !cleaned.is_empty() {
                     filtered.push(cleaned);
                 }
@@ -267,14 +610,14 @@ pub fn launch_app(path: &Path) -> Result<(), String> {
         let resolved = if path.is_file() { Some(path.to_path_buf()) } else { find_desktop_file(trimmed) };
 
         if let Some(ref desktop_path) = resolved {
-            // 1. Try `gio launch <path.desktop>`
+            // 1. Try `gio launch <path.desktop>` and check its exit status.
             if Command::new("gio")
                 .args(["launch", &desktop_path.to_string_lossy()])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .spawn()
-                .is_ok()
+                .status()
+                .is_ok_and(|s| s.success())
             {
                 return Ok(());
             }
@@ -299,11 +642,7 @@ pub fn launch_app(path: &Path) -> Result<(), String> {
         return Err(format!("could not launch desktop entry {trimmed}"));
     }
 
-    if path.is_file()
-        && let Ok(child) =
-            Command::new(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
-    {
-        drop(child);
+    if path.is_file() && spawn_and_reap(Command::new(path)).is_ok() {
         return Ok(());
     }
 
@@ -312,14 +651,9 @@ pub fn launch_app(path: &Path) -> Result<(), String> {
 
 /// Alias for [`launch_app`].
 pub fn launch_executable(path: &Path, args: &[&str]) -> Result<(), String> {
-    Command::new(path)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let mut cmd = Command::new(path);
+    cmd.args(args);
+    spawn_and_reap(cmd).map_err(|e| e.to_string())
 }
 
 /// Runs a shell command (`sh -c <command>`) detached in the background.
@@ -331,18 +665,102 @@ pub fn run_command(command: &str) -> Result<(), String> {
     spawn_detached("sh", &["-c", trimmed])
 }
 
-/// Moves `path` to the FreeDesktop Trash (`~/.local/share/Trash/files/` + `.trashinfo`),
-/// or falls back to `gio trash`.
+/// Formats `now` as local `YYYY-MM-DDTHH:MM:SS` via `libc::localtime_r` as
+/// required by the FreeDesktop.org Trash 1.0 specification.
+pub(crate) fn format_deletion_date(now: SystemTime) -> String {
+    let secs = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let time_t = secs as libc::time_t;
+    // SAFETY: `libc::tm` is a plain C struct of integers and a pointer; zero-initialization
+    // is valid before passing `&mut tm` to `localtime_r`.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: `time_t` and `tm` are valid stack pointers; `localtime_r` is thread-safe.
+    let res = unsafe { libc::localtime_r(&time_t, &mut tm) };
+    if res.is_null() {
+        return "1970-01-01T00:00:00".to_owned();
+    }
+    let year = tm.tm_year + 1900;
+    let month = (tm.tm_mon + 1).clamp(1, 12);
+    let day = tm.tm_mday.clamp(1, 31);
+    let hour = tm.tm_hour.clamp(0, 23);
+    let min = tm.tm_min.clamp(0, 59);
+    let sec = tm.tm_sec.clamp(0, 60);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}")
+}
+
+/// Formats the contents of a FreeDesktop.org `.trashinfo` file with a
+/// percent-encoded `Path=` and `DeletionDate=`.
+pub(crate) fn format_trashinfo(original_path: &Path, deletion_date: &str) -> String {
+    format!("[Trash Info]\nPath={}\nDeletionDate={}\n", percent_encode_path(original_path), deletion_date)
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if file_type.is_symlink() {
+            let link_target = fs::read_link(&src_path)?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&link_target, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn move_across_filesystems(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let meta = fs::symlink_metadata(src)?;
+    if meta.is_dir() {
+        if let Err(e) = copy_dir_recursive(src, dst) {
+            let _ = fs::remove_dir_all(dst);
+            return Err(e);
+        }
+        fs::remove_dir_all(src)
+    } else if meta.file_type().is_symlink() {
+        let link_target = fs::read_link(src)?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&link_target, dst)?;
+        if let Err(e) = fs::remove_file(src) {
+            let _ = fs::remove_file(dst);
+            return Err(e);
+        }
+        Ok(())
+    } else {
+        if let Err(e) = fs::copy(src, dst) {
+            let _ = fs::remove_file(dst);
+            return Err(e);
+        }
+        if let Err(e) = fs::remove_file(src) {
+            let _ = fs::remove_file(dst);
+            return Err(e);
+        }
+        Ok(())
+    }
+}
+
+/// Moves `path` to the FreeDesktop Trash (`~/.local/share/Trash/files/` + `.trashinfo`).
 pub fn recycle_file(path: &Path) -> Result<(), String> {
     let data_dir = dirs::data_local_dir().ok_or_else(|| "no XDG_DATA_HOME directory".to_owned())?;
     recycle_file_in(&data_dir.join("Trash"), path)
 }
 
 fn recycle_file_in(trash_dir: &Path, path: &Path) -> Result<(), String> {
-    if !path.exists() {
+    if path.symlink_metadata().is_err() {
         return Err(format!("{} does not exist", path.display()));
     }
-    let abs = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let abs = match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => {
+            let canon_parent = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+            canon_parent.join(name)
+        }
+        _ => fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+    };
+
     let files_dir = trash_dir.join("files");
     let info_dir = trash_dir.join("info");
     fs::create_dir_all(&files_dir).map_err(|e| e.to_string())?;
@@ -351,21 +769,53 @@ fn recycle_file_in(trash_dir: &Path, path: &Path) -> Result<(), String> {
     let base_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("trashed_item");
     let mut chosen_name = base_name.to_owned();
     let mut counter = 2u32;
-    while files_dir.join(&chosen_name).exists() || info_dir.join(format!("{chosen_name}.trashinfo")).exists()
-    {
-        chosen_name = format!("{base_name}.{counter}");
-        counter += 1;
-    }
 
-    let dest_file: PathBuf = files_dir.join(&chosen_name);
-    let dest_info: PathBuf = info_dir.join(format!("{chosen_name}.trashinfo"));
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    let info_contents =
-        format!("[Trash Info]\nPath={}\nDeletionDate=1970-01-01T00:00:{:02}\n", abs.display(), secs % 60);
-    fs::write(&dest_info, info_contents).map_err(|e| e.to_string())?;
-    if let Err(e) = fs::rename(path, &dest_file) {
+    let (dest_file, dest_info, mut info_file) = loop {
+        let candidate_file = files_dir.join(&chosen_name);
+        let candidate_info = info_dir.join(format!("{chosen_name}.trashinfo"));
+        if candidate_file.symlink_metadata().is_ok() {
+            chosen_name = format!("{base_name}.{counter}");
+            counter += 1;
+            continue;
+        }
+
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+
+        match opts.open(&candidate_info) {
+            Ok(f) => break (candidate_file, candidate_info, f),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                chosen_name = format!("{base_name}.{counter}");
+                counter += 1;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+
+    let deletion_date = format_deletion_date(SystemTime::now());
+    let info_contents = format_trashinfo(&abs, &deletion_date);
+    if let Err(e) = info_file.write_all(info_contents.as_bytes()).and_then(|()| info_file.flush()) {
+        drop(info_file);
         let _ = fs::remove_file(&dest_info);
         return Err(e.to_string());
+    }
+    drop(info_file);
+
+    if let Err(e) = fs::rename(path, &dest_file) {
+        if e.raw_os_error() == Some(libc::EXDEV) {
+            if let Err(copy_err) = move_across_filesystems(path, &dest_file) {
+                let _ = fs::remove_file(&dest_info);
+                return Err(copy_err.to_string());
+            }
+        } else {
+            let _ = fs::remove_file(&dest_info);
+            return Err(e.to_string());
+        }
     }
     Ok(())
 }
@@ -378,26 +828,52 @@ mod tests {
     fn refuses_non_web_urls() {
         assert!(open_url("file:///etc/passwd").is_err());
         assert!(open_url("javascript:alert(1)").is_err());
+        assert!(open_url("-http://example.com").is_err());
+        assert!(open_url("http://").is_err());
     }
 
     #[test]
     fn validates_mailto_and_maps() {
         assert!(open_mailto("").is_err());
         assert!(open_mailto("not-an-email").is_err());
+        assert!(open_mailto("-user@example.com").is_err());
         assert!(open_maps("   ").is_err());
+    }
+
+    #[test]
+    fn formats_file_uri_with_percent_encoding() {
+        assert_eq!(
+            format_file_uri(Path::new("/home/user/My Documents/report #1 (final).pdf")),
+            "file:///home/user/My%20Documents/report%20%231%20%28final%29.pdf"
+        );
+        assert_eq!(format_file_uri(Path::new("/tmp/100%_done?.txt")), "file:///tmp/100%25_done%3F.txt");
     }
 
     #[test]
     fn moves_file_to_freedesktop_trash() {
         let dir = tempfile::tempdir().unwrap();
         let trash = dir.path().join("Trash");
-        let file = dir.path().join("note.txt");
+        let file = dir.path().join("my note #1.txt");
         fs::write(&file, b"hello").unwrap();
 
         recycle_file_in(&trash, &file).unwrap();
         assert!(!file.exists());
-        assert!(trash.join("files").join("note.txt").is_file());
-        assert!(trash.join("info").join("note.txt.trashinfo").is_file());
+        assert!(trash.join("files").join("my note #1.txt").is_file());
+        let info_path = trash.join("info").join("my note #1.txt.trashinfo");
+        assert!(info_path.is_file());
+
+        let info_text = fs::read_to_string(&info_path).unwrap();
+        assert!(info_text.starts_with("[Trash Info]\nPath="), "{info_text}");
+        assert!(info_text.contains("my%20note%20%231.txt\n"), "{info_text}");
+        assert!(!info_text.contains("DeletionDate=1970-01-01"), "{info_text}");
+        assert!(info_text.contains("DeletionDate=20"), "{info_text}");
+
+        let formatted =
+            format_trashinfo(Path::new("/home/alice/My Files/test 100%.txt"), "2026-10-22T23:05:12");
+        assert_eq!(
+            formatted,
+            "[Trash Info]\nPath=/home/alice/My%20Files/test%20100%25.txt\nDeletionDate=2026-10-22T23:05:12\n"
+        );
     }
 
     #[test]
@@ -406,7 +882,7 @@ mod tests {
 [Desktop Entry]
 Type=Application
 Name=Firefox Web Browser
-Exec=/usr/lib/firefox/firefox --new-window %u
+Exec=/usr/lib/firefox/firefox --new-window --url=%u --scale=100%% %F
 Icon=firefox
 
 [Desktop Action new-private-window]
@@ -415,7 +891,7 @@ Exec=/usr/lib/firefox/firefox --private-window %u
 ";
         let (prog, args) = parse_desktop_exec(desktop).expect("should parse Exec=");
         assert_eq!(prog, "/usr/lib/firefox/firefox");
-        assert_eq!(args, vec!["--new-window"]);
+        assert_eq!(args, vec!["--new-window", "--url=", "--scale=100%"]);
     }
 
     #[test]

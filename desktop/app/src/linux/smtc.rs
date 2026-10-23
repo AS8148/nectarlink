@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! What plays on a phone, exported to Linux desktop media controls (MPRIS2
-//! provider `org.mpris.MediaPlayer2.nectarlink` and atomic JSON state snapshot).
+//! D-Bus service `org.mpris.MediaPlayer2.nectarlink` on `/org/mpris/MediaPlayer2`
+//! and atomic JSON state snapshot).
 //!
 //! Mirrors the public API of `win::smtc`: [`start`] registers the command
 //! callback and spawns the `"media-controls"` worker thread; [`show`] updates
@@ -14,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use nectarlink_core::{DeviceId, MediaAction};
 use serde::{Deserialize, Serialize};
-use zbus::zvariant::{ObjectPath, OwnedValue, Str};
+use zbus::zvariant::{ObjectPath, OwnedValue, Str, Value};
 
 use crate::state::PlayerView;
 
@@ -92,42 +93,71 @@ where
 }
 
 fn current_export_state() -> MprisExportState {
-    let latest = lock(&LAST_SHOWN).clone();
-    build_export_state(latest.as_ref())
+    let shown = lock(&LAST_SHOWN).clone();
+    build_export_state(shown.as_ref())
 }
 
-fn build_mpris_metadata_dict(state: &MprisExportState) -> HashMap<String, OwnedValue> {
-    let mut dict = HashMap::new();
+pub(crate) fn build_mpris_metadata_map(state: &MprisExportState) -> HashMap<String, OwnedValue> {
+    let mut map = HashMap::new();
     let track_path = if state.enabled {
-        "/org/mpris/MediaPlayer2/TrackList/CurrentTrack"
+        "/org/nectarlink/MediaPlayer2/Track/current"
     } else {
         "/org/mpris/MediaPlayer2/TrackList/NoTrack"
     };
-    if let Ok(path) = ObjectPath::try_from(track_path) {
-        dict.insert("mpris:trackid".to_owned(), OwnedValue::from(path));
+    if let Ok(path) = ObjectPath::try_from(track_path)
+        && let Ok(val) = OwnedValue::try_from(Value::from(path))
+    {
+        map.insert("mpris:trackid".to_owned(), val);
     }
-    if state.enabled {
-        dict.insert("xesam:title".to_owned(), OwnedValue::from(Str::from(state.title.as_str())));
-        if let Ok(artists) = zbus::zvariant::Value::from(vec![state.artist.as_str()]).try_to_owned() {
-            dict.insert("xesam:artist".to_owned(), artists);
-        }
-        dict.insert("xesam:album".to_owned(), OwnedValue::from(Str::from(state.album.as_str())));
-        if let Some(ref art_url) = state.art_url {
-            dict.insert("mpris:artUrl".to_owned(), OwnedValue::from(Str::from(art_url.as_str())));
-        }
-        if let Some(len_us) = state.length_us
-            && let Ok(len_i64) = i64::try_from(len_us)
-        {
-            dict.insert("mpris:length".to_owned(), OwnedValue::from(len_i64));
-        }
+    if !state.enabled {
+        return map;
     }
-    dict
+    if let Ok(val) = OwnedValue::try_from(Value::from(Str::from(state.title.as_str()))) {
+        map.insert("xesam:title".to_owned(), val);
+    }
+    let artists: Vec<Str<'_>> =
+        if state.artist.trim().is_empty() { Vec::new() } else { vec![Str::from(state.artist.as_str())] };
+    if let Ok(val) = OwnedValue::try_from(Value::from(artists)) {
+        map.insert("xesam:artist".to_owned(), val);
+    }
+    if let Ok(val) = OwnedValue::try_from(Value::from(Str::from(state.album.as_str()))) {
+        map.insert("xesam:album".to_owned(), val);
+    }
+    if let Some(length_us) = state.length_us {
+        let len_i64 = i64::try_from(length_us).unwrap_or(i64::MAX);
+        map.insert("mpris:length".to_owned(), OwnedValue::from(len_i64));
+    }
+    if let Some(art_url) = &state.art_url
+        && let Ok(val) = OwnedValue::try_from(Value::from(Str::from(art_url.as_str())))
+    {
+        map.insert("mpris:artUrl".to_owned(), val);
+    }
+    map
 }
 
-struct MprisRootIface;
+pub(crate) fn build_mpris_player_properties(state: &MprisExportState) -> HashMap<String, OwnedValue> {
+    let mut props = HashMap::new();
+    if let Ok(val) = OwnedValue::try_from(Value::from(Str::from(state.playback_status.as_str()))) {
+        props.insert("PlaybackStatus".to_owned(), val);
+    }
+    if let Ok(meta_val) = OwnedValue::try_from(Value::from(build_mpris_metadata_map(state))) {
+        props.insert("Metadata".to_owned(), meta_val);
+    }
+    let pos_i64 = state.position_us.and_then(|u| i64::try_from(u).ok()).unwrap_or(0);
+    props.insert("Position".to_owned(), OwnedValue::from(pos_i64));
+    props.insert("CanPlay".to_owned(), OwnedValue::from(state.can_play));
+    props.insert("CanPause".to_owned(), OwnedValue::from(state.can_pause));
+    props.insert("CanGoNext".to_owned(), OwnedValue::from(state.can_go_next));
+    props.insert("CanGoPrevious".to_owned(), OwnedValue::from(state.can_go_previous));
+    props.insert("CanSeek".to_owned(), OwnedValue::from(state.can_seek));
+    props.insert("CanControl".to_owned(), OwnedValue::from(state.enabled));
+    props
+}
+
+struct MprisRoot;
 
 #[zbus::interface(name = "org.mpris.MediaPlayer2")]
-impl MprisRootIface {
+impl MprisRoot {
     fn raise(&self) {}
 
     fn quit(&self) {}
@@ -168,10 +198,10 @@ impl MprisRootIface {
     }
 }
 
-struct MprisPlayerIface;
+struct MprisPlayer;
 
 #[zbus::interface(name = "org.mpris.MediaPlayer2.Player")]
-impl MprisPlayerIface {
+impl MprisPlayer {
     fn next(&self) {
         let _ = handle_mpris_call("Next", None);
     }
@@ -189,7 +219,7 @@ impl MprisPlayerIface {
     }
 
     fn stop(&self) {
-        let _ = handle_mpris_call("Pause", None);
+        let _ = handle_mpris_call("Stop", None);
     }
 
     fn play(&self) {
@@ -197,13 +227,11 @@ impl MprisPlayerIface {
     }
 
     fn seek(&self, offset: i64) {
-        let current_us = current_export_state().position_us.and_then(|v| i64::try_from(v).ok()).unwrap_or(0);
-        let target_us = current_us.saturating_add(offset).max(0);
-        let _ = handle_mpris_call("Seek", Some(target_us));
+        let _ = handle_mpris_seek_offset(offset);
     }
 
     fn set_position(&self, _track_id: ObjectPath<'_>, position: i64) {
-        let _ = handle_mpris_call("SetPosition", Some(position.max(0)));
+        let _ = handle_mpris_call("SetPosition", Some(position));
     }
 
     fn open_uri(&self, _uri: &str) {}
@@ -219,8 +247,18 @@ impl MprisPlayerIface {
     }
 
     #[zbus(property)]
+    fn minimum_rate(&self) -> f64 {
+        1.0
+    }
+
+    #[zbus(property)]
+    fn maximum_rate(&self) -> f64 {
+        1.0
+    }
+
+    #[zbus(property)]
     fn metadata(&self) -> HashMap<String, OwnedValue> {
-        build_mpris_metadata_dict(&current_export_state())
+        build_mpris_metadata_map(&current_export_state())
     }
 
     #[zbus(property)]
@@ -230,17 +268,7 @@ impl MprisPlayerIface {
 
     #[zbus(property)]
     fn position(&self) -> i64 {
-        current_export_state().position_us.and_then(|v| i64::try_from(v).ok()).unwrap_or(0)
-    }
-
-    #[zbus(property)]
-    fn minimum_rate(&self) -> f64 {
-        1.0
-    }
-
-    #[zbus(property)]
-    fn maximum_rate(&self) -> f64 {
-        1.0
+        current_export_state().position_us.and_then(|u| i64::try_from(u).ok()).unwrap_or(0)
     }
 
     #[zbus(property)]
@@ -274,37 +302,19 @@ impl MprisPlayerIface {
     }
 }
 
-fn register_mpris_dbus_service() -> Option<zbus::blocking::Connection> {
-    if cfg!(test) {
-        return None;
-    }
-    zbus::blocking::connection::Builder::session()
-        .ok()?
-        .name("org.mpris.MediaPlayer2.nectarlink")
-        .ok()?
-        .serve_at("/org/mpris/MediaPlayer2", MprisRootIface)
-        .ok()?
-        .serve_at("/org/mpris/MediaPlayer2", MprisPlayerIface)
-        .ok()?
-        .build()
-        .ok()
+fn init_mpris_dbus_service() -> Option<zbus::blocking::Connection> {
+    let builder = zbus::blocking::connection::Builder::session().ok()?;
+    let builder = builder.name("org.mpris.MediaPlayer2.nectarlink").ok()?;
+    let builder = builder.serve_at("/org/mpris/MediaPlayer2", MprisRoot).ok()?;
+    let builder = builder.serve_at("/org/mpris/MediaPlayer2", MprisPlayer).ok()?;
+    builder.build().ok()
 }
 
-fn notify_mpris_properties_changed(conn: &zbus::blocking::Connection, state: &MprisExportState) {
-    let mut changed: HashMap<&str, OwnedValue> = HashMap::new();
-    changed.insert("PlaybackStatus", OwnedValue::from(Str::from(state.playback_status.as_str())));
-    if let Ok(meta) = zbus::zvariant::Value::from(build_mpris_metadata_dict(state)).try_to_owned() {
-        changed.insert("Metadata", meta);
-    }
-    changed.insert("CanPlay", OwnedValue::from(state.can_play));
-    changed.insert("CanPause", OwnedValue::from(state.can_pause));
-    changed.insert("CanGoNext", OwnedValue::from(state.can_go_next));
-    changed.insert("CanGoPrevious", OwnedValue::from(state.can_go_previous));
-    changed.insert("CanSeek", OwnedValue::from(state.can_seek));
-    changed.insert("CanControl", OwnedValue::from(state.enabled));
+fn emit_mpris_properties_changed(conn: &zbus::blocking::Connection, state: &MprisExportState) {
+    let changed = build_mpris_player_properties(state);
     let invalidated: Vec<&str> = Vec::new();
     let _ = conn.emit_signal(
-        Option::<&str>::None,
+        None::<&str>,
         "/org/mpris/MediaPlayer2",
         "org.freedesktop.DBus.Properties",
         "PropertiesChanged",
@@ -313,7 +323,7 @@ fn notify_mpris_properties_changed(conn: &zbus::blocking::Connection, state: &Mp
 }
 
 fn run_worker(receiver: mpsc::Receiver<Option<Shown>>) {
-    let conn = register_mpris_dbus_service();
+    let mut dbus_conn = if cfg!(test) { None } else { init_mpris_dbus_service() };
     while let Ok(first) = receiver.recv() {
         let mut latest = first;
         while let Ok(next) = receiver.try_recv() {
@@ -321,8 +331,13 @@ fn run_worker(receiver: mpsc::Receiver<Option<Shown>>) {
         }
         let export = build_export_state(latest.as_ref());
         write_mpris_state_file(&export);
-        if let Some(ref conn) = conn {
-            notify_mpris_properties_changed(conn, &export);
+        if !cfg!(test) {
+            if dbus_conn.is_none() {
+                dbus_conn = init_mpris_dbus_service();
+            }
+            if let Some(conn) = &dbus_conn {
+                emit_mpris_properties_changed(conn, &export);
+            }
         }
     }
 }
@@ -474,7 +489,7 @@ pub fn dispatch_command(action: MediaAction, position_ms: Option<u64>) -> bool {
 pub fn handle_mpris_call(method: &str, position_us: Option<i64>) -> bool {
     match method.trim() {
         "Play" => dispatch_command(MediaAction::Play, None),
-        "Pause" => dispatch_command(MediaAction::Pause, None),
+        "Pause" | "Stop" => dispatch_command(MediaAction::Pause, None),
         "PlayPause" => {
             let currently_playing = lock(&LAST_SHOWN).as_ref().is_some_and(|s| s.view.player.playing);
             let action = if currently_playing { MediaAction::Pause } else { MediaAction::Play };
@@ -488,6 +503,19 @@ pub fn handle_mpris_call(method: &str, position_us: Option<i64>) -> bool {
         }
         _ => false,
     }
+}
+
+/// Handles a relative MPRIS2 `Seek(Offset)` call by adding `offset_us` to the
+/// currently exported playback position and dispatching `MediaAction::Seek`.
+pub fn handle_mpris_seek_offset(offset_us: i64) -> bool {
+    let export = current_export_state();
+    let cur_us = export.position_us.and_then(|u| i64::try_from(u).ok()).unwrap_or(0);
+    let mut target_us = cur_us.saturating_add(offset_us).max(0);
+    if let Some(len_us) = export.length_us.and_then(|u| i64::try_from(u).ok()) {
+        target_us = target_us.min(len_us);
+    }
+    let pos_ms = u64::try_from(target_us / 1000).unwrap_or(0);
+    dispatch_command(MediaAction::Seek, Some(pos_ms))
 }
 
 #[cfg(test)]
@@ -584,5 +612,21 @@ mod tests {
         let cleared_state = build_export_state(None);
         assert!(!cleared_state.enabled);
         assert_eq!(cleared_state.playback_status, "Stopped");
+    }
+
+    #[test]
+    fn builds_mpris_metadata_and_player_properties_dictionaries() {
+        let shown = sample_shown(true);
+        let export = build_export_state(Some(&shown));
+        let meta = build_mpris_metadata_map(&export);
+        assert!(meta.contains_key("mpris:trackid"));
+        assert_eq!(meta.get("xesam:title").and_then(|v| <&str>::try_from(v).ok()), Some("Veridis Quo"));
+        assert_eq!(meta.get("xesam:album").and_then(|v| <&str>::try_from(v).ok()), Some("Discovery"));
+        assert_eq!(meta.get("mpris:length").and_then(|v| i64::try_from(v).ok()), Some(345_000_000));
+
+        let props = build_mpris_player_properties(&export);
+        assert_eq!(props.get("PlaybackStatus").and_then(|v| <&str>::try_from(v).ok()), Some("Playing"));
+        assert_eq!(props.get("CanPlay").and_then(|v| bool::try_from(v).ok()), Some(true));
+        assert_eq!(props.get("CanControl").and_then(|v| bool::try_from(v).ok()), Some(true));
     }
 }

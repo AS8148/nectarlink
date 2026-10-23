@@ -12,7 +12,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const BYTES_PER_SAMPLE: usize = 2;
 const JITTER_START_MS: usize = 40;
@@ -203,19 +203,29 @@ impl Player {
     }
 
     pub fn start_for_device(rate: u32, channels: u16, device_id: Option<&str>) -> Result<Player> {
+        let clean_rate = rate.max(8_000);
+        let clean_channels = channels.max(1);
+        let initial_child = spawn_pcm_sink(clean_rate, clean_channels, device_id).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no audio playback backend (pacat, pw-play, or aplay) available",
+            )
+        })?;
+
         let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(64);
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
-        let clean_rate = rate.max(8_000);
-        let clean_channels = channels.max(1);
         let dev_owned = device_id.map(str::to_owned);
+        let mut child_cell = Some(initial_child);
 
         let handle = thread::Builder::new().name("nectarlink-audio-out".into()).spawn(move || {
             let mut jitter = Jitter::new(clean_rate, clean_channels);
             let frame_bytes = jitter.frame_bytes;
             let frames_per_tick = ((clean_rate as usize) / 100).max(1);
             let mut scratch = vec![0u8; frames_per_tick * frame_bytes];
-            let mut child = spawn_pcm_sink(clean_rate, clean_channels, dev_owned.as_deref());
+            let mut child = child_cell.take();
+            let tick = Duration::from_millis(10);
+            let mut next_tick = Instant::now() + tick;
 
             while !thread_stop.load(Ordering::Acquire) {
                 while let Ok(chunk) = rx.try_recv() {
@@ -231,7 +241,13 @@ impl Player {
                     let _ = proc.wait();
                     child = spawn_pcm_sink(clean_rate, clean_channels, dev_owned.as_deref());
                 }
-                thread::sleep(Duration::from_millis(10));
+                let now = Instant::now();
+                if next_tick > now {
+                    thread::sleep(next_tick - now);
+                } else if now.duration_since(next_tick) > Duration::from_millis(50) {
+                    next_tick = now;
+                }
+                next_tick += tick;
             }
 
             if let Some(mut proc) = child {
@@ -306,8 +322,14 @@ mod tests {
 
     #[test]
     fn player_starts_accepts_pushes_and_drops_cleanly() {
-        let player = Player::start(48_000, 2).expect("player should start");
-        player.push(vec![0u8; 1920]);
-        drop(player);
+        match Player::start(48_000, 2) {
+            Ok(player) => {
+                player.push(vec![0u8; 1920]);
+                drop(player);
+            }
+            Err(e) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
+            }
+        }
     }
 }

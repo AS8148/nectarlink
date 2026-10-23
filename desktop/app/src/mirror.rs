@@ -435,7 +435,8 @@ pub fn screenshot_file(window: Window) {
     let base_name = local_timestamp_filename("Screenshot", "png");
     let dir = core_host::downloads_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        tracing::warn!(error = %e, "can't create Downloads\\Nectarlink");
+        let subdir = if cfg!(windows) { "Downloads\\Nectarlink" } else { "Downloads/Nectarlink" };
+        tracing::warn!(error = %e, "can't create {subdir}");
         set_notice(window, "Couldn't save screenshot");
         show_message(tr!("Mirror", "The screenshot couldn't be saved."));
         return;
@@ -463,11 +464,16 @@ pub fn screenshot_file(window: Window) {
     }
     let device_name =
         core_host::host().hub.read(|s| s.name_of(&window.device)).unwrap_or_else(|| "your phone".into());
+    let toast_body = if cfg!(windows) {
+        tr!("Mirror", "Screenshot from %1, saved in Downloads\\Nectarlink", device_name)
+    } else {
+        tr!("Mirror", "Screenshot from %1, saved in Downloads/Nectarlink", device_name)
+    };
     toast::show(Toast {
         device: TOAST_GROUP.into(),
         key: path.to_string_lossy().into_owned(),
         title: file_name.clone(),
-        body: tr!("Mirror", "Screenshot from %1, saved in Downloads\\Nectarlink", device_name),
+        body: toast_body,
         attribution: "NectarLink".into(),
         icon: None,
         image: Some(path),
@@ -478,7 +484,12 @@ pub fn screenshot_file(window: Window) {
         call: false,
     });
     set_notice(window, tr!("Mirror", "Saved %1", file_name));
-    show_message(tr!("Mirror", "Saved %1 to Downloads\\Nectarlink.", file_name));
+    let saved_msg = if cfg!(windows) {
+        tr!("Mirror", "Saved %1 to Downloads\\Nectarlink.", file_name)
+    } else {
+        tr!("Mirror", "Saved %1 to Downloads/Nectarlink.", file_name)
+    };
+    show_message(saved_msg);
 }
 
 /// Whether `window` is currently recording to an MP4 file.
@@ -518,7 +529,8 @@ pub fn toggle_recording(window: Window) {
     let base_name = local_timestamp_filename("Mirror", "mp4");
     let dir = core_host::downloads_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        tracing::warn!(error = %e, "can't create Downloads\\Nectarlink");
+        let subdir = if cfg!(windows) { "Downloads\\Nectarlink" } else { "Downloads/Nectarlink" };
+        tracing::warn!(error = %e, "can't create {subdir}");
         set_notice(window, "Couldn't start recording");
         show_message(tr!("Mirror", "Couldn't start recording."));
         return;
@@ -605,11 +617,16 @@ pub fn stop_recording(window: Window) {
                     .hub
                     .read(|s| s.name_of(&window.device))
                     .unwrap_or_else(|| "your phone".into());
+                let toast_body = if cfg!(windows) {
+                    tr!("Mirror", "Recording from %1, saved in Downloads\\Nectarlink", device_name)
+                } else {
+                    tr!("Mirror", "Recording from %1, saved in Downloads/Nectarlink", device_name)
+                };
                 toast::show(Toast {
                     device: TOAST_GROUP.into(),
                     key: path.to_string_lossy().into_owned(),
                     title: file_name.clone(),
-                    body: tr!("Mirror", "Recording from %1, saved in Downloads\\Nectarlink", device_name),
+                    body: toast_body,
                     attribution: "NectarLink".into(),
                     icon: None,
                     image: None,
@@ -623,7 +640,12 @@ pub fn stop_recording(window: Window) {
                     call: false,
                 });
                 set_notice(window, tr!("Mirror", "Saved %1", file_name));
-                show_message(tr!("Mirror", "Saved %1 to Downloads\\Nectarlink.", file_name));
+                let saved_msg = if cfg!(windows) {
+                    tr!("Mirror", "Saved %1 to Downloads\\Nectarlink.", file_name)
+                } else {
+                    tr!("Mirror", "Saved %1 to Downloads/Nectarlink.", file_name)
+                };
+                show_message(saved_msg);
             }
             Ok(Err(msg)) => {
                 set_notice(window, msg.clone());
@@ -1295,10 +1317,14 @@ pub(crate) fn parse_dropped_file_urls(raw_urls: &[String]) -> (Option<Window>, V
             .map(|p| String::from(&p))
             .filter(|p| !p.is_empty())
             .or_else(|| {
-                trimmed
-                    .strip_prefix("file:///")
-                    .or_else(|| trimmed.strip_prefix("file://"))
-                    .map(|s| s.replace('/', "\\"))
+                if cfg!(windows) {
+                    trimmed
+                        .strip_prefix("file:///")
+                        .or_else(|| trimmed.strip_prefix("file://"))
+                        .map(|s| s.replace('/', "\\"))
+                } else {
+                    trimmed.strip_prefix("file://").map(str::to_owned)
+                }
             });
         let pb = PathBuf::from(local.as_deref().unwrap_or(trimmed));
         if pb.exists() {
