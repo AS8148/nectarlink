@@ -40,10 +40,10 @@ of new features I wanted that I think you'll enjoy having too.
 |---|---|---|
 | **Windows (x64)** | [Installer (.exe)](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-x64-setup.exe) | Windows 11, 64-bit Intel or AMD |
 | **Windows (ARM64)** | [Installer (.exe)](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-arm64-setup.exe) | Windows 11 on ARM (Snapdragon) |
-| **Linux (x86_64)** | [.deb](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/nectarlink_0.1.5_amd64.deb) · [AppImage](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-x86_64.AppImage) · [.tar.gz](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-linux-x86_64.tar.gz) | Ubuntu 24.04+, Debian 12+, Fedora 40+, Arch, or any 64-bit Linux desktop |
+| **Linux (x86_64)** | [.deb](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/nectarlink_0.1.5_amd64.deb) · [AppImage](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-x86_64.AppImage) · [.tar.gz](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-linux-x86_64.tar.gz) | Ubuntu 24.04 or newer, Debian 13, Fedora 40 or newer, 64-bit Intel or AMD |
 | **Android** | [App (.apk)](https://github.com/thtbee/nectarlink/releases/download/v0.1.5/Nectarlink-0.1.5-android.apk) | Android 8.0 or newer |
 
-Both apps update themselves from GitHub Releases and check every download
+The apps update themselves from GitHub Releases and check every download
 against its SHA-256 sums.
 
 > [!NOTE]
@@ -135,12 +135,12 @@ and dark.
 | Calls & SMS viewer | Yes | Yes | Yes |
 | Phone quick toggles & volume | Yes | Yes | Yes |
 | Clipboard text & image sync | Yes | Yes | Yes (two-way text, incoming photo) |
-| System notifications | Yes | Yes (freedesktop notifications) | Yes (system banners) |
-| Phone screen mirroring | Yes | Yes (FFmpeg / OpenH264) | Not yet (in development) |
+| System notifications | Yes | Yes | Yes (system banners) |
+| Phone screen mirroring | Yes | Yes | Not yet (in development) |
 | Screen recording (MP4) | Yes | Yes | Not yet |
-| PC audio stream / phone mic | Yes | Yes (PipeWire / PulseAudio) | Not yet |
-| Phone as webcam | Yes | Yes (`v4l2loopback`) | Not yet |
-| Storage mount in file manager | Yes (Cloud Files) | Yes (FUSE3) | Windows / Linux only |
+| PC audio stream / phone mic | Yes | Yes | Not yet |
+| Phone as webcam | Yes | Yes (with v4l2loopback) | Not yet |
+| Phone storage in the file manager | Yes | Yes | Not yet |
 
 ## Private by design
 
