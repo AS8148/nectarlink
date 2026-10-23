@@ -75,7 +75,9 @@ use std::{
     time::Duration,
 };
 
-use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
+#[cfg(not(target_os = "linux"))]
+use cxx_qt_lib::QGuiApplication;
+use cxx_qt_lib::{QQmlApplicationEngine, QString, QUrl};
 use nectarlink_core::{
     MediaAction, MediaError, MirrorInput, MirrorStart, Platform, PowerAction, StorageEntry, StorageError,
     StorageReadFile, StorageWriteDone,

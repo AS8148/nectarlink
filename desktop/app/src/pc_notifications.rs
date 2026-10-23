@@ -56,73 +56,6 @@ pub fn is_blocked_self_source(app_name: &str) -> bool {
         || lower == "org.freedesktop.notifications"
 }
 
-/// Parses a single-line or compact representation of a Freedesktop `Notify` D-Bus call
-/// into `(app_name, summary, body)`.
-///
-/// Supports `dbus-monitor` `string "..."` fields from `org.freedesktop.Notifications.Notify`.
-#[cfg(any(target_os = "linux", test))]
-pub fn parse_dbus_notify_line(line: &str) -> Option<(String, String, String)> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let mut dbus_strings = Vec::new();
-    let mut rest = trimmed;
-    while let Some(idx) = rest.find("string \"") {
-        let after = &rest[idx + "string \"".len()..];
-        if let Some((val, tail)) = take_unescaped_quoted(after) {
-            dbus_strings.push(val);
-            rest = tail;
-        } else {
-            break;
-        }
-    }
-
-    // In org.freedesktop.Notifications.Notify(app_name, replaces_id, app_icon, summary, body, ...):
-    // string[0] = app_name, string[1] = app_icon, string[2] = summary, string[3] = body
-    if dbus_strings.len() >= 4 {
-        let app_name = dbus_strings[0].trim().to_string();
-        let summary = dbus_strings[2].trim().to_string();
-        let body = dbus_strings[3].trim().to_string();
-        if summary.is_empty() && body.is_empty() {
-            return None;
-        }
-        return Some((app_name, summary, body));
-    }
-
-    if dbus_strings.len() == 3 {
-        let app_name = dbus_strings[0].trim().to_string();
-        let summary = dbus_strings[1].trim().to_string();
-        let body = dbus_strings[2].trim().to_string();
-        if summary.is_empty() && body.is_empty() {
-            return None;
-        }
-        return Some((app_name, summary, body));
-    }
-
-    None
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn take_unescaped_quoted(s: &str) -> Option<(String, &str)> {
-    let mut out = String::new();
-    let mut escaped = false;
-    for (idx, ch) in s.char_indices() {
-        if escaped {
-            out.push(ch);
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == '"' {
-            return Some((out, &s[idx + 1..]));
-        } else {
-            out.push(ch);
-        }
-    }
-    None
-}
-
 /// Forwards a captured PC notification if it is not from a blocked self-source,
 /// has non-empty content, and `forward_pc_notifications_to_phone` is enabled.
 #[cfg(any(target_os = "linux", test))]
@@ -163,7 +96,7 @@ pub fn forward_to_phones(app_name: &str, title: &str, text: &str) -> bool {
 
 /// Deserializes a Freedesktop `org.freedesktop.Notifications.Notify` D-Bus method call
 /// message into `(app_name, summary, body)`, preserving multi-line notification bodies.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 pub fn extract_notify_call(msg: &zbus::message::Message) -> Option<(String, String, String)> {
     let header = msg.header();
     if header.message_type() != zbus::message::Type::MethodCall {
@@ -290,21 +223,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_dbus_notify_lines() {
-        let sample = r#"method call time=1700000.0 sender=:1.42 -> destination=org.freedesktop.Notifications serial=10 path=/org/freedesktop/Notifications; interface=org.freedesktop.Notifications; member=Notify string "Firefox" uint32 0 string "firefox" string "Download complete" string "ubuntu.iso" array [] array [] int32 -1"#;
-        let parsed = parse_dbus_notify_line(sample);
-        assert_eq!(
-            parsed,
-            Some(("Firefox".to_string(), "Download complete".to_string(), "ubuntu.iso".to_string()))
-        );
-    }
-
-    #[test]
     fn forward_pc_toast_ignores_self_and_empty() {
         assert!(!forward_pc_toast("NectarLink", "Connected", "Pixel 9"));
         assert!(!forward_pc_toast("Firefox", "   ", ""));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn extract_notify_call_preserves_multiline_body() {
         let hints: std::collections::HashMap<&str, zbus::zvariant::Value<'_>> =

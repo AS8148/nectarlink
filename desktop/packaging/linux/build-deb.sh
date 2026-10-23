@@ -77,7 +77,7 @@ QT_DEPENDS=""
 bundle_private_qt_if_needed() {
     local qmake_bin="${QMAKE:-}"
     if [[ -z "${qmake_bin}" || ! -x "${qmake_bin}" ]]; then
-        QT_DEPENDS=", libqt6core6t64 | libqt6core6, libqt6gui6, libqt6qml6, libqt6quick6, libqt6network6, libqt6opengl6, libqt6dbus6, libqt6svg6, qml6-module-qtquick, qml6-module-qtquick-Window, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtqml-workerscript"
+        QT_DEPENDS=", libqt6core6t64 | libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6network6, libqt6opengl6, libqt6dbus6, libqt6svg6, qml6-module-qtquick, qml6-module-qtquick-Window, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtqml-workerscript"
         return 0
     fi
     local qt_libs qt_plugins qt_qml
@@ -85,7 +85,7 @@ bundle_private_qt_if_needed() {
     qt_plugins="$("${qmake_bin}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)"
     qt_qml="$("${qmake_bin}" -query QT_INSTALL_QML 2>/dev/null || true)"
     if [[ -z "${qt_libs}" || "${qt_libs}" == /usr/* ]]; then
-        QT_DEPENDS=", libqt6core6t64 | libqt6core6, libqt6gui6, libqt6qml6, libqt6quick6, libqt6network6, libqt6opengl6, libqt6dbus6, libqt6svg6, qml6-module-qtquick, qml6-module-qtquick-window, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtqml-workerscript"
+        QT_DEPENDS=", libqt6core6t64 | libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6network6, libqt6opengl6, libqt6dbus6, libqt6svg6, qml6-module-qtquick, qml6-module-qtquick-window, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtqml-workerscript"
         return 0
     fi
 
@@ -97,6 +97,7 @@ bundle_private_qt_if_needed() {
     for pattern in \
         "libQt6Core.so*" \
         "libQt6Gui.so*" \
+        "libQt6Widgets.so*" \
         "libQt6Qml*.so*" \
         "libQt6Quick*.so*" \
         "libQt6Network.so*" \
@@ -164,7 +165,7 @@ Priority: optional
 Architecture: ${DEB_ARCH}
 Installed-Size: ${INSTALLED_SIZE}
 Depends: libc6, libgcc-s1, libstdc++6, libgl1, libx11-6, libxcb1, libxkbcommon0, libwayland-client0, libfontconfig1, libfreetype6, libdbus-1-3${QT_DEPENDS}
-Recommends: ffmpeg, libopenh264-7 | libopenh264-6, pulseaudio-utils, pipewire, wl-clipboard, xclip, xdg-utils, avahi-daemon, bluez, v4l2loopback-dkms, policykit-1 | pkexec
+Recommends: ffmpeg, libopenh264-7 | libopenh264-6, pulseaudio-utils, pipewire, wl-clipboard, xclip, xdotool, xdg-utils, network-manager, avahi-daemon, bluez, v4l2loopback-dkms, policykit-1 | pkexec
 Maintainer: thtbee <https://github.com/thtbee/nectarlink>
 Homepage: https://github.com/thtbee/nectarlink
 Description: Connect your Android phone and Linux PC over LAN

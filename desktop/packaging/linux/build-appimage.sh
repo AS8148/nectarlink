@@ -93,6 +93,7 @@ bundle_qt_runtime() {
     for pattern in \
         "libQt6Core.so*" \
         "libQt6Gui.so*" \
+        "libQt6Widgets.so*" \
         "libQt6Qml*.so*" \
         "libQt6Quick*.so*" \
         "libQt6Network.so*" \
