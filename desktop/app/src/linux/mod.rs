@@ -19,6 +19,7 @@ pub mod icon;
 pub mod image;
 pub mod input;
 pub mod jumplist;
+pub mod keymap;
 pub mod media_sessions;
 pub mod mp4;
 pub mod net;
@@ -35,6 +36,7 @@ pub mod vmic;
 pub mod wallpaper;
 pub mod widget;
 pub mod wifi;
+pub mod window_capture;
 pub mod wol;
 
 use std::{fs, io::Read, process::Command};
