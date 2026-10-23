@@ -34,6 +34,7 @@ pub fn is_url_scheme_registered(scheme: &str) -> bool {
 }
 
 /// Starts a program with arguments via `open` or direct process spawn.
+#[allow(dead_code)]
 pub fn run(program: &Path, arguments: &str) -> Result<(), String> {
     let mut cmd = std::process::Command::new(program);
     if !arguments.is_empty() {

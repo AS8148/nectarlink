@@ -38,7 +38,8 @@ pub const ANDROID_URL: &str = "https://github.com/thtbee/nectarlink/releases/lat
 const APP_EXE: &str = if cfg!(windows) { "nectarlink-desktop.exe" } else { "nectarlink-desktop" };
 #[cfg(windows)]
 const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Nectarlink";
-const SETUP_COPY_NAME: &str = if cfg!(windows) { "Nectarlink Uninstall.exe" } else { "Nectarlink Uninstall" };
+#[cfg(windows)]
+const SETUP_COPY_NAME: &str = "Nectarlink Uninstall.exe";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -61,20 +62,93 @@ pub struct Installed {
     pub version: String,
 }
 
+#[cfg(windows)]
 pub fn installed() -> Option<Installed> {
-    #[cfg(windows)]
-    {
-        use windows::Win32::System::Registry::HKEY_LOCAL_MACHINE;
-        let dir = crate::win::reg_string(HKEY_LOCAL_MACHINE, UNINSTALL_KEY, "InstallLocation")?;
-        let version =
-            crate::win::reg_string(HKEY_LOCAL_MACHINE, UNINSTALL_KEY, "DisplayVersion").unwrap_or_default();
-        let dir = PathBuf::from(dir);
-        dir.join(APP_EXE).is_file().then_some(Installed { dir, version })
+    use windows::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let dir = crate::win::reg_string(HKEY_LOCAL_MACHINE, UNINSTALL_KEY, "InstallLocation")?;
+    let version =
+        crate::win::reg_string(HKEY_LOCAL_MACHINE, UNINSTALL_KEY, "DisplayVersion").unwrap_or_default();
+    let dir = PathBuf::from(dir);
+    dir.join(APP_EXE).is_file().then_some(Installed { dir, version })
+}
+
+#[cfg(target_os = "linux")]
+pub fn installed() -> Option<Installed> {
+    if let Some(version) = dpkg_installed_version("nectarlink") {
+        let dir = PathBuf::from("/usr/bin");
+        if dir.join(APP_EXE).is_file() {
+            return Some(Installed { dir, version });
+        }
     }
-    #[cfg(not(windows))]
-    {
+    if let Some(local_data) = dirs::data_local_dir() {
+        let user_dir = local_data.join("nectarlink-app");
+        let exe = user_dir.join(APP_EXE);
+        if exe.is_file() {
+            let version = read_installed_version(&user_dir, &exe).unwrap_or_default();
+            return Some(Installed { dir: user_dir, version });
+        }
+    }
+    for candidate in ["/opt/nectarlink", "/usr/local/bin", "/usr/bin"] {
+        let dir = PathBuf::from(candidate);
+        let exe = dir.join(APP_EXE);
+        if exe.is_file() {
+            let version = read_installed_version(&dir, &exe).unwrap_or_default();
+            return Some(Installed { dir, version });
+        }
+    }
+    None
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn installed() -> Option<Installed> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn dpkg_installed_version(pkg: &str) -> Option<String> {
+    let out = std::process::Command::new("dpkg-query")
+        .args(["-W", "-f=${db:Status-Status}\\t${Version}\\n", pkg])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_dpkg_query_output(&String::from_utf8_lossy(&out.stdout))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_dpkg_query_output(output: &str) -> Option<String> {
+    let line = output.lines().next()?.trim();
+    let (status, version) = line.split_once('\t')?;
+    if status.eq_ignore_ascii_case("installed") && !version.trim().is_empty() {
+        Some(version.trim().to_owned())
+    } else {
         None
     }
+}
+
+#[cfg(target_os = "linux")]
+fn read_installed_version(dir: &Path, exe: &Path) -> Option<String> {
+    if let Ok(text) = std::fs::read_to_string(dir.join("VERSION")) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+    let out = std::process::Command::new(exe)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let token = text.split_whitespace().last()?.trim();
+    (!token.is_empty()).then(|| token.to_owned())
 }
 
 /// How this install relates to the copy already on the PC.
@@ -120,7 +194,10 @@ impl Step {
         match self {
             Step::Closing => "Closing NectarLink",
             Step::Files => "Copying files",
+            #[cfg(not(target_os = "linux"))]
             Step::Firewall => "Allowing through Windows Firewall",
+            #[cfg(target_os = "linux")]
+            Step::Firewall => "Configure Linux firewall rules",
             Step::Updates => "Setting up updates",
             Step::Shortcuts => "Adding shortcuts",
             Step::Cleanup => "Removing files",
@@ -170,14 +247,72 @@ pub enum Outcome {
 }
 
 /// Installs from `installer` with administrator rights, reporting each step.
+#[cfg(windows)]
 pub fn install(installer: &Path, on_event: impl FnMut(Event)) -> Outcome {
     let progress = progress_file("install");
     let params = format!("/S /PROGRESS={}", progress.display());
     run_tracked(installer, &params, &progress, Duration::from_secs(600), true, on_event)
 }
 
+#[cfg(target_os = "linux")]
+pub fn install(installer: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
+    let name = installer.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+    if name.ends_with(".deb") {
+        on_event(Event::Step(Step::Closing));
+        on_event(Event::Step(Step::Files));
+        let path_str = installer.to_string_lossy();
+        match crate::win::elevated::run_elevated(
+            Path::new("sh"),
+            &["-e", "-c", "apt-get install -y -- \"$1\" || dpkg -i -- \"$1\"", "sh", &path_str],
+        ) {
+            Ok(0) => {
+                on_event(Event::Step(Step::Shortcuts));
+                on_event(Event::Done);
+                Outcome::Done
+            }
+            Ok(126 | 127) => Outcome::Declined,
+            Ok(code) => Outcome::Failed(tr!("Setup", "Setup stopped with code %1.", code)),
+            Err(e) => Outcome::Failed(tr!("Setup", "Couldn't start setup: %1", e)),
+        }
+    } else if name.ends_with(".tar.gz") {
+        on_event(Event::Step(Step::Closing));
+        on_event(Event::Step(Step::Files));
+        let path_str = installer.to_string_lossy();
+        match crate::win::elevated::run_elevated(
+            Path::new("sh"),
+            &[
+                "-e",
+                "-c",
+                "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && tar -C \"$dir\" -xzf \"$1\" && set -- \"$dir\"/Nectarlink-*/install.sh && [ -x \"$1\" ] && \"$1\"",
+                "sh",
+                &path_str,
+            ],
+        ) {
+            Ok(0) => {
+                on_event(Event::Step(Step::Shortcuts));
+                on_event(Event::Done);
+                Outcome::Done
+            }
+            Ok(126 | 127) => Outcome::Declined,
+            Ok(code) => Outcome::Failed(tr!("Setup", "Setup stopped with code %1.", code)),
+            Err(e) => Outcome::Failed(tr!("Setup", "Couldn't start setup: %1", e)),
+        }
+    } else {
+        // Only the .deb and the tarball install this way; the Windows
+        // installer's switches mean nothing to anything else.
+        Outcome::Failed(tr!("Setup", "Couldn't start setup: %1", name))
+    }
+}
+
+/// The app installs from a disk image on macOS, not through this setup.
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn install(installer: &Path, _on_event: impl FnMut(Event)) -> Outcome {
+    Outcome::Failed(tr!("Setup", "Couldn't start setup: %1", installer.display()))
+}
+
 /// Removes the copy in `installed` with administrator rights, then this
 /// user's data.
+#[cfg(windows)]
 pub fn remove(installed: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
     let uninstaller = installed.join("uninstall.exe");
     if !uninstaller.is_file() {
@@ -198,8 +333,73 @@ pub fn remove(installed: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
     outcome
 }
 
+#[cfg(target_os = "linux")]
+pub fn remove(installed: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
+    on_event(Event::Step(Step::Closing));
+    let _ = crate::win::autostart::set_enabled(false);
+    crate::win::jumplist::unregister();
+    let _ = crate::send_to::remove_all();
+    crate::storage::unregister_all();
+
+    on_event(Event::Step(Step::Cleanup));
+    if let Some(local_data) = dirs::data_local_dir() {
+        let user_app_dir = local_data.join("nectarlink-app");
+        if installed == user_app_dir {
+            let _ = std::fs::remove_dir_all(&user_app_dir);
+            if let Some(home) = dirs::home_dir() {
+                let _ = std::fs::remove_file(home.join(".local/bin/nectarlink-desktop"));
+            }
+            let _ = std::fs::remove_file(local_data.join("applications/nectarlink.desktop"));
+            let _ = std::fs::remove_file(local_data.join("metainfo/org.nectarlink.desktop.metainfo.xml"));
+            remove_user_data();
+            on_event(Event::Done);
+            return Outcome::Done;
+        }
+    }
+    let res = if dpkg_installed_version("nectarlink").is_some()
+        || Path::new("/var/lib/dpkg/info/nectarlink.list").is_file()
+    {
+        crate::win::elevated::run_elevated(Path::new("dpkg"), &["-r", "nectarlink"])
+    } else if installed == Path::new("/opt/nectarlink") {
+        crate::win::elevated::run_elevated(
+            Path::new("rm"),
+            &["-rf", "--", "/opt/nectarlink", "/usr/local/bin/nectarlink-desktop"],
+        )
+    } else {
+        crate::win::elevated::run_elevated(
+            Path::new("rm"),
+            &[
+                "-rf",
+                "--",
+                "/opt/nectarlink",
+                "/usr/local/bin/nectarlink-desktop",
+                "/usr/bin/nectarlink-desktop",
+            ],
+        )
+    };
+    match res {
+        Ok(0) => {
+            remove_user_data();
+            on_event(Event::Done);
+            Outcome::Done
+        }
+        Ok(126 | 127) => Outcome::Declined,
+        Ok(code) => Outcome::Failed(tr!("Setup", "Uninstall stopped with code %1.", code)),
+        Err(e) => Outcome::Failed(tr!("Setup", "Couldn't uninstall NectarLink: %1", e)),
+    }
+}
+
 /// Removes this user's settings, pairings, history and caches. Received
 /// files, recordings and synced folders live elsewhere and stay.
+/// On macOS the app is removed by moving it to the Trash; this removes this
+/// user's data.
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn remove(_installed: &Path, mut on_event: impl FnMut(Event)) -> Outcome {
+    remove_user_data();
+    on_event(Event::Done);
+    Outcome::Done
+}
+
 pub fn remove_user_data() {
     let Some(data) = user_data_dir() else { return };
     if let Err(e) = std::fs::remove_dir_all(&data)
@@ -210,14 +410,21 @@ pub fn remove_user_data() {
 }
 
 /// `%LOCALAPPDATA%\Nectarlink`, the app's default data folder.
+#[cfg(windows)]
 fn user_data_dir() -> Option<PathBuf> {
     let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
     local.is_absolute().then(|| local.join("Nectarlink"))
 }
 
+#[cfg(not(windows))]
+fn user_data_dir() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|d| d.join("Nectarlink"))
+}
+
 /// Runs `program` elevated with `params` and follows `progress` until it
 /// reports done or an error. With `wait_for_exit`, the process ending also
 /// ends the run (its exit code decides when the file says nothing).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn run_tracked(
     program: &Path,
     params: &str,
@@ -287,36 +494,71 @@ fn new_events(path: &Path, read: &mut usize) -> Vec<Event> {
     fresh
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn progress_file(what: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("nectarlink-{what}-{}.progress", std::process::id()))
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+        let uid = std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0);
+        let dir = dirs::runtime_dir()
+            .or_else(dirs::cache_dir)
+            .filter(|p| p.is_absolute())
+            .map(|base| base.join("nectarlink"))
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("nectarlink-{uid}")));
+        let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir);
+        dir.join(format!("nectarlink-{what}-{}.progress", std::process::id()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::env::temp_dir().join(format!("nectarlink-{what}-{}.progress", std::process::id()))
+    }
 }
 
 /// Starts the installed app as this user, not elevated. Through Explorer, so
 /// it starts as a fresh process of the shell and inherits nothing from
 /// whatever launched setup.
+#[cfg(windows)]
 pub fn open_app(dir: &Path) -> Result<(), String> {
     let app = dir.join(APP_EXE);
     if !app.is_file() {
         return Err(format!("{} is missing", app.display()));
     }
-    #[cfg(windows)]
-    {
-        std::process::Command::new("explorer.exe")
-            .arg(&app)
-            .creation_flags(DETACHED_PROCESS)
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+    std::process::Command::new("explorer.exe")
+        .arg(&app)
+        .creation_flags(DETACHED_PROCESS)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "linux")]
+pub fn open_app(dir: &Path) -> Result<(), String> {
+    let app = dir.join(APP_EXE);
+    if !app.is_file() {
+        return Err(format!("{} is missing", app.display()));
     }
-    #[cfg(not(windows))]
-    {
-        std::process::Command::new("open").arg(&app).spawn().map(|_| ()).map_err(|e| e.to_string())
+    std::process::Command::new(&app)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn open_app(dir: &Path) -> Result<(), String> {
+    let app = dir.join(APP_EXE);
+    if !app.is_file() {
+        return Err(format!("{} is missing", app.display()));
     }
+    std::process::Command::new("open").arg(&app).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// For `--remove` started from the installed folder: carries on from a copy
 /// in a temporary folder, so the installed one can be deleted. `Ok(true)`
 /// when the copy took over and this process should exit.
+#[cfg(windows)]
 pub fn hand_over_removal(installed: &Path) -> Result<bool, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let temp = std::env::temp_dir();
@@ -340,7 +582,15 @@ pub fn hand_over_removal(installed: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+#[cfg(not(windows))]
+pub fn hand_over_removal(_installed: &Path) -> Result<bool, String> {
+    // On Unix, open executables can be unlinked while running, and `installed`
+    // may be `/usr/bin` which must never be copied into `/tmp`.
+    Ok(false)
+}
+
 /// Deletes this program's temporary copy once it has exited.
+#[cfg(windows)]
 pub fn delete_own_copy_later() {
     let Ok(exe) = std::env::current_exe() else { return };
     let Some(dir) = exe.parent() else { return };
@@ -351,20 +601,35 @@ pub fn delete_own_copy_later() {
     if !ours {
         return;
     }
-    #[cfg(windows)]
-    {
-        let script = format!("/c ping -n 4 127.0.0.1 >nul & rmdir /s /q \"{}\"", dir.display());
-        let _ = std::process::Command::new("cmd.exe")
-            .raw_arg(script)
-            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
-            .spawn();
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = std::fs::remove_dir_all(dir);
-    }
+    let script = format!("/c ping -n 4 127.0.0.1 >nul & rmdir /s /q \"{}\"", dir.display());
+    let _ = std::process::Command::new("cmd.exe")
+        .raw_arg(script)
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .spawn();
 }
 
+#[cfg(not(windows))]
+pub fn delete_own_copy_later() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let Some(dir) = exe.parent() else { return };
+    let temp = std::env::temp_dir();
+    let ours = dir.starts_with(&temp)
+        && dir.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("Nectarlink-uninstall-"));
+    if !ours {
+        return;
+    }
+    let _ = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("sleep 3 && rm -rf \"$1\"")
+        .arg("sh")
+        .arg(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
+#[cfg(any(windows, test))]
 fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
@@ -435,6 +700,13 @@ mod tests {
         assert_eq!(kind(Some("0.1.0"), "0.1.1"), Kind::Update);
         assert_eq!(kind(Some("0.1.0"), "0.1.0"), Kind::Reinstall);
         assert_eq!(kind(Some("0.2.0"), "0.1.0"), Kind::Older);
+    }
+
+    #[test]
+    fn dpkg_query_output_parses_only_installed_packages() {
+        assert_eq!(parse_dpkg_query_output("installed\t0.1.0\n"), Some("0.1.0".to_owned()));
+        assert_eq!(parse_dpkg_query_output("config-files\t0.1.0\n"), None);
+        assert_eq!(parse_dpkg_query_output("not-installed\t\n"), None);
     }
 
     #[test]
