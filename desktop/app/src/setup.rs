@@ -494,6 +494,7 @@ fn new_events(path: &Path, read: &mut usize) -> Vec<Event> {
     fresh
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn progress_file(what: &str) -> PathBuf {
     #[cfg(target_os = "linux")]
     {

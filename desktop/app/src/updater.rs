@@ -483,6 +483,7 @@ fn staging_dir() -> PathBuf {
 }
 
 #[cfg(not(windows))]
+#[allow(unsafe_code)]
 fn current_euid() -> u32 {
     // SAFETY: geteuid takes no arguments and cannot fail.
     unsafe { libc::geteuid() }
