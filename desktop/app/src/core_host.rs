@@ -187,8 +187,11 @@ async fn run(data_dir: PathBuf, platform: Arc<dyn Platform>) {
     let wake = crate::win::wol::query_wake_status();
     let mut config = NodeConfig::new(&data_dir, this_device(), env!("CARGO_PKG_VERSION"));
     config.downloads_dir = Some(downloads_dir());
-    // NECTARLINK_NO_ADB=1 keeps a development copy from reaching phones plugged in over USB.
-    let adb_disabled = std::env::var_os("NECTARLINK_NO_ADB").is_some_and(|v| v == "1");
+    // NECTARLINK_NO_ADB=1 keeps a development copy from reaching phones plugged in over USB,
+    // unless NECTARLINK_ADB_ONLY_SERIAL explicitly restricts ADB to an Android emulator.
+    let only_emulator =
+        std::env::var("NECTARLINK_ADB_ONLY_SERIAL").is_ok_and(|s| s.trim().starts_with("emulator-"));
+    let adb_disabled = !only_emulator && std::env::var_os("NECTARLINK_NO_ADB").is_some_and(|v| v == "1");
     config.adb_server = (!adb_disabled).then_some(nectarlink_core::DEFAULT_ADB_ADDR);
     config.away_mode = crate::settings::Settings::load(&data_dir).away_mode;
     // This PC's own players, for phones (crate::win::media_sessions).

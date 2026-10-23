@@ -10,11 +10,10 @@
 //! before updating the system clipboard so the watcher thread never echoes
 //! phone clipboard writes back to the phone.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 use super::image::{self, Bitmap};
 
@@ -173,50 +172,37 @@ where
         return;
     }
     seed_initial_clipboard();
-    if is_wayland() {
-        let _ = std::thread::Builder::new().name("clipboard-wl-watch".into()).spawn(wayland_watch_loop);
-    }
     let spawned = std::thread::Builder::new().name("clipboard".into()).spawn(watcher_loop);
     if let Err(e) = spawned {
         tracing::warn!(error = %e, "can't start Linux clipboard watcher");
     }
 }
 
-/// Runs `wl-paste --watch` on Wayland so clipboard changes while NectarLink is
-/// unfocused are detected on compositors that implement `wlr-data-control` or
-/// `ext-data-control`. If the compositor does not support data-control (for
-/// example GNOME Wayland), `wl-paste --watch` exits immediately and we do not
-/// respawn it, relying on `QClipboard::dataChanged` instead.
-fn wayland_watch_loop() {
-    let started = Instant::now();
-    let Ok(mut child) = Command::new("wl-paste")
-        .args(["--watch", "printf", "\\n"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return;
-    };
-    if let Some(stdout) = child.stdout.take() {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if line.is_err() {
-                break;
-            }
-            crate::bridge::native::ffi::linux_clipboard_notify_external();
-        }
-    }
-    let _ = child.wait();
-    if started.elapsed() < Duration::from_secs(2) {
-        tracing::debug!("wl-paste --watch exited early; relying on QClipboard::dataChanged");
-    }
-}
-
 fn watcher_loop() {
+    let mut seeded_from_qt = false;
     let mut last_seq = crate::bridge::native::ffi::linux_clipboard_sequence();
     loop {
         let next_seq = crate::bridge::native::ffi::linux_clipboard_wait_change(last_seq, 2000);
+        if !seeded_from_qt {
+            let mut is_priv = false;
+            let mut has_files = false;
+            let mut text = String::new();
+            let mut html = String::new();
+            let mut rtf = String::new();
+            let mut png = Vec::new();
+            if crate::bridge::native::ffi::linux_clipboard_read(
+                true,
+                &mut is_priv,
+                &mut has_files,
+                &mut text,
+                &mut html,
+                &mut rtf,
+                &mut png,
+            ) {
+                seeded_from_qt = true;
+                seed_initial_clipboard();
+            }
+        }
         if next_seq == last_seq {
             continue;
         }
@@ -261,14 +247,24 @@ where
     true
 }
 
+fn is_gnome_wayland() -> bool {
+    is_wayland()
+        && std::env::var("XDG_CURRENT_DESKTOP").ok().is_some_and(|d| d.to_ascii_lowercase().contains("gnome"))
+}
+
 fn query_os_targets() -> Option<(bool, String)> {
+    // Never spawn `wl-paste` on GNOME Wayland where Mutter lacks data-control
+    // and `wl-paste` maps a transient surface that steals window focus.
     if is_wayland()
+        && !is_gnome_wayland()
         && let Ok(out) = Command::new("wl-paste").arg("--list-types").output()
         && out.status.success()
     {
         return Some((true, String::from_utf8_lossy(&out.stdout).into_owned()));
     }
-    if let Ok(out) = Command::new("xclip").args(["-selection", "clipboard", "-t", "TARGETS", "-o"]).output()
+    if std::env::var_os("DISPLAY").is_some()
+        && let Ok(out) =
+            Command::new("xclip").args(["-selection", "clipboard", "-t", "TARGETS", "-o"]).output()
         && out.status.success()
     {
         return Some((false, String::from_utf8_lossy(&out.stdout).into_owned()));
@@ -375,6 +371,51 @@ fn read_from_os(check_privacy: bool) -> Option<Clip> {
     if cfg!(test) || !has_display_server() {
         return None;
     }
+
+    // Primary path: read directly from Qt's in-process `QClipboard`/`QMimeData`
+    // without spawning external helper processes.
+    let mut is_private = false;
+    let mut has_files = false;
+    let mut qt_text = String::new();
+    let mut qt_html = String::new();
+    let mut qt_rtf = String::new();
+    let mut qt_png = Vec::new();
+    if crate::bridge::native::ffi::linux_clipboard_read(
+        check_privacy,
+        &mut is_private,
+        &mut has_files,
+        &mut qt_text,
+        &mut qt_html,
+        &mut qt_rtf,
+        &mut qt_png,
+    ) {
+        if is_private {
+            return Some(Clip::Private);
+        }
+        if !qt_png.is_empty() {
+            return Some(Clip::Image(Image::Png(qt_png)));
+        }
+        if has_files {
+            return Some(Clip::Empty);
+        }
+        if let Some(text) = clean_valid_utf8_text(qt_text.into_bytes()) {
+            if is_copied_file_uri_text(&text) {
+                return Some(Clip::Empty);
+            }
+            let html = {
+                let trimmed = qt_html.trim_matches('\0').trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    decode_cf_html(trimmed.as_bytes()).or_else(|| Some(trimmed.to_owned()))
+                }
+            };
+            let rtf = decode_cf_rtf(qt_rtf.as_bytes());
+            return Some(enrich_with_last_written_rich(text, html, rtf));
+        }
+        return Some(Clip::Empty);
+    }
+
     if let Some((wayland, targets)) = query_os_targets() {
         if check_privacy {
             if has_gnome_privacy_hint(&targets) {
@@ -435,9 +476,12 @@ fn read_from_os(check_privacy: bool) -> Option<Clip> {
             };
             return Some(enrich_with_last_written_rich(text, html, rtf));
         }
+        return Some(Clip::Empty);
     }
 
-    if let Some(text) = read_os_plain_text(is_wayland()) {
+    if !is_gnome_wayland()
+        && let Some(text) = read_os_plain_text(is_wayland())
+    {
         if is_copied_file_uri_text(&text) {
             return Some(Clip::Empty);
         }
@@ -543,15 +587,19 @@ fn write_text(text: &str, html: Option<&str>, rtf: Option<&str>, private: bool) 
     }
 
     if !cfg!(test) && has_display_server() {
-        if private {
-            let _ = pipe_to_cmd("wl-copy", &["--sensitive"], text.as_bytes())
-                .or_else(|_| pipe_to_cmd("wl-copy", &[], text.as_bytes()))
-                .or_else(|_| pipe_to_cmd("xclip", &["-selection", "clipboard"], text.as_bytes()))
-                .or_else(|_| pipe_to_cmd("xsel", &["--clipboard", "--input"], text.as_bytes()));
-        } else {
-            let _ = pipe_to_cmd("wl-copy", &[], text.as_bytes())
-                .or_else(|_| pipe_to_cmd("xclip", &["-selection", "clipboard"], text.as_bytes()))
-                .or_else(|_| pipe_to_cmd("xsel", &["--clipboard", "--input"], text.as_bytes()));
+        let html_str = html_owned.as_deref().unwrap_or("");
+        let rtf_str = rtf_owned.as_deref().unwrap_or("");
+        if !crate::bridge::native::ffi::linux_clipboard_write_text(text, html_str, rtf_str, private) {
+            if private {
+                let _ = pipe_to_cmd("wl-copy", &["--sensitive"], text.as_bytes())
+                    .or_else(|_| pipe_to_cmd("wl-copy", &[], text.as_bytes()))
+                    .or_else(|_| pipe_to_cmd("xclip", &["-selection", "clipboard"], text.as_bytes()))
+                    .or_else(|_| pipe_to_cmd("xsel", &["--clipboard", "--input"], text.as_bytes()));
+            } else {
+                let _ = pipe_to_cmd("wl-copy", &[], text.as_bytes())
+                    .or_else(|_| pipe_to_cmd("xclip", &["-selection", "clipboard"], text.as_bytes()))
+                    .or_else(|_| pipe_to_cmd("xsel", &["--clipboard", "--input"], text.as_bytes()));
+            }
         }
     }
     Ok(())
@@ -571,7 +619,10 @@ pub fn write_image(mime: &str, bytes: &[u8]) -> Result<(), String> {
     *LAST_PRIVATE_TEXT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *LAST_CLIP.lock().unwrap_or_else(|e| e.into_inner()) = Clip::Image(Image::Png(png.clone()));
 
-    if !cfg!(test) && has_display_server() {
+    if !cfg!(test)
+        && has_display_server()
+        && !crate::bridge::native::ffi::linux_clipboard_write_image_png(&png)
+    {
         let _ = pipe_to_cmd("wl-copy", &["--type", "image/png"], &png)
             .or_else(|_| pipe_to_cmd("xclip", &["-selection", "clipboard", "-t", "image/png"], &png));
     }
@@ -693,23 +744,34 @@ pub fn build_dropfiles_payload(paths: &[PathBuf]) -> Vec<u8> {
 
 pub fn read_files() -> Option<Vec<PathBuf>> {
     if !cfg!(test) && has_display_server() {
-        let wayland = is_wayland();
-        for mime in ["text/uri-list", "x-special/gnome-copied-files", "x-special/mate-copied-files"] {
-            if let Some(bytes) = read_os_mime(wayland, mime)
-                && let Ok(text) = String::from_utf8(bytes)
+        let qt_files = crate::bridge::native::ffi::linux_clipboard_read_files();
+        if !qt_files.is_empty() {
+            let parsed: Vec<PathBuf> =
+                qt_files.into_iter().map(PathBuf::from).filter(|p| p.exists()).collect();
+            if !parsed.is_empty() {
+                return Some(parsed);
+            }
+        }
+        if !is_gnome_wayland() {
+            let wayland = is_wayland();
+            for mime in ["text/uri-list", "x-special/gnome-copied-files", "x-special/mate-copied-files"] {
+                if let Some(bytes) = read_os_mime(wayland, mime)
+                    && let Ok(text) = String::from_utf8(bytes)
+                {
+                    let parsed: Vec<PathBuf> =
+                        parse_uri_list(&text).into_iter().filter(|p| p.exists()).collect();
+                    if !parsed.is_empty() {
+                        return Some(parsed);
+                    }
+                }
+            }
+            if let Some(text) = read_os_plain_text(wayland)
+                && is_copied_file_uri_text(&text)
             {
                 let parsed: Vec<PathBuf> = parse_uri_list(&text).into_iter().filter(|p| p.exists()).collect();
                 if !parsed.is_empty() {
                     return Some(parsed);
                 }
-            }
-        }
-        if let Some(text) = read_os_plain_text(wayland)
-            && is_copied_file_uri_text(&text)
-        {
-            let parsed: Vec<PathBuf> = parse_uri_list(&text).into_iter().filter(|p| p.exists()).collect();
-            if !parsed.is_empty() {
-                return Some(parsed);
             }
         }
     }
@@ -729,9 +791,12 @@ pub fn write_files(paths: &[PathBuf]) -> bool {
     *LAST_CLIP.lock().unwrap_or_else(|e| e.into_inner()) = Clip::Empty;
     *LAST_FILES.lock().unwrap_or_else(|e| e.into_inner()) = Some(paths.to_vec());
     if !cfg!(test) && has_display_server() {
-        let _ = pipe_to_cmd("wl-copy", &["--type", "text/uri-list"], uri_list.as_bytes()).or_else(|_| {
-            pipe_to_cmd("xclip", &["-selection", "clipboard", "-t", "text/uri-list"], uri_list.as_bytes())
-        });
+        let string_paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        if !crate::bridge::native::ffi::linux_clipboard_write_files(&string_paths) {
+            let _ = pipe_to_cmd("wl-copy", &["--type", "text/uri-list"], uri_list.as_bytes()).or_else(|_| {
+                pipe_to_cmd("xclip", &["-selection", "clipboard", "-t", "text/uri-list"], uri_list.as_bytes())
+            });
+        }
     }
     true
 }
@@ -836,7 +901,7 @@ mod tests {
 
     #[test]
     fn cf_html_round_trips_utf8_fragment() {
-        let fragment = "<p>Hello <b>world</b> — 🐝</p>";
+        let fragment = "<p>Hello <b>world</b> · café 日本</p>";
         let encoded = encode_cf_html(fragment);
         assert_eq!(encoded.last(), Some(&0));
         let decoded = decode_cf_html(&encoded).expect("decoded fragment");
@@ -940,7 +1005,7 @@ mod tests {
         assert_eq!(from_file_uri("# comment line"), None);
 
         let paths =
-            vec![PathBuf::from("/tmp/nectarlink_a.txt"), PathBuf::from("/tmp/nectarlink dir/b 🐝.png")];
+            vec![PathBuf::from("/tmp/nectarlink_a.txt"), PathBuf::from("/tmp/nectarlink dir/b café.png")];
         let list = format_uri_list(&paths);
         assert_eq!(parse_uri_list(&list), paths);
 

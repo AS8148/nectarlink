@@ -78,6 +78,7 @@ bundle_private_qt_if_needed() {
     for pattern in \
         "libQt6Core.so*" \
         "libQt6Gui.so*" \
+        "libQt6Widgets.so*" \
         "libQt6Qml*.so*" \
         "libQt6Quick*.so*" \
         "libQt6Network.so*" \
@@ -170,7 +171,18 @@ done
 for qm in "${SELF_DIR}"/nectarlink_*.qm; do
     [[ -f "${qm}" ]] && install -m 0644 "${qm}" "${PREFIX}/$(basename "${qm}")"
 done
-ln -sf "${PREFIX}/nectarlink-desktop" "${BIN_LINK}"
+if [[ -d "${PREFIX}/lib" ]]; then
+    cat > "${BIN_LINK}" <<WRAPEOF
+#!/usr/bin/env sh
+export LD_LIBRARY_PATH="${PREFIX}/lib\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"
+export QT_PLUGIN_PATH="${PREFIX}/plugins\${QT_PLUGIN_PATH:+:\${QT_PLUGIN_PATH}}"
+export QML2_IMPORT_PATH="${PREFIX}/qml\${QML2_IMPORT_PATH:+:\${QML2_IMPORT_PATH}}"
+exec "${PREFIX}/nectarlink-desktop" "\$@"
+WRAPEOF
+    chmod 0755 "${BIN_LINK}"
+else
+    ln -sf "${PREFIX}/nectarlink-desktop" "${BIN_LINK}"
+fi
 install -m 0644 "${SELF_DIR}/share/applications/nectarlink.desktop" "${APPS_DIR}/nectarlink.desktop"
 install -m 0644 "${SELF_DIR}/share/metainfo/org.nectarlink.desktop.metainfo.xml" "${META_DIR}/org.nectarlink.desktop.metainfo.xml"
 [[ -f "${SELF_DIR}/share/icons/nectarlink.svg" ]] && install -m 0644 "${SELF_DIR}/share/icons/nectarlink.svg" "${ICON_DIR}/nectarlink.svg"

@@ -103,6 +103,18 @@ pub mod ffi {
         fn linux_tray_wait_action(timeout_ms: u32) -> String;
 
         #[allow(dead_code)]
+        fn linux_tray_is_available() -> bool;
+
+        #[allow(dead_code)]
+        fn linux_work_area(x: &mut i32, y: &mut i32, w: &mut i32, h: &mut i32) -> bool;
+
+        #[allow(dead_code)]
+        fn linux_screen_geometry(x: &mut i32, y: &mut i32, w: &mut i32, h: &mut i32) -> bool;
+
+        #[allow(dead_code)]
+        fn linux_set_activation_token(token: &str);
+
+        #[allow(dead_code)]
         fn linux_clipboard_sequence() -> u64;
 
         #[allow(dead_code)]
@@ -110,5 +122,29 @@ pub mod ffi {
 
         #[allow(dead_code)]
         fn linux_clipboard_notify_external();
+
+        #[allow(dead_code)]
+        #[allow(clippy::too_many_arguments)]
+        fn linux_clipboard_read(
+            check_privacy: bool,
+            is_private: &mut bool,
+            has_files: &mut bool,
+            text: &mut String,
+            html: &mut String,
+            rtf: &mut String,
+            png_bytes: &mut Vec<u8>,
+        ) -> bool;
+
+        #[allow(dead_code)]
+        fn linux_clipboard_read_files() -> Vec<String>;
+
+        #[allow(dead_code)]
+        fn linux_clipboard_write_text(text: &str, html: &str, rtf: &str, is_private: bool) -> bool;
+
+        #[allow(dead_code)]
+        fn linux_clipboard_write_image_png(png: &[u8]) -> bool;
+
+        #[allow(dead_code)]
+        fn linux_clipboard_write_files(paths: &[String]) -> bool;
     }
 }

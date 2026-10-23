@@ -118,8 +118,13 @@ pub fn extract_notify_call(msg: &zbus::message::Message) -> Option<(String, Stri
         std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
         i32,
     );
-    let (app_name, _replaces_id, _app_icon, summary, body, _actions, _hints, _timeout) =
+    let (app_name, _replaces_id, _app_icon, summary, body, _actions, hints, _timeout) =
         msg.body().deserialize::<NotifyBody>().ok()?;
+    if hints.contains_key("x-canonical-private-synchronous")
+        || hints.get("transient").and_then(|v| bool::try_from(v).ok()).unwrap_or(false)
+    {
+        return None;
+    }
     let app_name = app_name.trim().to_string();
     let summary = summary.trim().to_string();
     let body = body.trim().to_string();

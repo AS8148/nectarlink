@@ -191,14 +191,24 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Doctor", "%1 minutes ago"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "%1 · %2 ms"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "A VPN is on"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "A firewall rule blocks incoming NectarLink connections. Allow it, and your phone can connect."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Calls and alerts can't play sound yet"), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Connect it to the same Wi-Fi or wired network as your phone."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Connected to %1"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Connected to a network"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Connecting to %1…"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "GNOME shows app icons there only with the AppIndicator extension. Install it (gnome-shell-extension-appindicator) and turn it on in Extensions."), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Install fuse3 to browse your phone's files in your file manager."), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Install gstreamer1.0-pipewire and gstreamer1.0-tools, and the desktop portal (xdg-desktop-portal) if it's missing."), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Install pipewire-pulse (or pulseaudio-utils) for call audio and Find my PC."), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Install v4l2loopback-dkms, then restart, so apps can use your phone as a camera."), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "It hasn't connected yet."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Keep %1 reachable in the background (%2)"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Last seen %1."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "NectarLink can't show its icon in the top bar"), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "NectarLink is in the top bar"), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "NectarLink isn't allowed through Windows Firewall"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "NectarLink isn't allowed through the firewall"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "On Huawei / Honor: open Settings → Battery → App launch, turn off Manage automatically for NectarLink, and keep Auto-launch, Secondary launch, and Run in background on."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "On OnePlus / OxygenOS: open Settings → Apps → App management → NectarLink → Battery usage and turn on Allow background activity and Allow auto-launch."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "On Oppo / Realme: open Settings → Apps → App management → NectarLink → Battery usage and turn on Allow background activity and Allow auto-launch."), // desktop/app/src/doctor.rs
@@ -208,8 +218,19 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Doctor", "On Vivo / OriginOS / Funtouch: open Settings → Battery → Background power consumption management → NectarLink and choose Unrestricted, and allow Autostart."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "On Xiaomi / HyperOS / MIUI: open Settings → Apps → Manage apps → NectarLink, turn on Autostart, and set Battery saver to No restrictions."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "On public networks Windows keeps other devices from finding this PC. If it's your home or work network, set it to Private."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "On public networks the firewall keeps other devices from finding this PC. If it's your home or work network, open network settings and set its firewall zone to Home or Trusted."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "On this network"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Phone as webcam is ready"), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Phone as webcam needs one more step"), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Phone storage can open in your file manager"), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Phone storage needs one more step"), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Showing this PC's screen needs one more step"), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Someone chose not to allow it when Windows asked. Allow it, and your phone can connect."), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Sound is ready"), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "The firewall blocks NectarLink"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "The firewall is off for this network"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "The firewall lets your phone connect"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "The touchpad and keyboard on your phone need the desktop portal (xdg-desktop-portal) or access to /dev/uinput."), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "This PC can see %1 announce itself on the network, but the router is blocking devices from talking directly to each other (often called AP Isolation, Client Isolation, or Guest Wi-Fi). Move both devices off any Guest Wi-Fi network, turn off AP / Client Isolation in your router's Wi-Fi settings, or connect with a USB cable."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "This PC isn't on a network"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "This network"), // desktop/app/src/doctor.rs
@@ -219,6 +240,9 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Doctor", "Windows Firewall blocks NectarLink"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Windows Firewall is off for this network"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Windows Firewall lets your phone connect"), // desktop/app/src/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Your phone can control this PC"), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Your phone can show this PC's screen"), // desktop/app/src/linux/doctor.rs
+    QT_TRANSLATE_NOOP("Doctor", "Your phone can't control this PC yet"), // desktop/app/src/linux/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "Your phone may not be able to connect. Allow it once here."), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "a minute ago"), // desktop/app/src/doctor.rs
     QT_TRANSLATE_NOOP("Doctor", "an hour ago"), // desktop/app/src/doctor.rs
@@ -231,7 +255,7 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Errors", "The device's app doesn't support that yet."), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("FolderSync", "Folders are up to date."), // desktop/app/src/folder_sync.rs
     QT_TRANSLATE_NOOP("FolderSync", "Synced %1 file(s)."), // desktop/app/src/folder_sync.rs
-    QT_TRANSLATE_NOOP("Guide", "1. Install NectarLink on your Windows 11 PC and your Android phone (Android 8.0 or newer).\n2. Connect both devices to the same Wi-Fi network, or plug your phone into your PC with a USB cable.\n3. Open the Pair step in the setup walkthrough, or click + (Pair a new device) at the bottom of the left rail.\n4. Scan the QR code from the NectarLink Android app, or select your phone from the nearby devices list and confirm that the 6-digit code matches on both screens.\n5. Choose which features to share for that phone and grant only the Android permissions you want to use."), // desktop/app/src/bridge/app.rs
+    QT_TRANSLATE_NOOP("Guide", "1. Install NectarLink on your PC (Windows 11 or Linux) and your Android phone (Android 8.0 or newer).\n2. Connect both devices to the same Wi-Fi network, or plug your phone into your PC with a USB cable.\n3. Open the Pair step in the setup walkthrough, or click + (Pair a new device) at the bottom of the left rail.\n4. Scan the QR code from the NectarLink Android app, or select your phone from the nearby devices list and confirm that the 6-digit code matches on both screens.\n5. Choose which features to share for that phone and grant only the Android permissions you want to use."), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("Guide", "Android permissions and why each is optional"), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("Guide", "Automations"), // desktop/app/src/bridge/app.rs
     QT_TRANSLATE_NOOP("Guide", "Calls"), // desktop/app/src/bridge/app.rs
@@ -348,6 +372,8 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Notifications", "Dismissed %1 notifications"), // desktop/app/src/bridge/notifications.rs
     QT_TRANSLATE_NOOP("Notifications", "Dismissed from %1"), // desktop/app/src/bridge/notifications.rs
     QT_TRANSLATE_NOOP("Notifications", "Notification dismissed"), // desktop/app/src/bridge/notifications.rs
+    QT_TRANSLATE_NOOP("Notifications", "Open"), // desktop/app/src/linux/toast.rs
+    QT_TRANSLATE_NOOP("Notifications", "Reply"), // desktop/app/src/linux/toast.rs
     QT_TRANSLATE_NOOP("Notifications", "That notification is gone from the phone."), // desktop/app/src/notifications.rs
     QT_TRANSLATE_NOOP("Obs", "OBS isn't reachable on port %1. Turn on its WebSocket server."), // desktop/app/src/obs.rs
     QT_TRANSLATE_NOOP("Obs", "OBS: %1"), // desktop/app/src/obs.rs

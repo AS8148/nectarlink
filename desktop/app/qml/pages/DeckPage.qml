@@ -98,9 +98,9 @@ Item {
         { id: "volume_up",        group: qsTr("Audio"), label: qsTr("Volume up") },
         { id: "volume_mute",      group: qsTr("Audio"), label: qsTr("Mute speaker") },
         { id: "mic_mute",         group: qsTr("Audio"), label: qsTr("Mute microphone") },
-        { id: "show_desktop",     group: qsTr("System"), label: qsTr("Show desktop (Win+D)") },
+        { id: "show_desktop",     group: qsTr("System"), label: Qt.platform.os === "linux" ? qsTr("Show desktop (Super+D)") : qsTr("Show desktop (Win+D)") },
         { id: "switch_window",    group: qsTr("System"), label: qsTr("Switch window (Alt+Tab)") },
-        { id: "screenshot",       group: qsTr("System"), label: qsTr("Screenshot (Win+Shift+S)") },
+        { id: "screenshot",       group: qsTr("System"), label: Qt.platform.os === "linux" ? qsTr("Screenshot") : qsTr("Screenshot (Win+Shift+S)") },
         { id: "lock_pc",          group: qsTr("System"), label: qsTr("Lock PC") },
         { id: "shortcut",         group: qsTr("Custom"), label: qsTr("Keyboard shortcut") },
         { id: "open_url",         group: qsTr("Custom"), label: qsTr("Open website") },
@@ -746,7 +746,7 @@ Item {
                     Chip {
                         interactive: true
                         selected: editorSheet.modWin
-                        text: qsTr("Win")
+                        text: Qt.platform.os === "linux" ? qsTr("Super") : qsTr("Win")
                         onClicked: editorSheet.modWin = !editorSheet.modWin
                     }
                 }
