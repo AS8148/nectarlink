@@ -8,6 +8,22 @@ change things that need a step from you, and its notes say so.
 
 ### New
 
+- **The PC app on Linux**, for Ubuntu 24.04 or newer, Debian 13, Fedora 40
+  or newer and other distributions from 2024 on, as a `.deb`, an AppImage
+  or a tarball. It does what the Windows app does: notifications with
+  replies, messages and calls, the clipboard, files, your phone's storage
+  in the file manager, photos, media controls, mirroring and phone apps in
+  windows, your PC's screen on the phone, the phone as webcam and
+  microphone, and the phone as touchpad and keyboard. It works on GNOME
+  and KDE, on Wayland and X11, and updates itself. A few features need a
+  package or a permission first; the Connection Doctor says which. Thanks
+  to Jochen Kirstätter for the port
+  ([#34](https://github.com/thtbee/nectarlink/pull/34),
+  [#38](https://github.com/thtbee/nectarlink/pull/38),
+  [#41](https://github.com/thtbee/nectarlink/pull/41),
+  [#42](https://github.com/thtbee/nectarlink/pull/42),
+  [#43](https://github.com/thtbee/nectarlink/pull/43),
+  [#44](https://github.com/thtbee/nectarlink/pull/44)).
 - **The PC app on macOS, as a preview.** It builds and runs on macOS 14
   and later with pairing, files and folders, the photos browser,
   Continuity Camera, calls and SMS, the phone's toggles and volume,

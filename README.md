@@ -40,9 +40,10 @@ of new features I wanted that I think you'll enjoy having too.
 |---|---|---|
 | **Windows (x64)** | [Installer (.exe)](https://github.com/thtbee/nectarlink/releases/download/v0.1.4/Nectarlink-0.1.4-x64-setup.exe) | Windows 11, 64-bit Intel or AMD |
 | **Windows (ARM64)** | From the next release | Windows 11 on ARM (Snapdragon) |
+| **Linux (x86_64)** | From the next release (.deb, AppImage and .tar.gz) | Ubuntu 24.04 or newer, Debian 13, Fedora 40 or newer, 64-bit Intel or AMD |
 | **Android** | [App (.apk)](https://github.com/thtbee/nectarlink/releases/download/v0.1.4/Nectarlink-0.1.4-android.apk) | Android 8.0 or newer |
 
-Both apps update themselves from GitHub Releases and check every download
+The apps update themselves from GitHub Releases and check every download
 against its SHA-256 sums.
 
 > [!NOTE]
@@ -125,20 +126,21 @@ and dark.
 
 ### Platform support
 
-| Feature | Windows | macOS (Preview) |
-|---|---|---|
-| Pairing & mutual TLS | Yes | Yes |
-| Files & folder transfer | Yes | Yes |
-| Photos browser & download | Yes | Yes |
-| Continuity Camera | Yes | Yes |
-| Calls & SMS viewer | Yes | Yes |
-| Phone quick toggles & volume | Yes | Yes |
-| Clipboard text sync | Yes | Yes (two-way text, incoming photo) |
-| System notifications | Yes | Yes (system banners) |
-| Phone screen mirroring | Yes | Not yet (in development) |
-| Screen recording (MP4) | Yes | Not yet |
-| PC audio stream / phone mic | Yes | Not yet |
-| Storage mount in Explorer | Yes | Windows Cloud Files only |
+| Feature | Windows | Linux | macOS (Preview) |
+|---|---|---|---|
+| Pairing & mutual TLS | Yes | Yes | Yes |
+| Files & folder transfer | Yes | Yes | Yes |
+| Photos browser & download | Yes | Yes | Yes |
+| Continuity Camera | Yes | Yes | Yes |
+| Calls & SMS viewer | Yes | Yes | Yes |
+| Phone quick toggles & volume | Yes | Yes | Yes |
+| Clipboard text & image sync | Yes | Yes | Yes (two-way text, incoming photo) |
+| System notifications | Yes | Yes | Yes (system banners) |
+| Phone screen mirroring | Yes | Yes | Not yet (in development) |
+| Screen recording (MP4) | Yes | Yes | Not yet |
+| PC audio stream / phone mic | Yes | Yes | Not yet |
+| Phone as webcam | Yes | Yes (with v4l2loopback) | Not yet |
+| Phone storage in the file manager | Yes | Yes | Not yet |
 
 ## Private by design
 
@@ -245,6 +247,7 @@ docs/                    Guide, technical docs, protocol, design system    (CC B
 |---|---|
 | Core and CLI | [Rust](https://rustup.rs) (stable, pinned in `rust-toolchain.toml`) |
 | Windows app | Windows 11, Visual Studio 2022 Build Tools (C++), [Qt 6.12](https://www.qt.io/download-open-source) for MSVC 2022 x64 |
+| Linux app | Ubuntu 24.04 or newer (glibc 2.39), a C++17 compiler, pkg-config, the X11, Wayland and D-Bus development packages, [Qt 6.12](https://www.qt.io/download-open-source) (`gcc_64`, with Qt Shader Tools and Qt Wayland Compositor) |
 | macOS app | macOS 14+, Xcode Command Line Tools, [Qt 6.12](https://www.qt.io/download-open-source) (or Homebrew Qt 6) |
 | Android app | Android SDK (platform 37, NDK 30.0.16248370), JDK 17 or newer, `cargo-ndk` (see [android/README.md](android/README.md)) |
 
