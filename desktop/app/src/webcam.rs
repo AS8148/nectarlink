@@ -93,6 +93,8 @@ static HEIGHT: AtomicU32 = AtomicU32::new(720);
 static UHD: AtomicBool = AtomicBool::new(true);
 static PREVIEW_ACTIVE: AtomicBool = AtomicBool::new(false);
 struct PreviewRequests(AtomicU32);
+const HOME_PREVIEW: u32 = 1 << 0;
+const SETTINGS_PREVIEW: u32 = 1 << 1;
 impl PreviewRequests {
     fn set(&self, bit: u32, requested: bool) -> bool {
         let mask = if requested {
@@ -459,8 +461,8 @@ fn refresh_idle_frame() {
 /// preview. Window visibility participates in the QML demand expression.
 pub fn set_preview_visible(owner: &str, active: bool) {
     let bit = match owner {
-        "home" => 2,
-        "settings" => 4,
+        "home" => HOME_PREVIEW,
+        "settings" => SETTINGS_PREVIEW,
         _ => return,
     };
     set_preview_demand(bit, active);
@@ -895,13 +897,13 @@ mod tests {
     #[test]
     fn hiding_one_preview_does_not_disable_another_visible_view() {
         let requests = PreviewRequests(AtomicU32::new(0));
-        assert!(requests.set(2, true));
-        assert!(requests.set(4, true));
-        assert!(requests.set(2, false));
-        assert!(!requests.set(4, false));
-        assert!(requests.set(2, true));
+        assert!(requests.set(HOME_PREVIEW, true));
+        assert!(requests.set(SETTINGS_PREVIEW, true));
+        assert!(requests.set(HOME_PREVIEW, false));
+        assert!(!requests.set(SETTINGS_PREVIEW, false));
+        assert!(requests.set(HOME_PREVIEW, true));
         requests.clear();
-        assert!(!requests.set(4, false));
+        assert!(!requests.set(SETTINGS_PREVIEW, false));
     }
 
     #[test]

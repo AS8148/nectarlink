@@ -235,13 +235,9 @@ impl GpuPublisher {
     pub fn disable(&mut self) {
         self.unavailable = true;
     }
-    /// Counts observed by consumers, useful for verifying which allocator path
-    /// Windows selected without logging per-frame data or saving camera images.
+    #[cfg(test)]
     pub fn stats(&self) -> Option<(u32, u32)> {
         self.mapping.as_ref().map(|m| m.control_stats())
-    }
-    pub fn failure_code(&self) -> Option<i32> {
-        self.mapping.as_ref().map(|m| m.control_code()).filter(|code| *code != 0)
     }
     /// Returns false to request the existing CPU/RGB fallback. No camera client
     /// (or an old DLL) is a normal case, not a fatal decoder error.
@@ -625,6 +621,7 @@ impl GpuReader {
             }
             context.Unmap(staging, 0);
             self.cpu_frame = Some(d.frame);
+            #[cfg(test)]
             self.mapping.count_download();
             Ok(())
         }
@@ -690,6 +687,7 @@ impl GpuReader {
                             )
                             .is_ok()
                     {
+                        #[cfg(test)]
                         self.mapping.count_gpu_sample();
                         return Ok(true);
                     }
@@ -708,6 +706,7 @@ impl GpuReader {
                         Some(&region),
                     );
                     context.Flush();
+                    #[cfg(test)]
                     self.mapping.count_gpu_sample();
                     return Ok(true);
                 }
@@ -848,17 +847,12 @@ mod tests {
     };
     static TEST_ID: AtomicU64 = AtomicU64::new(0);
 
-    fn pair() -> (GpuPublisher, GpuReader) {
-        let name = format!(
-            "Local\\NectarlinkGpuTest_{}_{}",
-            std::process::id(),
-            TEST_ID.fetch_add(1, Ordering::Relaxed)
-        );
-        let mapping = SharedFrameMapping::open_or_create_control(&name).unwrap();
-        let mut publisher = GpuPublisher::new();
-        publisher.mapping = Some(SharedFrameMapping::open_existing_control(&name).unwrap());
-        publisher.mapping_global = true;
-        let reader = GpuReader {
+    fn reader_with_mapping(name: &str) -> GpuReader {
+        let mapping = SharedFrameMapping::open_or_create_control(name).unwrap();
+        unsafe {
+            MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).unwrap();
+        }
+        GpuReader {
             mapping,
             device: None,
             unshareable_device: None,
@@ -872,10 +866,17 @@ mod tests {
             scaled_key: None,
             scaled: Vec::new(),
             scaler: None,
-        };
-        unsafe {
-            MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).unwrap();
         }
+    }
+
+    fn pair() -> (GpuPublisher, GpuReader) {
+        let name = format!(
+            "Local\\NectarlinkGpuTest_{}_{}",
+            std::process::id(),
+            TEST_ID.fetch_add(1, Ordering::Relaxed)
+        );
+        let reader = reader_with_mapping(&name);
+        let publisher = GpuPublisher::new_with_mapping(&name).unwrap();
         (publisher, reader)
     }
     fn texture(device: &ID3D11Device, w: u32, h: u32, y: u8) -> (ID3D11Texture2D, IMFSample) {
@@ -1076,12 +1077,8 @@ mod tests {
 
     #[test]
     fn separate_process_opens_and_verifies_shared_gpu_frames() {
-        let (publisher, mut reader) = pair();
-        // pair uses a unique local mapping; derive its test name independently
-        // by allocating a fresh control mapping for this cross-process test.
-        drop(publisher);
         let name = format!("Local\\NectarlinkGpuCrossProcess_{}", std::process::id());
-        reader.mapping = SharedFrameMapping::open_or_create_control(&name).unwrap();
+        let mut reader = reader_with_mapping(&name);
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .creation_flags(0x08000000)
             .args(["--exact", "gpu::tests::cross_process_gpu_producer", "--nocapture"])

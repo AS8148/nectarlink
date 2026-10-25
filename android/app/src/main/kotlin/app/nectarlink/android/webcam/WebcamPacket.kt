@@ -44,6 +44,6 @@ internal object WebcamPacket {
         return end
     }
 
-    internal val AVC_AUD_NAL = byteArrayOf(0, 0, 0, 1, 9, 0xF0.toByte())
-    internal val HEVC_AUD_NAL = byteArrayOf(0, 0, 0, 1, 0x46, 1, 0x50)
+    private val AVC_AUD_NAL = byteArrayOf(0, 0, 0, 1, 9, 0xF0.toByte())
+    private val HEVC_AUD_NAL = byteArrayOf(0, 0, 0, 1, 0x46, 1, 0x50)
 }

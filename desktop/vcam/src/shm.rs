@@ -144,43 +144,38 @@ fn unix_shm_path(name: &str) -> std::path::PathBuf {
 
 #[cfg(windows)]
 impl SharedFrameMapping {
-    #[cfg(windows)]
     pub(crate) fn control_failed(&self) -> bool {
         self.header()._pad.load(Ordering::Acquire) != 0
     }
 
-    #[cfg(windows)]
     pub(crate) fn fail_control(&self) {
         self.header()._pad.store(1, Ordering::Release);
     }
-    #[cfg(windows)]
     pub(crate) fn fail_control_code(&self, code: i32) {
         self.header()._pad.store(code as u32, Ordering::Release);
     }
 
-    #[cfg(windows)]
     pub(crate) fn control_code(&self) -> i32 {
         self.header()._pad.load(Ordering::Acquire) as i32
     }
 
-    #[cfg(windows)]
+    #[cfg(test)]
     pub(crate) fn control_stats(&self) -> (u32, u32) {
         (self.header().height.load(Ordering::Relaxed), self.header().stride.load(Ordering::Relaxed))
     }
 
-    #[cfg(windows)]
+    #[cfg(test)]
     pub(crate) fn count_gpu_sample(&self) {
         self.header().height.fetch_add(1, Ordering::Relaxed);
     }
 
-    #[cfg(windows)]
+    #[cfg(test)]
     pub(crate) fn count_download(&self) {
         self.header().stride.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Binary control messages use their own mapping name, never the RGB mapping.
     /// A busy writer is distinct from idle so GPU readers can retain a snapshot.
-    #[cfg(windows)]
     #[allow(unsafe_code)]
     pub(crate) fn read_control(&self) -> Option<(u64, Vec<u8>)> {
         let h = self.header();
@@ -205,7 +200,6 @@ impl SharedFrameMapping {
         None
     }
 
-    #[cfg(windows)]
     #[allow(unsafe_code)]
     pub(crate) fn write_control(&self, bytes: &[u8]) {
         assert!(bytes.len() <= 256);

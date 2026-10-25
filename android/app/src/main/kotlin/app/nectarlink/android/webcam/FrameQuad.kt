@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 
-/** GL-thread-owned, reusable position/UV data for the upright FIT_CENTER image. */
+/** Caches rotated quad vertices for the encoder fit and UI crop. */
 internal class FrameQuad(
     private val srcWidth: Int,
     private val srcHeight: Int,

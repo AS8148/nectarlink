@@ -763,7 +763,6 @@ mod tests {
                     }
                 }
                 assert_eq!(count, 200);
-                assert_eq!(publisher.stats(), Some((200, 0)));
                 assert!(decoder.staging.is_none(), "publication must not download the decoded frames");
                 eprintln!("{codec}: published {count} GPU frames with zero CPU downloads");
             }

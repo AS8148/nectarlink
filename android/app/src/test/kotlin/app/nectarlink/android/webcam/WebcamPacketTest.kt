@@ -7,6 +7,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class WebcamPacketTest {
+    private val avcAud = byteArrayOf(0, 0, 0, 1, 9, 0xF0.toByte())
+    private val hevcAud = byteArrayOf(0, 0, 0, 1, 0x46, 1, 0x50)
+
     private data class CodecFixture(
         val codec: String,
         val aud: ByteArray,
@@ -22,7 +25,7 @@ class WebcamPacketTest {
         )
         val h264Keyframe = byteArrayOf(0, 0, 0, 1, 0x65, 0x55)
         assertArrayEquals(
-            WebcamPacket.AVC_AUD_NAL + h264Parameters + h264Keyframe,
+            avcAud + h264Parameters + h264Keyframe,
             WebcamPacket.frame(ByteBuffer.wrap(h264Keyframe), 0, h264Keyframe.size, h264Parameters, true, "h264"),
         )
 
@@ -33,7 +36,7 @@ class WebcamPacketTest {
         )
         val hevcKeyframe = byteArrayOf(0, 0, 0, 1, 0x26, 1, 0x55)
         assertArrayEquals(
-            WebcamPacket.HEVC_AUD_NAL + hevcParameters + hevcKeyframe,
+            hevcAud + hevcParameters + hevcKeyframe,
             WebcamPacket.frame(ByteBuffer.wrap(hevcKeyframe), 0, hevcKeyframe.size, hevcParameters, true, "h265"),
         )
     }
@@ -49,35 +52,61 @@ class WebcamPacketTest {
         source.position(2)
         val readOnly = source.asReadOnlyBuffer()
         val packet = WebcamPacket.frame(readOnly, 7, payload.size, byteArrayOf(), false, "h265")
-        assertArrayEquals(WebcamPacket.HEVC_AUD_NAL + payload, packet)
+        assertArrayEquals(hevcAud + payload, packet)
         assertEquals(2, readOnly.position())
         assertEquals(30, readOnly.limit())
         source.put(7, 0x7E)
-        assertArrayEquals(WebcamPacket.HEVC_AUD_NAL + payload, packet)
+        assertArrayEquals(hevcAud + payload, packet)
     }
 
     @Test
     fun `strips only leading AUDs for both codecs including nonzero offsets`() {
         for (fixture in listOf(
-            CodecFixture("h264", WebcamPacket.AVC_AUD_NAL, byteArrayOf(0, 0, 1, 0x65, 0x22), byteArrayOf(0, 0, 1, 0x67, 0x44)),
-            CodecFixture("h265", WebcamPacket.HEVC_AUD_NAL, byteArrayOf(0, 0, 1, 0x26, 1, 0x22), byteArrayOf(0, 0, 1, 0x40, 1, 0x44)),
+            CodecFixture(
+                "h264", avcAud,
+                byteArrayOf(0, 0, 1, 0x65, 0x22),
+                byteArrayOf(0, 0, 1, 0x67, 0x44),
+            ),
+            CodecFixture(
+                "h265", hevcAud,
+                byteArrayOf(0, 0, 1, 0x26, 1, 0x22),
+                byteArrayOf(0, 0, 1, 0x40, 1, 0x44),
+            ),
         )) {
             val shortAud = fixture.aud.copyOfRange(1, fixture.aud.size)
             val source = ByteBuffer.wrap(byteArrayOf(99, 98) + shortAud + fixture.slice + byteArrayOf(97))
             assertArrayEquals(
                 fixture.aud + fixture.parameters + fixture.slice,
                 WebcamPacket.frame(
-                    source, 2, shortAud.size + fixture.slice.size,
-                    fixture.aud + fixture.parameters, true, fixture.codec,
+                    source,
+                    2,
+                    shortAud.size + fixture.slice.size,
+                    fixture.aud + fixture.parameters,
+                    true,
+                    fixture.codec,
                 ),
             )
             assertArrayEquals(
                 fixture.aud + fixture.slice,
-                WebcamPacket.frame(source, 2, shortAud.size + fixture.slice.size, fixture.parameters, false, fixture.codec),
+                WebcamPacket.frame(
+                    source,
+                    2,
+                    shortAud.size + fixture.slice.size,
+                    fixture.parameters,
+                    false,
+                    fixture.codec,
+                ),
             )
             assertArrayEquals(
                 fixture.aud,
-                WebcamPacket.frame(ByteBuffer.wrap(fixture.aud), 0, fixture.aud.size, byteArrayOf(), false, fixture.codec),
+                WebcamPacket.frame(
+                    ByteBuffer.wrap(fixture.aud),
+                    0,
+                    fixture.aud.size,
+                    byteArrayOf(),
+                    false,
+                    fixture.codec,
+                ),
             )
         }
     }
@@ -86,8 +115,8 @@ class WebcamPacketTest {
     fun `supports empty input and sliced buffers`() {
         val slice = byteArrayOf(0, 0, 0, 1, 0x41, 0x55)
         val source = ByteBuffer.wrap(byteArrayOf(99, 98) + slice).apply { position(2) }.slice()
-        assertArrayEquals(WebcamPacket.AVC_AUD_NAL + slice, WebcamPacket.frame(source, 0, slice.size, byteArrayOf(), false, "h264"))
-        assertArrayEquals(WebcamPacket.AVC_AUD_NAL, WebcamPacket.frame(source, source.limit(), 0, byteArrayOf(), false, "h264"))
+        assertArrayEquals(avcAud + slice, WebcamPacket.frame(source, 0, slice.size, byteArrayOf(), false, "h264"))
+        assertArrayEquals(avcAud, WebcamPacket.frame(source, source.limit(), 0, byteArrayOf(), false, "h264"))
     }
 
     @Test(expected = IllegalArgumentException::class)
