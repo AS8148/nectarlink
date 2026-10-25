@@ -14,7 +14,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import androidx.camera.core.Preview
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -64,7 +63,7 @@ internal fun resolutionOf(width: Int, height: Int): Int {
 }
 
 /**
- * Streams the phone's camera as H.264 to a paired PC (`docs/protocol/webcam.md`).
+ * Streams the phone's camera as negotiated HEVC or H.264 to a paired PC (`docs/protocol/webcam.md`).
  * Runs as a `camera` foreground service with an ongoing notification and a
  * Stop action so streaming continues if the user switches apps or locks the
  * screen.
@@ -160,6 +159,7 @@ class WebcamService : LifecycleService() {
                 main.post { stopStreaming() }
                 return@launch
             }
+            val preferredCodec = if ("h265" in core.webcamCodecs(targetPc)) "h265" else "h264"
             main.post {
                 if (pcId != targetPc || current !== this@WebcamService) {
                     runCatching { stream.end() }
@@ -172,6 +172,7 @@ class WebcamService : LifecycleService() {
                     initialHeight = normHeight,
                     fps = fps,
                     initialCamera = normCamera,
+                    preferredCodec = preferredCodec,
                     initialZoomRatio = _session.value.zoomRatio,
                     onStateChanged = { live ->
                         _session.update { s ->
@@ -198,7 +199,7 @@ class WebcamService : LifecycleService() {
                         }
                     },
                 )
-                camEncoder.setUiSurfaceProvider(uiSurfaceProvider)
+                camEncoder.setUiPreview(uiPreviewTarget)
                 encoder = camEncoder
                 camEncoder.start()
             }
@@ -285,7 +286,7 @@ class WebcamService : LifecycleService() {
         private const val EXTRA_CAMERA = "camera"
 
         @Volatile private var current: WebcamService? = null
-        @Volatile private var uiSurfaceProvider: Preview.SurfaceProvider? = null
+        @Volatile private var uiPreviewTarget: WebcamPreviewTarget? = null
 
         private val _session = MutableStateFlow(WebcamSession())
         val session: StateFlow<WebcamSession> = _session.asStateFlow()
@@ -379,9 +380,9 @@ class WebcamService : LifecycleService() {
             current?.encoder?.setTorch(on)
         }
 
-        fun attachUiPreview(provider: Preview.SurfaceProvider?) {
-            uiSurfaceProvider = provider
-            current?.encoder?.setUiSurfaceProvider(provider)
+        internal fun attachUiPreview(target: WebcamPreviewTarget?) {
+            uiPreviewTarget = target
+            current?.encoder?.setUiPreview(target)
         }
 
         fun createChannel(context: Context) {

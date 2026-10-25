@@ -2615,6 +2615,19 @@ impl Node {
 
     // ---- Webcam (docs/protocol/webcam.md) ----
 
+    /// Webcam codecs accepted by the connected receiver, in preference order.
+    /// Older receivers advertise no HEVC capability and always use H.264.
+    pub fn webcam_codecs(&self, peer: DeviceId) -> Result<Vec<String>> {
+        let _ = self.connected(&peer)?;
+        let record = self.shared.store.get_peer(&peer)?.ok_or(Error::NotPaired)?;
+        let mut codecs = Vec::new();
+        if record.caps.contains(crate::WEBCAM_HEVC) {
+            codecs.push(crate::WEBCAM_H265.into());
+        }
+        codecs.push(crate::WEBCAM_H264.into());
+        Ok(codecs)
+    }
+
     /// Asks a paired phone to start streaming its camera as a webcam.
     /// Video then arrives through [`Platform::webcam_sink`](crate::Platform::webcam_sink).
     pub async fn webcam_start(&self, peer: DeviceId, options: crate::WebcamStart) -> Result<()> {
@@ -2630,7 +2643,7 @@ impl Node {
         }
     }
 
-    /// Asks a phone for a fresh H.264 keyframe on the webcam stream.
+    /// Asks a phone for a fresh keyframe on the webcam stream.
     pub async fn webcam_keyframe(&self, peer: DeviceId) {
         if let Ok(session) = self.connected(&peer) {
             crate::webcam::request_keyframe(&session).await;

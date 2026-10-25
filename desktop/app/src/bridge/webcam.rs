@@ -63,8 +63,8 @@ pub mod qobject {
         #[qinvokable]
         fn stop(self: &Webcam);
         #[qinvokable]
-        #[cxx_name = "setPreviewActive"]
-        fn set_preview_active(self: &Webcam, active: bool);
+        #[cxx_name = "setPreviewVisible"]
+        fn set_preview_visible(self: &Webcam, owner: &QString, active: bool);
     }
 }
 
@@ -168,7 +168,7 @@ impl qobject::Webcam {
         webcam::stop();
     }
 
-    pub fn set_preview_active(&self, active: bool) {
-        webcam::set_preview_active(active);
+    pub fn set_preview_visible(&self, owner: &QString, active: bool) {
+        webcam::set_preview_visible(&String::from(owner), active);
     }
 }

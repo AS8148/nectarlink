@@ -30,7 +30,7 @@ import androidx.lifecycle.LifecycleOwner
 import app.nectarlink.core.MirrorSendResult
 import app.nectarlink.core.MirrorStream
 import app.nectarlink.core.VideoPacketKind
-import app.nectarlink.core.webcamConfig
+import app.nectarlink.core.webcamConfigCodec
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -49,7 +49,7 @@ data class CameraLiveState(
 
 /**
  * Captures frames from the phone's front or back camera with CameraX and
- * encodes them into low-latency Annex B H.264 access units with hardware
+ * encodes them into low-latency Annex B H.264 or negotiated HEVC access units with hardware
  * [MediaCodec] (`COLOR_FormatSurface`) for `docs/protocol/webcam.md`.
  *
  * Switching cameras (`front` / `back`) or resolution (`720p` / `1080p` /
@@ -64,6 +64,7 @@ internal class CameraEncoder(
     initialHeight: Int,
     private val fps: Int,
     initialCamera: String,
+    private val preferredCodec: String = "h264",
     initialZoomRatio: Float = 1f,
     private val onStateChanged: (CameraLiveState) -> Unit,
     private val onEnded: () -> Unit,
@@ -88,6 +89,7 @@ internal class CameraEncoder(
 
     @Volatile private var running = true
     @Volatile private var keyframeWanted = false
+    @Volatile private var hevcFailed = false
     @Volatile private var cameraFacing: String = if (initialCamera == "front") "front" else "back"
 
     /** Whether the camera in use and the encoder can both do 4K. */
@@ -102,8 +104,7 @@ internal class CameraEncoder(
     private var cameraProvider: ProcessCameraProvider? = null
     private var boundCamera: Camera? = null
     private var encoderPreview: Preview? = null
-    private var uiPreview: Preview? = null
-    private var pendingUiSurfaceProvider: Preview.SurfaceProvider? = null
+    @Volatile private var pendingUiPreview: WebcamPreviewTarget? = null
     private var liveState = CameraLiveState(
         width = widthForHeight(targetHeight),
         height = targetHeight,
@@ -152,7 +153,6 @@ internal class CameraEncoder(
         currentDisplayRotation = surfaceRotationToDegrees(rotation)
         activeCodec?.pipe?.setTransform(currentSensorRotation, currentDisplayRotation)
         encoderPreview?.targetRotation = rotation
-        uiPreview?.targetRotation = rotation
         requestKeyframe()
     }
 
@@ -186,7 +186,6 @@ internal class CameraEncoder(
             runCatching { cameraProvider?.unbindAll() }
             boundCamera = null
             encoderPreview = null
-            uiPreview = null
         }
         surfaceExecutor.execute {
             activeCodec?.stop()
@@ -243,10 +242,10 @@ internal class CameraEncoder(
         }
     }
 
-    fun setUiSurfaceProvider(provider: Preview.SurfaceProvider?) {
+    fun setUiPreview(target: WebcamPreviewTarget?) {
         main.post {
-            pendingUiSurfaceProvider = provider
-            uiPreview?.setSurfaceProvider(provider)
+            pendingUiPreview = target
+            activeCodec?.pipe?.setPreviewTarget(target)
         }
     }
 
@@ -313,6 +312,7 @@ internal class CameraEncoder(
                 started.pipe.updateTransform(info.rotationDegrees, info.isMirroring)
             }
             main.post {
+                if (activeCodec === started) started.pipe.setPreviewTarget(pendingUiPreview)
                 updateState { it.copy(width = started.width, height = started.height, camera = facingForRequest) }
             }
             request.provideSurface(inputSurface, surfaceExecutor) {
@@ -323,17 +323,6 @@ internal class CameraEncoder(
                 started.stop()
             }
         }
-
-        val previewForUi = Preview.Builder()
-            .setResolutionSelector(
-                ResolutionSelector.Builder()
-                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
-                    .build(),
-            )
-            .setTargetRotation(rotation)
-            .build()
-            .also { it.setSurfaceProvider(pendingUiSurfaceProvider) }
-        uiPreview = previewForUi
 
         val requestedSelector = if (cameraFacing == "front") {
             CameraSelector.DEFAULT_FRONT_CAMERA
@@ -352,13 +341,8 @@ internal class CameraEncoder(
 
         provider.unbindAll()
         val camera = runCatching {
-            provider.bindToLifecycle(lifecycleOwner, selector, encPreview, previewForUi)
-        }.getOrElse {
-            // Fallback for single-stream legacy cameras: bind encPreview alone.
-            runCatching {
-                provider.bindToLifecycle(lifecycleOwner, selector, encPreview)
-            }.getOrNull()
-        }
+            provider.bindToLifecycle(lifecycleOwner, selector, encPreview)
+        }.onFailure { Log.w(TAG, "can't bind webcam camera output", it) }.getOrNull()
 
         if (camera == null) {
             Log.w(TAG, "failed to bind camera")
@@ -394,9 +378,32 @@ internal class CameraEncoder(
         outHeight: Int,
         camera: String,
     ): ActiveCodec? {
+        if (preferredCodec == "h265" && !hevcFailed) {
+            val name = hevcEncoder(outWidth, outHeight, fps)
+            if (name != null) {
+                startCodec(srcWidth, srcHeight, outWidth, outHeight, camera, "h265", name)?.let { return it }
+            }
+            Log.i(TAG, "HEVC unavailable for ${outWidth}x${outHeight}; using H.264")
+        }
+        return startCodec(srcWidth, srcHeight, outWidth, outHeight, camera, "h264", null)
+    }
+
+    private fun startCodec(
+        srcWidth: Int,
+        srcHeight: Int,
+        outWidth: Int,
+        outHeight: Int,
+        camera: String,
+        codecName: String,
+        encoderName: String?,
+    ): ActiveCodec? {
+        val mime = if (codecName == "h265") MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
         val bitrate = bitrateForHeight(outHeight)
+        var codec: MediaCodec? = null
+        var codecSurface: Surface? = null
+        var pipe: GlSurfacePipe? = null
         return runCatching {
-            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, outWidth, outHeight).apply {
+            val format = MediaFormat.createVideoFormat(mime, outWidth, outHeight).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, fps)
@@ -413,25 +420,36 @@ internal class CameraEncoder(
                 setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
                 setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
                 setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
+                if (codecName == "h265") {
+                    setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
+                }
             }
-            val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            val codecSurface = codec.createInputSurface()
-            codec.start()
-            val pipe = GlSurfacePipe(
+            val startedCodec = if (encoderName != null) MediaCodec.createByCodecName(encoderName) else MediaCodec.createEncoderByType(mime)
+            codec = startedCodec
+            startedCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            val surface = startedCodec.createInputSurface()
+            codecSurface = surface
+            startedCodec.start()
+            val startedPipe = GlSurfacePipe(
                 srcWidth = srcWidth,
                 srcHeight = srcHeight,
                 dstWidth = outWidth,
                 dstHeight = outHeight,
-                encoderInputSurface = codecSurface,
+                encoderInputSurface = surface,
                 initialRotationDegrees = currentSensorRotation,
                 initialMirror = false,
             ).also {
                 it.setTransform(currentSensorRotation, currentDisplayRotation)
             }
-            ActiveCodec(codec, codecSurface, pipe, outWidth, outHeight, camera).also { it.startDrain() }
+            pipe = startedPipe
+            Log.i(TAG, "webcam encoder=$codecName component=${startedCodec.name} size=${outWidth}x${outHeight} bitrate=$bitrate")
+            ActiveCodec(startedCodec, surface, startedPipe, outWidth, outHeight, camera, codecName).also { it.startDrain() }
         }.onFailure { e ->
-            Log.w(TAG, "can't start H.264 encoder for ${outWidth}x${outHeight}", e)
+            runCatching { pipe?.release() }
+            runCatching { codec?.stop() }
+            runCatching { codec?.release() }
+            runCatching { codecSurface?.release() }
+            Log.w(TAG, "can't start $codecName encoder for ${outWidth}x${outHeight}", e)
         }.getOrNull()
     }
 
@@ -442,6 +460,7 @@ internal class CameraEncoder(
         val width: Int,
         val height: Int,
         val camera: String,
+        val codecName: String,
     ) {
         private val active = AtomicBoolean(true)
         private var drainThread: Thread? = null
@@ -461,7 +480,7 @@ internal class CameraEncoder(
 
         private fun drainLoop() {
             val maxHeight = if (supports4k) 2160u else 1080u
-            val cfgBytes = webcamConfig(width.toUInt(), height.toUInt(), camera, fps.toUInt(), maxHeight)
+            val cfgBytes = webcamConfigCodec(codecName, width.toUInt(), height.toUInt(), camera, fps.toUInt(), maxHeight)
             if (stream.send(VideoPacketKind.CONFIG, 0u, cfgBytes) == MirrorSendResult.CLOSED) {
                 this@CameraEncoder.stop()
                 return
@@ -480,20 +499,22 @@ internal class CameraEncoder(
                     }
                     val index = codec.dequeueOutputBuffer(info, WAIT_US)
                     if (index < 0) continue
-                    val bytes = ByteArray(info.size)
-                    codec.getOutputBuffer(index)?.let { buf ->
-                        buf.position(info.offset)
-                        buf.get(bytes)
-                    }
-                    codec.releaseOutputBuffer(index, false)
-                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
-                    if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                        parameters = bytes
-                        continue
-                    }
-                    if (bytes.isEmpty()) continue
                     val key = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
-                    val payload = ensureAudAndParameters(bytes, parameters, key)
+                    val payload = try {
+                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
+                        val buffer = codec.getOutputBuffer(index) ?: continue
+                        if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                            parameters = ByteArray(info.size)
+                            buffer.position(info.offset)
+                            buffer.get(parameters)
+                            continue
+                        }
+                        if (info.size == 0) continue
+                        WebcamPacket.frame(buffer, info.offset, info.size, parameters, key, codecName)
+                    } finally {
+                        // The queued packet owns its bytes; release the codec slot before sending.
+                        codec.releaseOutputBuffer(index, false)
+                    }
                     val result = stream.send(
                         if (key) VideoPacketKind.KEYFRAME else VideoPacketKind.FRAME,
                         info.presentationTimeUs.toULong(),
@@ -511,6 +532,10 @@ internal class CameraEncoder(
             } catch (e: Exception) {
                 if (active.get() && running) {
                     Log.w(TAG, "webcam encoder drain interrupted", e)
+                    if (codecName == "h265") {
+                        hevcFailed = true
+                        main.post { if (running && activeCodec === this) bindCamera() }
+                    }
                 }
             }
         }
@@ -521,8 +546,21 @@ internal class CameraEncoder(
         private const val WAIT_US = 40_000L
         private const val I_FRAME_INTERVAL_SEC = 2
 
-        /** Annex B Access Unit Delimiter NAL (`00 00 00 01 09 F0`). */
-        internal val AUD_NAL = byteArrayOf(0x00, 0x00, 0x00, 0x01, 0x09, 0xF0.toByte())
+        /** Only offer hardware HEVC encoding at the actual requested size/rate. */
+        private fun hevcEncoder(width: Int, height: Int, fps: Int): String? = runCatching {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->
+                info.isEncoder &&
+                    (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info.isHardwareAccelerated
+                    else !info.name.startsWith("OMX.google.") && !info.name.startsWith("c2.android.")) &&
+                    info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, ignoreCase = true) } &&
+                    runCatching {
+                        val caps = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_HEVC)
+                        caps.colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) &&
+                            caps.profileLevels.any { it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain } &&
+                            caps.videoCapabilities?.areSizeAndRateSupported(width, height, fps.toDouble()) == true
+                    }.getOrDefault(false)
+            }?.name
+        }.getOrNull()
 
         fun widthForHeight(height: Int): Int = when (height) {
             2160 -> 3840
@@ -656,49 +694,5 @@ internal class CameraEncoder(
                 }.getOrDefault(false)
             }
 
-        /**
-         * Guarantees each H.264 access unit starts with an Annex B Access
-         * Unit Delimiter (`00 00 00 01 09 F0`) and that keyframes include
-         * the cached SPS/PPS (`parameters`) right after the AUD so the PC's
-         * Media Foundation decoder flushes every frame immediately.
-         */
-        internal fun ensureAudAndParameters(
-            bytes: ByteArray,
-            parameters: ByteArray,
-            isKeyframe: Boolean,
-        ): ByteArray {
-            val stripped = stripLeadingAud(bytes)
-            return if (isKeyframe && parameters.isNotEmpty()) {
-                val cleanParams = stripLeadingAud(parameters)
-                ByteArray(AUD_NAL.size + cleanParams.size + stripped.size).also { out ->
-                    System.arraycopy(AUD_NAL, 0, out, 0, AUD_NAL.size)
-                    System.arraycopy(cleanParams, 0, out, AUD_NAL.size, cleanParams.size)
-                    System.arraycopy(stripped, 0, out, AUD_NAL.size + cleanParams.size, stripped.size)
-                }
-            } else {
-                ByteArray(AUD_NAL.size + stripped.size).also { out ->
-                    System.arraycopy(AUD_NAL, 0, out, 0, AUD_NAL.size)
-                    System.arraycopy(stripped, 0, out, AUD_NAL.size, stripped.size)
-                }
-            }
-        }
-
-        private fun stripLeadingAud(data: ByteArray): ByteArray {
-            if (data.size >= 6 &&
-                data[0] == 0.toByte() && data[1] == 0.toByte() &&
-                data[2] == 0.toByte() && data[3] == 1.toByte() &&
-                (data[4].toInt() and 0x1F) == 9
-            ) {
-                return data.copyOfRange(6, data.size)
-            }
-            if (data.size >= 5 &&
-                data[0] == 0.toByte() && data[1] == 0.toByte() &&
-                data[2] == 1.toByte() &&
-                (data[3].toInt() and 0x1F) == 9
-            ) {
-                return data.copyOfRange(5, data.size)
-            }
-            return data
-        }
     }
 }

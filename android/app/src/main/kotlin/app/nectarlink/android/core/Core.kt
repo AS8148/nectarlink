@@ -1053,6 +1053,12 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         return node.mirrorOpenAudio(pcId)
     }
 
+    /** Accepted codecs from the connected PC; an unknown receiver gets H.264. */
+    suspend fun webcamCodecs(pcId: String): List<String> {
+        startJob?.join()
+        return runCatching { node?.webcamCodecs(pcId) }.getOrNull() ?: listOf("h264")
+    }
+
     /** Opens this phone's camera stream to a PC (`webcam`), or emits a message on failure. */
     suspend fun webcamOpenOrMessage(pcId: String): MirrorStream? {
         startJob?.join()

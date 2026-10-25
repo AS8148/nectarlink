@@ -1782,14 +1782,12 @@ Item {
                 readonly property bool isThisPhone: (Webcam.phase === "streaming" || Webcam.phase === "asking")
                                                     && Webcam.activeDevice === home.deviceId
                 visible: isThisPhone
-                onIsThisPhoneChanged: {
-                    if (isThisPhone)
-                        Webcam.setPreviewActive(true)
-                }
-                Component.onCompleted: {
-                    if (isThisPhone)
-                        Webcam.setPreviewActive(true)
-                }
+                readonly property bool previewWanted: isThisPhone && visible && home.visible
+                    && webcamHomeCard.Window.window !== null && webcamHomeCard.Window.window.visible
+                    && webcamHomeCard.Window.window.visibility !== Window.Minimized
+                onPreviewWantedChanged: Webcam.setPreviewVisible("home", previewWanted)
+                Component.onCompleted: Webcam.setPreviewVisible("home", previewWanted)
+                Component.onDestruction: Webcam.setPreviewVisible("home", false)
                 Column {
                     width: parent.width
                     spacing: 10

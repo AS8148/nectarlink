@@ -4,7 +4,6 @@ package app.nectarlink.android.ui.webcam
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,6 +46,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
@@ -55,6 +56,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.nectarlink.android.R
 import app.nectarlink.android.core.Device
@@ -129,18 +131,13 @@ fun WebcamScreen(
         }
     }
 
-    val previewView = remember {
-        PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
-            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-        }
-    }
-
-    DisposableEffect(previewView) {
-        WebcamService.attachUiPreview(previewView.surfaceProvider)
-        onDispose {
-            WebcamService.attachUiPreview(null)
-        }
+    val previewView = remember { WebcamPreviewView(context, WebcamService::attachUiPreview) }
+    val previewShape = MaterialTheme.shapes.extraLarge
+    val previewDensity = LocalDensity.current
+    val previewDirection = LocalLayoutDirection.current
+    LifecycleStartEffect(previewView) {
+        previewView.setPreviewVisible(true)
+        onStopOrDispose { previewView.setPreviewVisible(false) }
     }
 
     val isStreamingHere = session.active && session.pcId == device.id
@@ -245,6 +242,7 @@ fun WebcamScreen(
                 if (isStreamingHere && hasCameraPermission) {
                     AndroidView(
                         factory = { previewView.detached() },
+                        update = { it.setPreviewShape(previewShape, previewDensity, previewDirection) },
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {

@@ -3,7 +3,10 @@
 //! `nectarlink_vcam.dll`, plus placeholder frame rendering and RGB32/NV12
 //! conversion.
 
-use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering},
+};
 
 use ab_glyph::{Font, FontRef, GlyphId, PxScale, ScaleFont, point};
 
@@ -67,11 +70,20 @@ pub struct SharedHeader {
     pub phone_name: [AtomicU8; 24],
 }
 
+/// Reader-local storage; never part of the shared-memory layout.
+struct CachedLiveFrame {
+    width: u32,
+    height: u32,
+    timestamp_us: u64,
+    bgrx: Vec<u8>,
+}
+
 /// Shared-memory mapping handle and view. Safe to share across threads.
 #[cfg(windows)]
 pub struct SharedFrameMapping {
     handle: HANDLE,
     view: MEMORY_MAPPED_VIEW_ADDRESS,
+    last_read: Mutex<Option<CachedLiveFrame>>,
 }
 
 /// Shared-memory mapping file descriptor and mapped view on Unix (`/dev/shm`).
@@ -79,6 +91,7 @@ pub struct SharedFrameMapping {
 pub struct SharedFrameMapping {
     fd: std::os::fd::OwnedFd,
     view: *mut std::ffi::c_void,
+    last_read: Mutex<Option<CachedLiveFrame>>,
 }
 
 #[allow(unsafe_code)]
@@ -131,10 +144,88 @@ fn unix_shm_path(name: &str) -> std::path::PathBuf {
 
 #[cfg(windows)]
 impl SharedFrameMapping {
+    pub(crate) fn control_failed(&self) -> bool {
+        self.header()._pad.load(Ordering::Acquire) != 0
+    }
+
+    pub(crate) fn fail_control(&self) {
+        self.header()._pad.store(1, Ordering::Release);
+    }
+    pub(crate) fn fail_control_code(&self, code: i32) {
+        self.header()._pad.store(code as u32, Ordering::Release);
+    }
+
+    pub(crate) fn control_code(&self) -> i32 {
+        self.header()._pad.load(Ordering::Acquire) as i32
+    }
+
+    #[cfg(test)]
+    pub(crate) fn control_stats(&self) -> (u32, u32) {
+        (self.header().height.load(Ordering::Relaxed), self.header().stride.load(Ordering::Relaxed))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn count_gpu_sample(&self) {
+        self.header().height.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn count_download(&self) {
+        self.header().stride.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Binary control messages use their own mapping name, never the RGB mapping.
+    /// A busy writer is distinct from idle so GPU readers can retain a snapshot.
+    #[allow(unsafe_code)]
+    pub(crate) fn read_control(&self) -> Option<(u64, Vec<u8>)> {
+        let h = self.header();
+        for _ in 0..3 {
+            let seq = h.seq.load(Ordering::Acquire);
+            if seq & 1 != 0 {
+                continue;
+            }
+            if h.active.load(Ordering::Acquire) == 0 {
+                return Some((seq, Vec::new()));
+            }
+            let len = h.width.load(Ordering::Relaxed) as usize;
+            if len > 256 {
+                return Some((seq, Vec::new()));
+            }
+            let bytes = unsafe { std::slice::from_raw_parts(self.payload_ptr(), len) }.to_vec();
+            std::sync::atomic::fence(Ordering::Acquire);
+            if seq == h.seq.load(Ordering::Acquire) {
+                return Some((seq, bytes));
+            }
+        }
+        None
+    }
+
+    #[allow(unsafe_code)]
+    pub(crate) fn write_control(&self, bytes: &[u8]) {
+        assert!(bytes.len() <= 256);
+        let h = self.header();
+        let seq = h.seq.load(Ordering::Relaxed) | 1;
+        h.seq.store(seq, Ordering::Release);
+        std::sync::atomic::fence(Ordering::AcqRel);
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.payload_ptr(), bytes.len());
+        }
+        h.width.store(bytes.len() as u32, Ordering::Relaxed);
+        h.active.store(1, Ordering::Relaxed);
+        h.seq.store(seq.wrapping_add(1), Ordering::Release);
+    }
+
     /// Opens or creates the shared-memory frame mapping with `name` (a
     /// `Global\` name gets [`GLOBAL_SDDL`]'s permissions).
     #[allow(unsafe_code)]
     pub fn open_or_create(name: &str) -> windows::core::Result<Self> {
+        Self::create_sized(name, TOTAL_MAPPING_BYTES)
+    }
+    pub(crate) fn open_or_create_control(name: &str) -> windows::core::Result<Self> {
+        Self::create_sized(name, HEADER_BYTES + 256)
+    }
+    #[allow(unsafe_code)]
+    fn create_sized(name: &str, bytes: usize) -> windows::core::Result<Self> {
         let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         let mut sd = PSECURITY_DESCRIPTOR::default();
         if name.starts_with("Global\\") {
@@ -162,7 +253,7 @@ impl SharedFrameMapping {
                 (!sd.0.is_null()).then_some(&raw const attrs),
                 PAGE_READWRITE,
                 0,
-                TOTAL_MAPPING_BYTES as u32,
+                bytes as u32,
                 PCWSTR(wide.as_ptr()),
             );
             if !sd.0.is_null() {
@@ -170,7 +261,7 @@ impl SharedFrameMapping {
             }
             handle?
         };
-        Self::map(handle)
+        Self::map(handle, bytes)
     }
 
     /// For the camera's media source: the global mapping, or the caller's
@@ -186,26 +277,33 @@ impl SharedFrameMapping {
     /// Opens an existing mapping (the app joining the camera's global one).
     #[allow(unsafe_code)]
     pub fn open_existing(name: &str) -> windows::core::Result<Self> {
+        Self::open_sized(name, TOTAL_MAPPING_BYTES)
+    }
+    pub(crate) fn open_existing_control(name: &str) -> windows::core::Result<Self> {
+        Self::open_sized(name, HEADER_BYTES + 256)
+    }
+    #[allow(unsafe_code)]
+    fn open_sized(name: &str, bytes: usize) -> windows::core::Result<Self> {
         let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         // SAFETY: opens a named mapping by a NUL-terminated name.
         let handle =
             unsafe { OpenFileMappingW((FILE_MAP_READ | FILE_MAP_WRITE).0, false, PCWSTR(wide.as_ptr()))? };
-        Self::map(handle)
+        Self::map(handle, bytes)
     }
 
     #[allow(unsafe_code)]
-    fn map(handle: HANDLE) -> windows::core::Result<Self> {
+    fn map(handle: HANDLE, bytes: usize) -> windows::core::Result<Self> {
         // SAFETY: maps the whole section, which is `TOTAL_MAPPING_BYTES` long
         // whichever side created it (both use the same size).
         unsafe {
             // Read and write only: that's all the app is granted on the global one.
-            let view = MapViewOfFile(handle, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, TOTAL_MAPPING_BYTES);
+            let view = MapViewOfFile(handle, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, bytes);
             if view.Value.is_null() {
                 let err = windows::core::Error::from_thread();
                 let _ = CloseHandle(handle);
                 return Err(err);
             }
-            let mapping = Self { handle, view };
+            let mapping = Self { handle, view, last_read: Mutex::new(None) };
             mapping.ensure_initialized();
             Ok(mapping)
         }
@@ -307,7 +405,7 @@ impl SharedFrameMapping {
             if view == libc::MAP_FAILED || view.is_null() {
                 return Err(std::io::Error::last_os_error());
             }
-            let mapping = Self { fd, view };
+            let mapping = Self { fd, view, last_read: Mutex::new(None) };
             mapping.ensure_initialized();
             Ok(mapping)
         }
@@ -422,20 +520,27 @@ impl SharedFrameMapping {
     /// Reads the latest frame into `out_bgrx` (`out_width * out_height * 4` bytes).
     /// Returns `(true, timestamp_us)` when a live frame was read, or
     /// `(false, 0)` when idle (in which case `out_bgrx` is filled with the
-    /// placeholder frame).
+    /// placeholder frame). While the writer is busy, repeats the last complete
+    /// live frame at the same output dimensions instead of flashing the idle card.
     #[allow(unsafe_code)]
     pub fn read_bgrx(&self, out_width: u32, out_height: u32, out_bgrx: &mut [u8]) -> (bool, u64) {
         let needed = (out_width as usize) * (out_height as usize) * 4;
         if out_bgrx.len() < needed || out_width == 0 || out_height == 0 {
             return (false, 0);
         }
+        let mut last_read = self.last_read.lock().unwrap_or_else(|e| e.into_inner());
         let h = self.header();
-        if h.magic.load(Ordering::Acquire) == MAGIC && h.active.load(Ordering::Acquire) == 1 {
+        if h.magic.load(Ordering::Acquire) == MAGIC {
+            let mut contended = false;
             for _ in 0..3 {
                 let seq1 = h.seq.load(Ordering::Acquire);
                 if seq1 == 0 || (seq1 & 1) != 0 {
+                    contended = true;
                     std::hint::spin_loop();
                     continue;
+                }
+                if h.active.load(Ordering::Acquire) != 1 {
+                    break;
                 }
                 let src_w = h.width.load(Ordering::Relaxed);
                 let src_h = h.height.load(Ordering::Relaxed);
@@ -452,11 +557,33 @@ impl SharedFrameMapping {
                     std::sync::atomic::fence(Ordering::Acquire);
                     let seq2 = h.seq.load(Ordering::Acquire);
                     if seq1 == seq2 {
+                        let cached = last_read.get_or_insert_with(|| CachedLiveFrame {
+                            width: out_width,
+                            height: out_height,
+                            timestamp_us: ts,
+                            bgrx: Vec::new(),
+                        });
+                        cached.width = out_width;
+                        cached.height = out_height;
+                        cached.timestamp_us = ts;
+                        cached.bgrx.resize(needed, 0);
+                        cached.bgrx.copy_from_slice(&out_bgrx[..needed]);
                         return (true, ts);
                     }
+                    contended = true;
                 }
             }
+            if contended
+                && h.active.load(Ordering::Acquire) == 1
+                && let Some(cached) = last_read.as_ref()
+                && cached.width == out_width
+                && cached.height == out_height
+            {
+                out_bgrx[..needed].copy_from_slice(&cached.bgrx);
+                return (true, cached.timestamp_us);
+            }
         }
+        *last_read = None;
         let phone = self.load_phone_name();
         render_placeholder_bgrx(&mut out_bgrx[..needed], out_width, out_height, &phone);
         (false, 0)
@@ -556,6 +683,46 @@ pub fn fit_bgrx_aspect(src: &[u8], src_w: u32, src_h: u32, dst: &mut [u8], dst_w
             dst_row[dx..dx + 4].copy_from_slice(&src_row[sx * 4..sx * 4 + 4]);
         }
     }
+}
+
+/// Fits packed BT.709 limited-range NV12 without converting through RGB. Chroma
+/// samples move as UV pairs and the fitted rectangle stays aligned to 2x2 pixels.
+pub fn fit_nv12_aspect(src: &[u8], sw: u32, sh: u32, dst: &mut [u8], dw: u32, dh: u32) -> bool {
+    if sw > MAX_WIDTH || dw > MAX_WIDTH || sh > MAX_HEIGHT || dh > MAX_HEIGHT {
+        return false;
+    }
+    if [sw, sh, dw, dh].iter().any(|n| *n == 0 || n % 2 != 0) {
+        return false;
+    }
+    let (sw, sh, dw, dh) = (sw as usize, sh as usize, dw as usize, dh as usize);
+    if src.len() < sw * sh * 3 / 2 || dst.len() < dw * dh * 3 / 2 {
+        return false;
+    }
+    if (sw, sh) == (dw, dh) {
+        dst[..dw * dh * 3 / 2].copy_from_slice(&src[..sw * sh * 3 / 2]);
+        return true;
+    }
+    let (fw, fh) = if dw * sh <= dh * sw {
+        (dw, ((sh * dw / sw) & !1).max(2))
+    } else {
+        (((sw * dh / sh) & !1).max(2), dh)
+    };
+    let (ox, oy) = (((dw - fw) / 2) & !1, ((dh - fh) / 2) & !1);
+    dst[..dw * dh].fill(16);
+    dst[dw * dh..dw * dh * 3 / 2].fill(128);
+    for y in 0..fh {
+        for x in 0..fw {
+            dst[(y + oy) * dw + x + ox] = src[(y * sh / fh) * sw + x * sw / fw];
+        }
+    }
+    for y in 0..fh / 2 {
+        for x in 0..fw / 2 {
+            let s = sw * sh + (y * (sh / 2) / (fh / 2)) * sw + (x * (sw / 2) / (fw / 2)) * 2;
+            let d = dw * dh + (y + oy / 2) * dw + ox + x * 2;
+            dst[d..d + 2].copy_from_slice(&src[s..s + 2]);
+        }
+    }
+    true
 }
 
 /// Converts top-down BGRX (`width * height * 4`) to NV12 (`width * height * 3 / 2`,
@@ -914,14 +1081,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn nv12_fit_preserves_uv_pairs_and_neutral_letterbox() {
+        let mut src = vec![90; 160 * 120 * 3 / 2];
+        for pair in src[160 * 120..].as_chunks_mut::<2>().0 {
+            pair.copy_from_slice(&[32, 224]);
+        }
+        let mut dst = vec![0; 320 * 180 * 3 / 2];
+        assert!(fit_nv12_aspect(&src, 160, 120, &mut dst, 320, 180));
+        assert_eq!(dst[0], 16);
+        assert_eq!(dst[40], 90);
+        let uv = 320 * 180;
+        assert_eq!(&dst[uv..uv + 2], &[128, 128]);
+        assert_eq!(&dst[uv + 40..uv + 42], &[32, 224]);
+        assert!(!fit_nv12_aspect(&src, 161, 120, &mut dst, 320, 180));
+        assert!(!fit_nv12_aspect(&src, u32::MAX, u32::MAX, &mut dst, 320, 180));
+    }
+
+    #[test]
+    fn a_busy_writer_keeps_the_last_complete_live_frame() {
+        let name = format!(r"Local\NectarlinkVcamReadCache_{}_busy", std::process::id());
+        let mapping = SharedFrameMapping::open_or_create(&name).unwrap();
+        let first = vec![42u8; 160 * 120 * 4];
+        let second = vec![99u8; 160 * 120 * 4];
+        let mut output = vec![0u8; first.len()];
+        mapping.write_frame("Pixel", 160, 120, 123, &first, false);
+        assert_eq!(mapping.read_bgrx(160, 120, &mut output), (true, 123));
+        assert_eq!(output, first);
+
+        // Deterministically hold the writer in the middle of its next update.
+        let seq = mapping.header().seq.load(Ordering::Acquire);
+        mapping.header().seq.store(seq + 1, Ordering::Release);
+        output.fill(0);
+        assert_eq!(mapping.read_bgrx(160, 120, &mut output), (true, 123));
+        assert_eq!(output, first, "writer contention must not flash the idle card");
+
+        mapping.write_frame("Pixel", 160, 120, 456, &second, false);
+        assert_eq!(mapping.read_bgrx(160, 120, &mut output), (true, 456));
+        assert_eq!(output, second);
+
+        mapping.set_idle("Pixel");
+        assert_eq!(mapping.read_bgrx(160, 120, &mut output), (false, 0));
+        assert_ne!(output, second, "an explicit stop must still show the idle card");
+
+        mapping.header().active.store(1, Ordering::Release);
+        let seq = mapping.header().seq.load(Ordering::Acquire);
+        mapping.header().seq.store(seq + 1, Ordering::Release);
+        assert_eq!(mapping.read_bgrx(160, 120, &mut output), (false, 0));
+        assert_ne!(output, second, "an idle transition must clear the cached live frame");
+    }
+
+    #[test]
+    fn busy_reads_do_not_reuse_a_frame_at_different_dimensions() {
+        let name = format!(r"Local\NectarlinkVcamReadCache_{}_resize", std::process::id());
+        let mapping = SharedFrameMapping::open_or_create(&name).unwrap();
+        mapping.write_frame("Pixel", 160, 120, 123, &vec![42u8; 160 * 120 * 4], false);
+        let mut output = vec![0u8; 160 * 120 * 4];
+        assert_eq!(mapping.read_bgrx(160, 120, &mut output), (true, 123));
+        let seq = mapping.header().seq.load(Ordering::Acquire);
+        mapping.header().seq.store(seq + 1, Ordering::Release);
+        assert_eq!(mapping.read_bgrx(120, 160, &mut output), (false, 0));
+    }
+
+    #[test]
     fn the_camera_always_gets_a_mapping_and_the_app_finds_it() {
-        // Outside a service the global name usually can't be created; the
-        // camera then falls back to this session's mapping.
-        let camera = SharedFrameMapping::for_camera(DEFAULT_MAPPING_NAME).unwrap();
+        // Use a private mapping so this test cannot overwrite an active webcam.
+        let name = format!(r"Local\NectarlinkVcamMappingTest_{}", std::process::id());
+        let camera = SharedFrameMapping::for_camera(&name).unwrap();
         camera.set_idle("Pixel 9");
-        let app = SharedFrameMapping::open_existing(DEFAULT_MAPPING_NAME)
-            .or_else(|_| SharedFrameMapping::open_existing(LOCAL_MAPPING_NAME))
-            .unwrap();
+        let app = SharedFrameMapping::open_existing(&name).unwrap();
         assert_eq!(app.load_phone_name(), "Pixel 9");
     }
 

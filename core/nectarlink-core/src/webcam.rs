@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Phone as webcam (`docs/protocol/webcam.md`): a phone streams encoded H.264
+//! Phone as webcam (`docs/protocol/webcam.md`): a phone streams encoded H.264 or HEVC
 //! video from its camera on a dedicated QUIC stream (`webcam/video`), either
 //! started directly from the phone's Webcam screen or after the phone's user
 //! accepts a PC's `webcam.start` request.
@@ -23,7 +23,7 @@ pub const TOGGLE: &str = "webcam";
 pub trait WebcamSink: Send + Sync {
     /// The stream's format: first, and again whenever camera or resolution changes.
     fn config(&self, config: WebcamConfig);
-    /// Encoded video (Annex B H.264), `keyframe` when it starts fresh (SPS+PPS+IDR).
+    /// Encoded Annex B video, `keyframe` when it starts fresh with parameter sets.
     fn packet(&self, keyframe: bool, time_us: u64, data: Vec<u8>);
     /// The stream ended (the phone stopped, or the connection dropped).
     fn ended(&self);
@@ -67,10 +67,12 @@ pub(crate) async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendS
     if !supports || !shared.toggle_on(&peer, TOGGLE) {
         return refuse(send, recv);
     }
+    let accepted = |config: &WebcamConfig| {
+        config.is_valid()
+            && (config.codec != webcam::H265 || shared.local_capabilities().iter().any(|c| c == webcam::HEVC))
+    };
     let first = match read_video_packet(&mut recv).await {
-        Ok(Some(p)) if p.kind == PacketKind::Config => {
-            WebcamConfig::from_cbor(&p.data).ok().filter(WebcamConfig::is_valid)
-        }
+        Ok(Some(p)) if p.kind == PacketKind::Config => WebcamConfig::from_cbor(&p.data).ok().filter(accepted),
         _ => None,
     };
     let Some(config) = first else {
@@ -104,7 +106,7 @@ pub(crate) async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendS
         };
         match packet {
             Ok(Some(p)) if p.kind == PacketKind::Config => match WebcamConfig::from_cbor(&p.data) {
-                Ok(config) if config.is_valid() => sink.config(config),
+                Ok(config) if accepted(&config) => sink.config(config),
                 _ => {
                     tracing::warn!("a phone sent a webcam format this PC can't decode");
                     break;
