@@ -127,6 +127,13 @@ has a Stop button. Choosing another
   as too fast. The PC now takes typing at full speed, and the phone
   resends anything an older PC turns away
   ([#52](https://github.com/thtbee/nectarlink/issues/52)).
+- **Phone as webcam never showed up in other apps.** Windows couldn't
+  start NectarLink's camera, though Settings said it was ready. It now
+  appears as **NectarLink Webcam** in Zoom, Teams, OBS, the Camera app
+  and others. Frames also stay on the graphics card on the way, and the
+  phone sends H.265 when the PC can decode it, with H.264 otherwise.
+  Thanks to [@AS8148](https://github.com/AS8148)
+  ([#51](https://github.com/thtbee/nectarlink/pull/51)).
 - With NectarLink in two profiles on one phone (a work profile, or a
   cloned app), only one of them could connect over USB, and the PC kept
   offering to pair the other. Each profile now connects over USB, and the
