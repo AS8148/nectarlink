@@ -10,7 +10,7 @@ use windows::{
     Win32::{
         Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS},
         Media::{
-            KernelStreaming::KSCATEGORY_VIDEO_CAMERA,
+            KernelStreaming::{KSCATEGORY_CAPTURE, KSCATEGORY_VIDEO, KSCATEGORY_VIDEO_CAMERA},
             MediaFoundation::{
                 IMFVirtualCamera, MF_VERSION, MFSTARTUP_NOSOCKET, MFStartup, MFVirtualCameraAccess,
                 MFVirtualCameraAccess_CurrentUser, MFVirtualCameraLifetime, MFVirtualCameraLifetime_Session,
@@ -250,7 +250,7 @@ impl VirtualCameraHandle {
             create_virtual_camera().ok_or_else(|| "the virtual camera needs Windows 11".to_owned())?;
         unsafe {
             MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).map_err(|e| e.to_string())?;
-            let categories = [KSCATEGORY_VIDEO_CAMERA];
+            let categories = [KSCATEGORY_VIDEO_CAMERA, KSCATEGORY_VIDEO, KSCATEGORY_CAPTURE];
             let name = HSTRING::from(FRIENDLY_NAME);
             let source = HSTRING::from(CLSID_STR);
             let mut raw = std::ptr::null_mut();
