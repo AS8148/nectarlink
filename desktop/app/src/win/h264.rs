@@ -695,67 +695,78 @@ mod tests {
         let worker = std::thread::spawn(move || {
             use nectarlink_vcam::gpu::{GpuPublisher, GpuReader};
             use windows::Win32::Media::MediaFoundation::MFCreateDXGISurfaceBuffer;
-            let mut decoder = Decoder::new_gpu("h264").unwrap();
-            if !decoder.on_gpu() {
-                done.send(()).unwrap();
-                return;
-            }
-            let name = format!("Local\\NectarlinkDecoderPoolTest_{}", std::process::id());
-            let mut reader = GpuReader::new_with_mapping(&name).unwrap();
-            let mut publisher = GpuPublisher::new_with_mapping(&name).unwrap();
-            let mut output = None;
-            let mut count = 0;
-            for _ in 0..20 {
-                for unit in test_stream("h264") {
-                    for frame in decoder.decode_frames(unit, count * 33_333).unwrap() {
-                        let (texture, index) = frame.gpu_surface().unwrap().unwrap();
-                        if output.is_none() {
-                            unsafe {
-                                let mut desc = D3D11_TEXTURE2D_DESC::default();
-                                texture.GetDesc(&mut desc);
-                                desc.ArraySize = 1;
-                                desc.MipLevels = 1;
-                                desc.BindFlags =
-                                    windows::Win32::Graphics::Direct3D11::D3D11_BIND_RENDER_TARGET.0 as u32;
-                                let mut destination = None;
-                                texture
-                                    .GetDevice()
-                                    .unwrap()
-                                    .CreateTexture2D(&desc, None, Some(&mut destination))
-                                    .unwrap();
-                                output = Some(
-                                    MFCreateDXGISurfaceBuffer(
-                                        &ID3D11Texture2D::IID,
-                                        &destination.unwrap(),
-                                        0,
-                                        false,
-                                    )
-                                    .unwrap(),
-                                );
+            for codec in ["h264", "h265"] {
+                if !installed(codec) {
+                    continue;
+                }
+                let mut decoder = Decoder::new_gpu(codec).unwrap();
+                if !decoder.on_gpu() {
+                    continue;
+                }
+                let name = format!("Local\\NectarlinkDecoderPoolTest_{}_{}", std::process::id(), codec);
+                let mut reader = GpuReader::new_with_mapping(&name).unwrap();
+                let mut publisher = GpuPublisher::new_with_mapping(&name).unwrap();
+                let mut output = None;
+                let mut count = 0;
+                for _ in 0..20 {
+                    for unit in test_stream(codec) {
+                        for frame in decoder
+                            .decode_frames(unit, count * 33_333)
+                            .unwrap_or_else(|error| panic!("{codec} after {count} frames: {error}"))
+                        {
+                            let (texture, index) = frame.gpu_surface().unwrap().unwrap();
+                            if output.is_none() {
+                                unsafe {
+                                    let mut desc = D3D11_TEXTURE2D_DESC::default();
+                                    texture.GetDesc(&mut desc);
+                                    desc.ArraySize = 1;
+                                    desc.MipLevels = 1;
+                                    desc.BindFlags =
+                                        windows::Win32::Graphics::Direct3D11::D3D11_BIND_RENDER_TARGET.0
+                                            as u32;
+                                    let mut destination = None;
+                                    texture
+                                        .GetDevice()
+                                        .unwrap()
+                                        .CreateTexture2D(&desc, None, Some(&mut destination))
+                                        .unwrap();
+                                    output = Some(
+                                        MFCreateDXGISurfaceBuffer(
+                                            &ID3D11Texture2D::IID,
+                                            &destination.unwrap(),
+                                            0,
+                                            false,
+                                        )
+                                        .unwrap(),
+                                    );
+                                }
                             }
+                            assert!(
+                                publisher
+                                    .publish(
+                                        &texture,
+                                        index,
+                                        &frame.sample,
+                                        (frame.width, frame.height),
+                                        false,
+                                        false
+                                    )
+                                    .unwrap()
+                            );
+                            assert!(
+                                reader
+                                    .write_nv12(output.as_ref().unwrap(), frame.width, frame.height)
+                                    .unwrap()
+                            );
+                            count += 1;
                         }
-                        assert!(
-                            publisher
-                                .publish(
-                                    &texture,
-                                    index,
-                                    &frame.sample,
-                                    (frame.width, frame.height),
-                                    false,
-                                    false
-                                )
-                                .unwrap()
-                        );
-                        assert!(
-                            reader.write_nv12(output.as_ref().unwrap(), frame.width, frame.height).unwrap()
-                        );
-                        count += 1;
                     }
                 }
+                assert_eq!(count, 200);
+                assert_eq!(publisher.stats(), Some((200, 0)));
+                assert!(decoder.staging.is_none(), "publication must not download the decoded frames");
+                eprintln!("{codec}: published {count} GPU frames with zero CPU downloads");
             }
-            assert_eq!(count, 200);
-            assert_eq!(publisher.stats(), Some((200, 0)));
-            assert!(decoder.staging.is_none(), "publication must not download the decoded frames");
             done.send(()).unwrap();
         });
         finished.recv_timeout(std::time::Duration::from_secs(30)).expect("decoder sample pool stalled");

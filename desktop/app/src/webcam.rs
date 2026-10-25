@@ -715,6 +715,22 @@ fn mirror_bgrx_in_place(bgrx: &mut [u8], width: u32, height: u32) {
     }
 }
 
+#[cfg(windows)]
+pub fn supports_hevc() -> bool {
+    static SUPPORTED: OnceLock<bool> = OnceLock::new();
+    *SUPPORTED.get_or_init(|| match Decoder::new_gpu("h265") {
+        Ok(decoder) => {
+            let supported = decoder.on_gpu();
+            tracing::info!(supported, "HEVC webcam decoder probe");
+            supported
+        }
+        Err(error) => {
+            tracing::info!(%error, "HEVC webcam decoder unavailable; advertising H.264 only");
+            false
+        }
+    })
+}
+
 fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
     // On the GPU when there is one: 4K takes about 24 ms a frame in software
     // and 11 ms on a GPU, against 33 ms per frame at 30 fps.
@@ -749,6 +765,18 @@ fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
     while let Ok(item) = items.recv() {
         match item {
             Item::Config(config) => {
+                if decoder.codec() != config.codec {
+                    match Decoder::new_gpu(&config.codec) {
+                        Ok(next) => {
+                            decoder = next;
+                            tracing::info!(codec = %config.codec, gpu = decoder.on_gpu(), "webcam decoder changed");
+                        }
+                        Err(error) => {
+                            tracing::error!(codec = %config.codec, %error, "negotiated webcam decoder unavailable");
+                            break;
+                        }
+                    }
+                }
                 if size != (0, 0) && size != (config.width, config.height) {
                     decoder.flush();
                 }

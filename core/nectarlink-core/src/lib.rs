@@ -132,8 +132,8 @@ pub use nectarlink_protocol::{
         },
         webcam::{
             ADDON_VCAM as WEBCAM_ADDON_VCAM, CAMERA_BACK as WEBCAM_CAMERA_BACK,
-            CAMERA_FRONT as WEBCAM_CAMERA_FRONT, H264 as WEBCAM_H264, STREAM as WEBCAM_STREAM,
-            VIRTUAL as WEBCAM_VIRTUAL,
+            CAMERA_FRONT as WEBCAM_CAMERA_FRONT, H264 as WEBCAM_H264, H265 as WEBCAM_H265,
+            HEVC as WEBCAM_HEVC, STREAM as WEBCAM_STREAM, VIRTUAL as WEBCAM_VIRTUAL,
         },
     },
     pairing::PairingUri,

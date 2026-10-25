@@ -3329,11 +3329,27 @@ async fn phone_storage_lists_reads_ranges_writes_resumes_mutates_and_enforces_se
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_phone_camera_streams_to_the_pc_as_a_webcam() {
+    webcam_round_trip(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_phone_negotiates_hevc_only_with_an_advertising_receiver() {
+    webcam_round_trip(true).await;
+}
+
+async fn webcam_round_trip(hevc: bool) {
     use nectarlink_core::{MirrorSend, PacketKind};
-    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[nectarlink_core::WEBCAM_VIRTUAL]).await;
+    let mut caps = vec![nectarlink_core::WEBCAM_VIRTUAL];
+    if hevc {
+        caps.push(nectarlink_core::WEBCAM_HEVC);
+    }
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &caps).await;
     let mut phone = device_with("Pixel", DeviceKind::Phone, &[nectarlink_core::WEBCAM_STREAM]).await;
     pair_qr(&mut pc, &mut phone).await;
     let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+
+    let codecs = phone.node.webcam_codecs(pc_id).unwrap();
+    assert_eq!(codecs, if hevc { vec!["h265", "h264"] } else { vec!["h264"] });
 
     let options = nectarlink_core::WebcamStart {
         camera: nectarlink_core::WEBCAM_CAMERA_BACK.into(),
@@ -3347,7 +3363,7 @@ async fn the_phone_camera_streams_to_the_pc_as_a_webcam() {
 
     let stream = Arc::new(with_timeout("webcam_open", phone.node.webcam_open(pc_id)).await.unwrap());
     let config = nectarlink_core::WebcamConfig {
-        codec: nectarlink_core::WEBCAM_H264.into(),
+        codec: codecs[0].clone(),
         width: 1920,
         height: 1080,
         camera: nectarlink_core::WEBCAM_CAMERA_BACK.into(),

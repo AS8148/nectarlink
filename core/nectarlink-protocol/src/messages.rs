@@ -1636,6 +1636,8 @@ pub mod webcam {
     pub const STREAM: &str = "camera.stream";
     /// Offered by PCs that receive and decode a phone's webcam stream.
     pub const VIRTUAL: &str = "camera.virtual";
+    /// Receiver can decode HEVC webcam streams. Absence means H.264 only.
+    pub const HEVC: &str = "camera.virtual.hevc";
     /// Offered by PCs where the Windows virtual camera COM add-on is registered.
     pub const ADDON_VCAM: &str = "addon.vcam";
     pub const SERVICE: &str = "webcam";
@@ -1644,6 +1646,7 @@ pub mod webcam {
     /// Stream reset code: webcam stopped.
     pub const STOPPED: u32 = 12;
     pub const H264: &str = "h264";
+    pub const H265: &str = "h265";
     pub const CAMERA_BACK: &str = "back";
     pub const CAMERA_FRONT: &str = "front";
 }
@@ -1704,7 +1707,7 @@ impl WebcamStart {
 /// The format of a webcam stream (a `PacketKind::Config` packet's payload, in CBOR).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebcamConfig {
-    /// `"h264"`.
+    /// `"h264"` or `"h265"` (only when the receiver advertises webcam::HEVC).
     pub codec: String,
     pub width: u32,
     pub height: u32,
@@ -1737,7 +1740,7 @@ impl WebcamConfig {
     }
 
     pub fn is_valid(&self) -> bool {
-        self.codec == webcam::H264
+        matches!(self.codec.as_str(), webcam::H264 | webcam::H265)
             && (1..=8192).contains(&self.width)
             && (1..=8192).contains(&self.height)
             && (self.camera == webcam::CAMERA_BACK || self.camera == webcam::CAMERA_FRONT)
@@ -5195,6 +5198,9 @@ mod tests {
         };
         assert!(cfg.is_valid());
         assert_eq!(WebcamConfig::from_cbor(&cfg.to_cbor()).unwrap(), cfg);
+        let hevc = WebcamConfig { codec: webcam::H265.into(), ..cfg.clone() };
+        assert!(hevc.is_valid());
+        assert_eq!(WebcamConfig::from_cbor(&hevc.to_cbor()).unwrap(), hevc);
         assert!(!WebcamConfig { codec: "vp8".into(), ..cfg.clone() }.is_valid());
         assert!(!WebcamConfig { width: 0, ..cfg }.is_valid());
 

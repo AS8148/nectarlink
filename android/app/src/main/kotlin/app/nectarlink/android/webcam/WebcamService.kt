@@ -64,7 +64,7 @@ internal fun resolutionOf(width: Int, height: Int): Int {
 }
 
 /**
- * Streams the phone's camera as H.264 to a paired PC (`docs/protocol/webcam.md`).
+ * Streams the phone's camera as negotiated HEVC or H.264 to a paired PC (`docs/protocol/webcam.md`).
  * Runs as a `camera` foreground service with an ongoing notification and a
  * Stop action so streaming continues if the user switches apps or locks the
  * screen.
@@ -160,6 +160,7 @@ class WebcamService : LifecycleService() {
                 main.post { stopStreaming() }
                 return@launch
             }
+            val preferredCodec = if ("h265" in core.webcamCodecs(targetPc)) "h265" else "h264"
             main.post {
                 if (pcId != targetPc || current !== this@WebcamService) {
                     runCatching { stream.end() }
@@ -172,6 +173,7 @@ class WebcamService : LifecycleService() {
                     initialHeight = normHeight,
                     fps = fps,
                     initialCamera = normCamera,
+                    preferredCodec = preferredCodec,
                     initialZoomRatio = _session.value.zoomRatio,
                     onStateChanged = { live ->
                         _session.update { s ->

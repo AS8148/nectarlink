@@ -1204,6 +1204,19 @@ pub fn webcam_config(width: u32, height: u32, camera: String, fps: u32, max_heig
     core::WebcamConfig { codec: core::WEBCAM_H264.into(), width, height, camera, fps, max_height }.to_cbor()
 }
 
+/// A webcam config for a negotiated codec; retain webcam_config for older callers.
+#[uniffi::export]
+pub fn webcam_config_codec(
+    codec: String,
+    width: u32,
+    height: u32,
+    camera: String,
+    fps: u32,
+    max_height: u32,
+) -> Vec<u8> {
+    core::WebcamConfig { codec, width, height, camera, fps, max_height }.to_cbor()
+}
+
 /// What a PC asked the phone's camera to stream (`docs/protocol/webcam.md`).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct WebcamOptions {
@@ -4020,6 +4033,11 @@ impl NectarlinkNode {
         let node = self.node.clone();
         let input: core::MirrorInput = input.into();
         self.run(async move { Ok(node.mirror_input(id, core::MIRROR_SCREEN, input).await?) }).await
+    }
+
+    /// Preferred webcam codecs accepted by the connected PC, with H.264 as fallback.
+    pub fn webcam_codecs(&self, pc_id: String) -> Result<Vec<String>> {
+        Ok(self.node.webcam_codecs(parse_id(&pc_id)?)?)
     }
 
     /// Opens this phone's camera stream to a paired PC (`docs/protocol/webcam.md`).

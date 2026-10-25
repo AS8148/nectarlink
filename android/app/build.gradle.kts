@@ -25,6 +25,11 @@ android {
         targetSdk = 37
         versionCode = appVersionCode
         versionName = appVersion
+        manifestPlaceholders["appLabel"] = "@string/app_name"
+        if (providers.gradleProperty("nectarlink.hevcTest").orNull == "true") {
+            applicationId = "app.nectarlink.hevctest"
+            manifestPlaceholders["appLabel"] = "NectarLink HEVC test"
+        }
     }
 
     // Only the languages the app offers (res/xml/locales_config.xml) go into the APK: a
