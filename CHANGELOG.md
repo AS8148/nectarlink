@@ -134,6 +134,10 @@ has a Stop button. Choosing another
   phone sends H.265 when the PC can decode it, with H.264 otherwise.
   Thanks to [@AS8148](https://github.com/AS8148)
   ([#51](https://github.com/thtbee/nectarlink/pull/51)).
+- **A file being sent from the PC showed up twice on Home**, once under
+  Waiting to send with a bar that kept flickering, and again under
+  Transfers. Each file now has one row with one smooth bar that shows
+  the percent, sizes, speed and time left.
 - With NectarLink in two profiles on one phone (a work profile, or a
   cloned app), only one of them could connect over USB, and the PC kept
   offering to pair the other. Each profile now connects over USB, and the

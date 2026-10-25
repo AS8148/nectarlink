@@ -170,6 +170,9 @@ pub fn send_queue_snapshot() -> (String, i32, i32, bool) {
             } else {
                 (item.bytes_done as f64 / item.bytes_total as f64).clamp(0.0, 1.0)
             };
+            // A sending item whose transfer has its own row in Transfers;
+            // Home shows that row and leaves this one out of the queue.
+            let live = s.transfers.iter().any(|t| t.transfer.id == item.id);
             arr.push(serde_json::json!({
                 "id": item.id,
                 "deviceId": item.peer.to_string(),
@@ -188,6 +191,7 @@ pub fn send_queue_snapshot() -> (String, i32, i32, bool) {
                 "createdAt": item.created_at,
                 "expiresAt": item.expires_at,
                 "attempts": item.attempts,
+                "live": live,
             }));
         }
 

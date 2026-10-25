@@ -35,15 +35,59 @@ Item {
         }
     }
 
-    readonly property var sendQueueItems: {
-        if (!TransferList.sendQueue || TransferList.sendQueue.length === 0)
-            return []
+    // The send queue as a model that's updated in place, so its rows keep
+    // their delegates (and their animations) as progress comes in. Items
+    // whose transfer already has a row under Transfers are left out: one
+    // row per file.
+    ListModel { id: sendQueueModel }
+    property int sendQueueWaiting: 0
+
+    function syncSendQueue() {
+        let items = []
         try {
-            return JSON.parse(TransferList.sendQueue)
+            items = TransferList.sendQueue && TransferList.sendQueue.length > 0
+                ? JSON.parse(TransferList.sendQueue) : []
         } catch (e) {
-            return []
+            items = []
         }
+        const rows = items
+            .filter(item => !(item.status === "sending" && item.live))
+            .map(item => ({
+                queueId: String(item.id || ""),
+                kind: String(item.kind || ""),
+                icon: String(item.icon || ""),
+                title: String(item.title || ""),
+                status: String(item.status || "waiting"),
+                reason: String(item.reason || ""),
+                deviceName: String(item.deviceName || ""),
+                totalBytes: Number(item.totalBytes || 0),
+                progress: Number(item.progress || 0)
+            }))
+        const ids = rows.map(row => row.queueId)
+        for (let r = sendQueueModel.count - 1; r >= 0; r--) {
+            if (ids.indexOf(sendQueueModel.get(r).queueId) < 0)
+                sendQueueModel.remove(r)
+        }
+        for (let i = 0; i < rows.length; i++) {
+            let at = -1
+            for (let r = i; r < sendQueueModel.count; r++) {
+                if (sendQueueModel.get(r).queueId === rows[i].queueId) { at = r; break }
+            }
+            if (at < 0) {
+                sendQueueModel.insert(i, rows[i])
+            } else {
+                if (at !== i) sendQueueModel.move(at, i, 1)
+                sendQueueModel.set(i, rows[i])
+            }
+        }
+        sendQueueWaiting = rows.filter(row => row.status === "waiting" || row.status === "sending").length
     }
+
+    Connections {
+        target: TransferList
+        function onSendQueueChanged() { page.syncSendQueue() }
+    }
+    Component.onCompleted: syncSendQueue()
 
     function formatQueueSize(bytes) {
         if (!bytes || bytes <= 0) return ""
@@ -1323,7 +1367,7 @@ Item {
             Card {
                 id: sendQueueCard
                 width: parent.width
-                visible: page.sendQueueItems.length > 0
+                visible: sendQueueModel.count > 0
                 opacity: visible ? 1 : 0
                 Behavior on opacity {
                     enabled: !Theme.reduceMotion && !page.resizing
@@ -1344,8 +1388,8 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             role: "label"
                             muted: true
-                            text: TransferList.waitingCount > 0
-                                  ? qsTr("Waiting to send · %1").arg(TransferList.waitingCount)
+                            text: page.sendQueueWaiting > 0
+                                  ? qsTr("Waiting to send · %1").arg(page.sendQueueWaiting)
                                   : qsTr("Waiting to send")
                         }
                         Row {
@@ -1381,17 +1425,17 @@ Item {
                             NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 180; easing.type: Easing.OutCubic }
                         }
                         Repeater {
-                            model: page.sendQueueItems
+                            model: sendQueueModel
                             delegate: Item {
                                 id: queueRow
-                                required property var modelData
+                                required property var model
                                 width: sendQueueList.width
                                 implicitHeight: queueItemCol.height + 18
 
-                                readonly property string itemStatus: queueRow.modelData.status || "waiting"
+                                readonly property string itemStatus: queueRow.model.status || "waiting"
                                 readonly property bool isFailedOrExpired: itemStatus === "failed" || itemStatus === "expired"
-                                readonly property real totalBytes: Number(queueRow.modelData.totalBytes || 0)
-                                readonly property real progress: Number(queueRow.modelData.progress || 0)
+                                readonly property real totalBytes: Number(queueRow.model.totalBytes || 0)
+                                readonly property real progress: Number(queueRow.model.progress || 0)
 
                                 Row {
                                     id: queueRowInner
@@ -1409,11 +1453,11 @@ Item {
                                         Icon {
                                             anchors.centerIn: parent
                                             width: 18; height: 18
-                                            path: queueRow.modelData.icon === "folder" ? Icons.folder
-                                                : queueRow.modelData.icon === "clipboard" ? Icons.clipboard
-                                                : queueRow.modelData.icon === "link" ? Icons.globe
-                                                : queueRow.modelData.icon === "task" ? Icons.bolt
-                                                : queueRow.modelData.icon === "camera" ? Icons.camera
+                                            path: queueRow.model.icon === "folder" ? Icons.folder
+                                                : queueRow.model.icon === "clipboard" ? Icons.clipboard
+                                                : queueRow.model.icon === "link" ? Icons.globe
+                                                : queueRow.model.icon === "task" ? Icons.bolt
+                                                : queueRow.model.icon === "camera" ? Icons.camera
                                                 : Icons.send
                                             color: Theme.graphite ? Theme.surfaceContent : Theme.secondaryContainerContent
                                         }
@@ -1428,13 +1472,13 @@ Item {
                                             width: parent.width
                                             role: "title"
                                             size: 14
-                                            elide: (queueRow.modelData.kind === "link"
-                                                    || queueRow.modelData.icon === "link"
-                                                    || (queueRow.modelData.title || "").startsWith("http://")
-                                                    || (queueRow.modelData.title || "").startsWith("https://"))
+                                            elide: (queueRow.model.kind === "link"
+                                                    || queueRow.model.icon === "link"
+                                                    || (queueRow.model.title || "").startsWith("http://")
+                                                    || (queueRow.model.title || "").startsWith("https://"))
                                                 ? Text.ElideMiddle
                                                 : Text.ElideRight
-                                            text: queueRow.modelData.title || ""
+                                            text: queueRow.model.title || ""
                                         }
                                         Rectangle {
                                             width: parent.width
@@ -1460,8 +1504,8 @@ Item {
                                             color: queueRow.isFailedOrExpired ? Theme.error : Theme.surfaceContentVariant
                                             elide: Text.ElideRight
                                             text: {
-                                                const devName = (queueRow.modelData.deviceName && queueRow.modelData.deviceName.length > 0)
-                                                    ? queueRow.modelData.deviceName : home.name
+                                                const devName = (queueRow.model.deviceName && queueRow.model.deviceName.length > 0)
+                                                    ? queueRow.model.deviceName : home.name
                                                 const sz = page.formatQueueSize(queueRow.totalBytes)
                                                 if (queueRow.itemStatus === "sending") {
                                                     if (queueRow.totalBytes > 0) {
@@ -1471,13 +1515,13 @@ Item {
                                                     return qsTr("Sending to %1…").arg(devName)
                                                 }
                                                 if (queueRow.itemStatus === "failed") {
-                                                    const reason = queueRow.modelData.reason || ""
+                                                    const reason = queueRow.model.reason || ""
                                                     return reason.length > 0
                                                         ? qsTr("Failed · %1").arg(reason)
                                                         : qsTr("Failed")
                                                 }
                                                 if (queueRow.itemStatus === "expired") {
-                                                    const reason = queueRow.modelData.reason || ""
+                                                    const reason = queueRow.model.reason || ""
                                                     return reason.length > 0 ? reason : qsTr("Expired")
                                                 }
                                                 return sz.length > 0
@@ -1495,12 +1539,12 @@ Item {
                                             visible: queueRow.isFailedOrExpired
                                             iconPath: Icons.refresh
                                             label: qsTr("Retry")
-                                            onClicked: TransferList.retryQueueItem(queueRow.modelData.id)
+                                            onClicked: TransferList.retryQueueItem(queueRow.model.queueId)
                                         }
                                         IconButton {
                                             iconPath: Icons.close
                                             label: queueRow.isFailedOrExpired ? qsTr("Dismiss") : qsTr("Cancel")
-                                            onClicked: TransferList.cancelQueueItem(queueRow.modelData.id)
+                                            onClicked: TransferList.cancelQueueItem(queueRow.model.queueId)
                                         }
                                     }
                                 }

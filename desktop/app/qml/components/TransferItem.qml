@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import QtQuick
+import QtQuick.Effects
 import app.nectarlink
 
-// One file transfer: direction, name, progress and speed, and what can be
-// done with it (cancel while it runs; open or show what arrived).
+// One file transfer: direction, name, progress, speed and time left, and
+// what can be done with it (cancel while it runs; open or show what arrived).
 Item {
     id: item
     required property string transferId
@@ -20,6 +21,12 @@ Item {
     required property string savedPath
 
     readonly property bool active: status === "requested" || status === "waiting" || status === "running" || status === "paused"
+    readonly property bool showBar: status === "waiting" || status === "running" || status === "paused"
+    readonly property bool motion: !Theme.reduceMotion && item.visible
+    // Progress as drawn. Updates arrive a few times a second; easing each one
+    // over about the same time keeps the bar gliding instead of stepping.
+    property real shown: status === "done" ? 1 : Math.max(0, Math.min(1, progress))
+    Behavior on shown { enabled: item.motion; NumberAnimation { duration: 260 } }
 
     implicitHeight: column.height + 20
 
@@ -32,6 +39,16 @@ Item {
         return units[unit].arg(value < 10 ? Qt.locale().toString(value, "f", 1) : Math.round(value))
     }
 
+    // Rounded so it doesn't flicker with every speed sample.
+    function timeLeft() {
+        if (status !== "running" || rate <= 0 || total <= done) return ""
+        const seconds = (total - done) / rate
+        if (seconds < 10) return qsTr("A few seconds left")
+        if (seconds < 60) return qsTr("%1 s left").arg(Math.ceil(seconds / 5) * 5)
+        if (seconds < 3600) return qsTr("%1 min left").arg(Math.ceil(seconds / 60))
+        return qsTr("%1 h %2 min left").arg(Math.floor(seconds / 3600)).arg(Math.floor((seconds % 3600) / 60))
+    }
+
     function detail() {
         switch (status) {
         case "requested":
@@ -41,10 +58,13 @@ Item {
         case "waiting":
             return item.incoming ? qsTr("Paused; continues when %1 is back").arg(item.deviceName)
                                  : qsTr("Waiting for %1").arg(item.deviceName)
-        case "running":
-            return rate > 0
+        case "running": {
+            const left = timeLeft()
+            const sizes = rate > 0
                 ? qsTr("%1 of %2 · %3/s").arg(size(done)).arg(size(total)).arg(size(rate))
                 : qsTr("%1 of %2").arg(size(done)).arg(size(total))
+            return left.length > 0 ? sizes + " · " + left : sizes
+        }
         case "paused":
             return qsTr("Paused · %1 of %2").arg(size(done)).arg(size(total))
         case "done":
@@ -86,22 +106,123 @@ Item {
         Column {
             id: column
             width: row.width - 32 - actions.width - row.spacing * 2
-            spacing: 6
-            Txt { width: parent.width; role: "title"; size: 14; text: item.title }
-            // Progress, while there's progress to show.
-            Rectangle {
+            Item {
                 width: parent.width
-                height: 4
-                radius: 2
-                visible: item.status === "waiting" || item.status === "running" || item.status === "paused"
-                color: Theme.surfaceContainerHighest
+                height: titleText.height
+                Txt {
+                    id: titleText
+                    width: parent.width - (percent.visible ? percent.width + 8 : 0)
+                    role: "title"
+                    size: 14
+                    text: item.title
+                }
+                Txt {
+                    id: percent
+                    anchors.right: parent.right
+                    anchors.verticalCenter: titleText.verticalCenter
+                    visible: item.showBar && item.total > 0
+                    role: "bodySmall"
+                    weight: 600
+                    color: item.status === "running" ? Theme.primary : Theme.surfaceContentVariant
+                    text: qsTr("%1%").arg(Math.floor(item.shown * 100))
+                }
+            }
+            // One bar for the whole transfer. A highlight sweeps along what's
+            // been sent while it moves, waiting breathes, paused holds still,
+            // and when it's done the bar fills up, then folds away.
+            Item {
+                id: barSlot
+                width: parent.width
+                height: item.showBar ? 16 : 0
+                opacity: item.showBar ? 1 : 0
+                clip: true
+                Accessible.role: Accessible.ProgressBar
+                Accessible.name: item.title
+                Accessible.description: percent.text
+                Behavior on height {
+                    enabled: item.motion
+                    SequentialAnimation {
+                        PauseAnimation { duration: item.showBar ? 0 : 360 }
+                        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+                    }
+                }
+                Behavior on opacity {
+                    enabled: item.motion
+                    SequentialAnimation {
+                        PauseAnimation { duration: item.showBar ? 0 : 360 }
+                        NumberAnimation { duration: 180 }
+                    }
+                }
+
                 Rectangle {
-                    height: parent.height
-                    radius: parent.radius
-                    width: parent.width * Math.max(0, Math.min(1, item.progress))
-                    color: Theme.primary
-                    opacity: (item.status === "waiting" || item.status === "paused") ? 0.45 : 1
-                    Behavior on width { enabled: !Theme.reduceMotion; NumberAnimation { duration: Theme.reduceMotion ? 0 : 180 } }
+                    id: track
+                    width: parent.width
+                    height: 6
+                    radius: 3
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Theme.surfaceContainerHighest
+                }
+                // The filled part and its highlight, cut to the fill's rounded
+                // shape (a plain clip only cuts rectangles).
+                Item {
+                    id: fill
+                    anchors.fill: track
+                    readonly property real reach: item.shown <= 0 ? 0 : Math.max(track.height, track.width * item.shown)
+                    property real breath: 0.55
+                    opacity: item.status === "waiting" ? breath : item.status === "paused" ? 0.45 : 1
+                    SequentialAnimation on breath {
+                        running: item.status === "waiting" && item.motion
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.8; duration: 900; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 0.4; duration: 900; easing.type: Easing.InOutSine }
+                    }
+                    layer.enabled: width > 0 && height > 0
+                    layer.smooth: true
+                    layer.effect: MultiEffect {
+                        maskEnabled: true
+                        maskSource: fillMask
+                        maskThresholdMin: 0.5
+                        maskSpreadAtMin: 1.0
+                    }
+                    Rectangle {
+                        width: fill.reach
+                        height: parent.height
+                        color: Theme.primary
+                    }
+                    Rectangle {
+                        id: sheen
+                        readonly property real span: Math.min(72, Math.max(24, fill.reach * 0.6))
+                        property real at: 0
+                        visible: item.status === "running" && item.motion && fill.reach > span
+                        x: -span + (fill.reach + span) * at
+                        width: span
+                        height: parent.height
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0; color: "transparent" }
+                            GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, Theme.dark ? 0.55 : 0.45) }
+                            GradientStop { position: 1; color: "transparent" }
+                        }
+                        NumberAnimation on at {
+                            running: sheen.visible
+                            loops: Animation.Infinite
+                            from: 0; to: 1
+                            duration: 1500
+                            easing.type: Easing.InOutQuad
+                        }
+                    }
+                }
+                Item {
+                    id: fillMask
+                    anchors.fill: track
+                    visible: false
+                    layer.enabled: true
+                    layer.smooth: true
+                    Rectangle {
+                        width: fill.reach
+                        height: parent.height
+                        radius: height / 2
+                    }
                 }
             }
             Txt {
