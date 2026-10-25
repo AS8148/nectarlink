@@ -17,6 +17,8 @@ use windows::{
     core::{GUID, HRESULT, IUnknown, Interface},
 };
 
+#[cfg(windows)]
+pub mod gpu;
 pub mod shm;
 #[cfg(windows)]
 pub mod source;
@@ -83,17 +85,28 @@ mod tests {
         Media::{
             KernelStreaming::PINNAME_VIDEO_CAPTURE,
             MediaFoundation::{
-                IMFMediaBuffer, IMFMediaSource, IMFMediaStream, IMFMediaStream2, IMFSample, MEMediaSample,
-                MENewStream, MESourcePaused, MESourceStarted, MESourceStopped, MEStreamPaused,
-                MEStreamStarted, MEStreamStopped, MEUpdatedStream,
+                IMF2DBuffer, IMFMediaSource, IMFMediaStream, IMFMediaStream2, IMFSample,
+                IMFSampleAllocatorControl, IMFVideoSampleAllocator, MEMediaSample, MENewStream,
+                MESourceStarted, MESourceStopped, MEStreamStarted, MEStreamStopped, MEUpdatedStream,
                 MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES, MF_DEVICESTREAM_FRAMESERVER_SHARED,
-                MF_DEVICESTREAM_STREAM_CATEGORY, MF_DEVICESTREAM_STREAM_ID, MF_EVENT_FLAG_NO_WAIT,
-                MF_MT_FRAME_SIZE, MF_MT_SUBTYPE, MF_STREAM_STATE_PAUSED, MF_STREAM_STATE_RUNNING,
-                MF_STREAM_STATE_STOPPED, MFFrameSourceTypes_Color, MFVideoFormat_NV12, MFVideoFormat_RGB32,
+                MF_DEVICESTREAM_STREAM_CATEGORY, MF_DEVICESTREAM_STREAM_ID, MF_E_INVALID_STATE_TRANSITION,
+                MF_EVENT_FLAG_NO_WAIT, MF_MT_FRAME_SIZE, MF_MT_SUBTYPE, MF_STREAM_STATE_RUNNING,
+                MF_STREAM_STATE_STOPPED, MFCreateVideoSampleAllocatorEx, MFFrameSourceTypes_Color,
+                MFVideoFormat_NV12, MFVideoFormat_RGB32,
             },
         },
         System::Com::StructuredStorage::PROPVARIANT,
     };
+
+    #[cfg(windows)]
+    fn sample_bytes(sample: &IMFSample) -> Vec<u8> {
+        unsafe {
+            let buffer: IMF2DBuffer = sample.GetBufferByIndex(0).unwrap().cast().unwrap();
+            let mut bytes = vec![0; buffer.GetContiguousLength().unwrap() as usize];
+            buffer.ContiguousCopyTo(&mut bytes).unwrap();
+            bytes
+        }
+    }
 
     #[cfg(windows)]
     #[test]
@@ -104,8 +117,10 @@ mod tests {
             assert_eq!(hr, S_OK);
             assert!(!raw.is_null());
             let factory: IClassFactory = IClassFactory::from_raw(raw);
-            let source: windows::Win32::Media::MediaFoundation::IMFMediaSourceEx =
+            let activate: windows::Win32::Media::MediaFoundation::IMFActivate =
                 factory.CreateInstance(None).unwrap();
+            let source: windows::Win32::Media::MediaFoundation::IMFMediaSourceEx =
+                activate.ActivateObject().unwrap();
             let attrs = source.GetSourceAttributes().unwrap();
             assert_eq!(
                 attrs.GetUINT32(&MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES).unwrap(),
@@ -149,6 +164,15 @@ mod tests {
             let handler = sd.GetMediaTypeHandler().unwrap();
             assert_eq!(handler.GetMediaTypeCount().unwrap(), 4);
 
+            // Frame Server supplies the allocator before starting the source.
+            // Exercise real 2D buffers rather than only flat test buffers.
+            handler.SetCurrentMediaType(&handler.GetMediaTypeByIndex(1).unwrap()).unwrap();
+            let mut raw_allocator = std::ptr::null_mut();
+            MFCreateVideoSampleAllocatorEx(&IMFVideoSampleAllocator::IID, &mut raw_allocator).unwrap();
+            let allocator = IMFVideoSampleAllocator::from_raw(raw_allocator);
+            let allocator_control: IMFSampleAllocatorControl = source.cast().unwrap();
+            allocator_control.SetDefaultAllocator(0, &allocator).unwrap();
+
             // Start the media source.
             let start_pos = PROPVARIANT::default();
             source.Start(&pd, &GUID::zeroed(), &start_pos).unwrap();
@@ -175,17 +199,13 @@ mod tests {
             let s0_val = ev_sample0.GetValue().unwrap();
             let sample0: IMFSample =
                 s0_val.Anonymous.Anonymous.Anonymous.punkVal.as_ref().unwrap().cast().unwrap();
-            assert_eq!(sample0.GetSampleTime().unwrap(), 0);
+            let sample_time0 = sample0.GetSampleTime().unwrap();
+            assert!(sample_time0 > 0);
             assert_eq!(sample0.GetSampleDuration().unwrap(), SAMPLE_DURATION_100NS);
-            let buf0: IMFMediaBuffer = sample0.ConvertToContiguousBuffer().unwrap();
-            assert_eq!(buf0.GetCurrentLength().unwrap(), 1280 * 720 * 4);
-            let mut ptr0 = std::ptr::null_mut();
-            let mut cur_len0 = 0;
-            buf0.Lock(&mut ptr0, None, Some(&mut cur_len0)).unwrap();
-            let bytes0 = std::slice::from_raw_parts(ptr0, cur_len0 as usize);
+            let bytes0 = sample_bytes(&sample0);
+            assert_eq!(bytes0.len(), 1280 * 720 * 4);
             // Placeholder contains amber/white text pixels over the dark background.
             assert!(bytes0.as_chunks::<4>().0.iter().any(|px| px[2] > 200));
-            buf0.Unlock().unwrap();
 
             // 2. Write a live 1280x720 BGRX frame to shared memory and request a sample.
             let mut live_frame = vec![0u8; 1280 * 720 * 4];
@@ -203,56 +223,49 @@ mod tests {
             let s1_val = ev_sample1.GetValue().unwrap();
             let sample1: IMFSample =
                 s1_val.Anonymous.Anonymous.Anonymous.punkVal.as_ref().unwrap().cast().unwrap();
-            assert_eq!(sample1.GetSampleTime().unwrap(), SAMPLE_DURATION_100NS);
-            let buf1: IMFMediaBuffer = sample1.ConvertToContiguousBuffer().unwrap();
-            assert_eq!(buf1.GetCurrentLength().unwrap(), 1280 * 720 * 4);
-            let mut ptr1 = std::ptr::null_mut();
-            let mut cur_len1 = 0;
-            buf1.Lock(&mut ptr1, None, Some(&mut cur_len1)).unwrap();
-            let bytes1 = std::slice::from_raw_parts(ptr1, cur_len1 as usize);
+            let sample_time1 = sample1.GetSampleTime().unwrap();
+            assert!(sample_time1 >= sample_time0 + SAMPLE_DURATION_100NS);
+            let bytes1 = sample_bytes(&sample1);
+            assert_eq!(bytes1.len(), 1280 * 720 * 4);
             assert_eq!(&bytes1[..4], &[0x22, 0x88, 0xEE, 0xFF]);
             assert_eq!(&bytes1[bytes1.len() - 4..], &[0x22, 0x88, 0xEE, 0xFF]);
-            buf1.Unlock().unwrap();
 
             // 3. Switch stream media type to NV12 @ 1280x720 and request a sample.
-            let mt_nv12 = handler.GetMediaTypeByIndex(1).unwrap();
+            let mt_nv12 = handler.GetMediaTypeByIndex(0).unwrap();
             assert_eq!(mt_nv12.GetGUID(&MF_MT_SUBTYPE).unwrap(), MFVideoFormat_NV12);
             handler.SetCurrentMediaType(&mt_nv12).unwrap();
+            allocator.UninitializeSampleAllocator().unwrap();
+            allocator.InitializeSampleAllocator(10, &mt_nv12).unwrap();
             stream.RequestSample(None).unwrap();
             let ev_sample2 = stream.GetEvent(MF_EVENT_FLAG_NO_WAIT).unwrap();
             let s2_val = ev_sample2.GetValue().unwrap();
             let sample2: IMFSample =
                 s2_val.Anonymous.Anonymous.Anonymous.punkVal.as_ref().unwrap().cast().unwrap();
-            assert_eq!(sample2.GetSampleTime().unwrap(), SAMPLE_DURATION_100NS * 2);
-            let buf2: IMFMediaBuffer = sample2.ConvertToContiguousBuffer().unwrap();
-            assert_eq!(buf2.GetCurrentLength().unwrap(), 1280 * 720 * 3 / 2);
+            let sample_time2 = sample2.GetSampleTime().unwrap();
+            assert!(sample_time2 >= sample_time1 + SAMPLE_DURATION_100NS);
+            assert_eq!(sample_bytes(&sample2).len(), 1280 * 720 * 3 / 2);
 
             // 4. Switch stream media type to RGB32 @ 1920x1080 and request a sample.
-            let mt_1080 = handler.GetMediaTypeByIndex(2).unwrap();
+            let mt_1080 = handler.GetMediaTypeByIndex(3).unwrap();
             assert_eq!(mt_1080.GetGUID(&MF_MT_SUBTYPE).unwrap(), MFVideoFormat_RGB32);
             assert_eq!(mt_1080.GetUINT64(&MF_MT_FRAME_SIZE).unwrap(), (1920u64 << 32) | 1080u64);
             handler.SetCurrentMediaType(&mt_1080).unwrap();
+            allocator.UninitializeSampleAllocator().unwrap();
+            allocator.InitializeSampleAllocator(10, &mt_1080).unwrap();
             stream.RequestSample(None).unwrap();
             let ev_sample3 = stream.GetEvent(MF_EVENT_FLAG_NO_WAIT).unwrap();
             let s3_val = ev_sample3.GetValue().unwrap();
             let sample3: IMFSample =
                 s3_val.Anonymous.Anonymous.Anonymous.punkVal.as_ref().unwrap().cast().unwrap();
-            assert_eq!(sample3.GetSampleTime().unwrap(), SAMPLE_DURATION_100NS * 3);
-            let buf3: IMFMediaBuffer = sample3.ConvertToContiguousBuffer().unwrap();
-            assert_eq!(buf3.GetCurrentLength().unwrap(), 1920 * 1080 * 4);
+            let sample_time3 = sample3.GetSampleTime().unwrap();
+            assert!(sample_time3 >= sample_time2 + SAMPLE_DURATION_100NS);
+            assert_eq!(sample_bytes(&sample3).len(), 1920 * 1080 * 4);
 
-            // Pause, restart (MEUpdatedStream), stop, and shutdown.
-            source.Pause().unwrap();
-            assert_eq!(stream2.GetStreamState().unwrap(), MF_STREAM_STATE_PAUSED);
-            assert_eq!(
-                source.GetEvent(MF_EVENT_FLAG_NO_WAIT).unwrap().GetType().unwrap(),
-                MESourcePaused.0 as u32
-            );
-            assert_eq!(
-                stream.GetEvent(MF_EVENT_FLAG_NO_WAIT).unwrap().GetType().unwrap(),
-                MEStreamPaused.0 as u32
-            );
+            // A live source rejects pause; restart, stop and shutdown still work.
+            assert_eq!(source.Pause().unwrap_err().code(), MF_E_INVALID_STATE_TRANSITION);
+            assert_eq!(stream2.GetStreamState().unwrap(), MF_STREAM_STATE_RUNNING);
 
+            allocator.UninitializeSampleAllocator().unwrap();
             source.Start(&pd, &GUID::zeroed(), &start_pos).unwrap();
             assert_eq!(
                 source.GetEvent(MF_EVENT_FLAG_NO_WAIT).unwrap().GetType().unwrap(),

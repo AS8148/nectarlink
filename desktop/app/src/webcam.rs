@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Phone as a webcam (`docs/protocol/webcam.md`): decodes a phone's H.264
-//! camera stream on a dedicated thread, publishes BGRX frames into the
-//! shared-memory mapping read by `nectarlink_vcam.dll` (the global one the
+//! camera stream on a dedicated thread, publishes shared GPU NV12 textures or
+//! fallback BGRX frames into the mapping read by `nectarlink_vcam.dll` (the global one the
 //! camera creates inside Windows' Frame Server, or this session's while it
 //! isn't there), and feeds the live preview `VideoView` (`stream:
 //! "webcam"`) in Settings.
@@ -92,6 +92,21 @@ static HEIGHT: AtomicU32 = AtomicU32::new(720);
 /// (offered until a phone says it can't).
 static UHD: AtomicBool = AtomicBool::new(true);
 static PREVIEW_ACTIVE: AtomicBool = AtomicBool::new(false);
+struct PreviewRequests(AtomicU32);
+impl PreviewRequests {
+    fn set(&self, bit: u32, requested: bool) -> bool {
+        let mask = if requested {
+            self.0.fetch_or(bit, Ordering::AcqRel) | bit
+        } else {
+            self.0.fetch_and(!bit, Ordering::AcqRel) & !bit
+        };
+        mask != 0
+    }
+    fn clear(&self) {
+        self.0.store(0, Ordering::Release);
+    }
+}
+static PREVIEW_DEMAND: PreviewRequests = PreviewRequests(AtomicU32::new(0));
 
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     f(STATE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_default())
@@ -443,6 +458,22 @@ fn refresh_idle_frame() {
 /// Marks whether the Settings webcam preview is on screen so the idle
 /// placeholder image is only held while needed.
 pub fn set_preview_active(active: bool) {
+    set_preview_demand(1, active);
+}
+
+/// Each view owns its request so hiding one cannot turn off another visible
+/// preview. Window visibility participates in the QML demand expression.
+pub fn set_preview_visible(owner: &str, active: bool) {
+    let bit = match owner {
+        "home" => 2,
+        "settings" => 4,
+        _ => return,
+    };
+    set_preview_demand(bit, active);
+}
+
+fn set_preview_demand(bit: u32, requested: bool) {
+    let active = PREVIEW_DEMAND.set(bit, requested);
     let prev = PREVIEW_ACTIVE.swap(active, Ordering::AcqRel);
     if active && !prev {
         refresh_idle_frame();
@@ -457,6 +488,7 @@ pub fn set_preview_active(active: bool) {
 /// Releases the idle preview image and any local-only shared mapping when the
 /// main window closes to the tray.
 pub fn release_idle_resources() {
+    PREVIEW_DEMAND.clear();
     PREVIEW_ACTIVE.store(false, Ordering::Release);
     let is_streaming = state(|s| {
         let streaming = matches!(s.phase, Phase::Streaming { .. });
@@ -648,12 +680,17 @@ impl WebcamSink for Sink {
 
     fn packet(&self, keyframe: bool, time_us: u64, data: Vec<u8>) {
         let Some(video) = self.video.get() else { return };
+        // Count before publishing: the receiver may consume immediately.
+        video.waiting.fetch_add(1, Ordering::AcqRel);
         match video.queue.try_send(Item::Packet { keyframe, time_us, data }) {
-            Ok(()) => {
-                video.waiting.fetch_add(1, Ordering::AcqRel);
+            Ok(()) => {}
+            Err(TrySendError::Disconnected(_)) => {
+                video.waiting.fetch_sub(1, Ordering::AcqRel);
             }
-            Err(TrySendError::Disconnected(_)) => {}
-            Err(TrySendError::Full(_)) => self.keyframe_please(),
+            Err(TrySendError::Full(_)) => {
+                video.waiting.fetch_sub(1, Ordering::AcqRel);
+                self.keyframe_please();
+            }
         }
     }
 
@@ -704,6 +741,10 @@ fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
     let mut need_keyframe = true;
     let mut local_mapping = mapping();
     let mut last_mapping_check = Instant::now();
+    #[cfg(windows)]
+    let mut gpu_publisher = nectarlink_vcam::gpu::GpuPublisher::new();
+    #[cfg(windows)]
+    let mut shared_transport = false;
 
     while let Ok(item) = items.recv() {
         match item {
@@ -720,7 +761,11 @@ fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
                     continue;
                 }
                 need_keyframe = false;
-                let pictures = match decoder.decode(&data, time_us) {
+                #[cfg(windows)]
+                let decoded = decoder.decode_frames(&data, time_us);
+                #[cfg(not(windows))]
+                let decoded = decoder.decode(&data, time_us);
+                let pictures = match decoded {
                     Ok(pictures) => pictures,
                     Err(e) => {
                         tracing::debug!(error = %e, "webcam packet didn't decode");
@@ -736,8 +781,54 @@ fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
                     if src_w == 0 || src_h == 0 {
                         continue;
                     }
-                    let mut bgrx = to_bgrx(picture, w, h);
                     let flip = mirror();
+                    let preview = PREVIEW_ACTIVE.load(Ordering::Relaxed);
+                    #[cfg(not(windows))]
+                    let published = false;
+                    #[cfg(windows)]
+                    let published = if !flip {
+                        match picture.gpu_surface() {
+                            Ok(Some((texture, index))) => match gpu_publisher.publish(
+                                &texture,
+                                index,
+                                &picture.sample,
+                                (src_w, src_h),
+                                picture.colors.bt601,
+                                picture.colors.full_range,
+                            ) {
+                                Ok(published) => published,
+                                Err(error) => {
+                                    tracing::warn!(%error,"GPU webcam sharing unavailable; using CPU frames");
+                                    gpu_publisher.disable();
+                                    false
+                                }
+                            },
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    };
+                    #[cfg(windows)]
+                    if shared_transport != published {
+                        tracing::info!(shared_textures = published, "webcam transport changed");
+                        shared_transport = published;
+                    }
+                    if published && !preview {
+                        continue;
+                    }
+                    #[cfg(windows)]
+                    let cpu_picture = match decoder.read_frame(picture) {
+                        Ok(picture) => picture,
+                        Err(error) => {
+                            tracing::warn!(%error,"webcam frame readback failed");
+                            need_keyframe = true;
+                            keyframe_please();
+                            continue;
+                        }
+                    };
+                    #[cfg(windows)]
+                    let picture = &cpu_picture;
+                    let mut bgrx = to_bgrx(picture, w, h);
                     if flip {
                         mirror_bgrx_in_place(&mut bgrx, src_w, src_h);
                     }
@@ -745,17 +836,27 @@ fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
                         local_mapping = mapping();
                         last_mapping_check = Instant::now();
                     }
-                    if let Some(ref map) = local_mapping {
+                    if !published && let Some(ref map) = local_mapping {
                         // Already flipped in place if `flip` is true, so pass `false` here.
                         map.write_frame(&phone_name, src_w, src_h, time_us, &bgrx, false);
                     }
-                    ffi::video_frame(PREVIEW_STREAM, src_w, src_h, &bgrx);
+                    // Publish the CPU fallback before deselecting the previous
+                    // GPU frame so a transport switch cannot expose an idle gap.
+                    #[cfg(windows)]
+                    if !published {
+                        gpu_publisher.idle();
+                    }
+                    if preview {
+                        ffi::video_frame(PREVIEW_STREAM, src_w, src_h, &bgrx);
+                    }
                 }
             }
             Item::Ended => break,
         }
     }
 
+    #[cfg(windows)]
+    drop(gpu_publisher);
     state(|s| {
         if matches!(s.phase, Phase::Streaming { device: d, .. } if d == device) {
             s.phase = Phase::Idle;
@@ -768,6 +869,18 @@ fn decode(device: DeviceId, items: &Receiver<Item>, waiting: &AtomicUsize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hiding_one_preview_does_not_disable_another_visible_view() {
+        let requests = PreviewRequests(AtomicU32::new(0));
+        assert!(requests.set(2, true));
+        assert!(requests.set(4, true));
+        assert!(requests.set(2, false));
+        assert!(!requests.set(4, false));
+        assert!(requests.set(2, true));
+        requests.clear();
+        assert!(!requests.set(4, false));
+    }
 
     #[test]
     fn maps_720_1080_and_2160_4k_dimensions() {

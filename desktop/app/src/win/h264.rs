@@ -52,6 +52,27 @@ pub struct Picture {
     pub colors: Colors,
 }
 
+/// A decoder-owned sample retained until the consumer finishes using its GPU
+/// surface. Materializing CPU pixels is optional and explicit.
+#[derive(Debug)]
+pub struct DecodedFrame {
+    pub sample: IMFSample,
+    pub width: u32,
+    pub height: u32,
+    pub colors: Colors,
+}
+impl DecodedFrame {
+    pub fn gpu_surface(&self) -> windows::core::Result<Option<(ID3D11Texture2D, u32)>> {
+        unsafe {
+            let buffer = self.sample.GetBufferByIndex(0)?;
+            let Ok(dxgi) = buffer.cast::<IMFDXGIBuffer>() else { return Ok(None) };
+            let mut texture: Option<ID3D11Texture2D> = None;
+            dxgi.GetResource(&ID3D11Texture2D::IID, std::ptr::from_mut(&mut texture).cast())?;
+            texture.map(|t| dxgi.GetSubresourceIndex().map(|i| (t, i))).transpose()
+        }
+    }
+}
+
 /// The YUV-to-RGB formula a stream uses (its VUI, as the decoder reports
 /// it). Phones are asked for BT.709 limited range, but not all comply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -330,6 +351,13 @@ impl Decoder {
     /// rest of the stream and returns the error: the caller starts over from
     /// the next keyframe, as after any decoding error.
     pub fn decode(&mut self, data: &[u8], time_us: u64) -> windows::core::Result<Vec<Picture>> {
+        let frames = self.decode_frames(data, time_us)?;
+        frames.iter().map(|frame| self.read_frame(frame)).collect()
+    }
+
+    /// Decode without reading GPU pixels back. Reference frames are still
+    /// decoded even when the caller discards their output to catch up.
+    pub fn decode_frames(&mut self, data: &[u8], time_us: u64) -> windows::core::Result<Vec<DecodedFrame>> {
         let result = self.decode_on(data, time_us);
         if result.is_err()
             && self.gpu.is_some()
@@ -341,7 +369,7 @@ impl Decoder {
         result
     }
 
-    fn decode_on(&mut self, data: &[u8], time_us: u64) -> windows::core::Result<Vec<Picture>> {
+    fn decode_on(&mut self, data: &[u8], time_us: u64) -> windows::core::Result<Vec<DecodedFrame>> {
         let expects_picture = has_slice(&self.codec, data);
         // Windows' HEVC decoder holds a picture until the next access unit
         // starts, a frame late; ending each one with an access unit
@@ -370,7 +398,7 @@ impl Decoder {
         }
     }
 
-    fn drain(&mut self, expects_picture: bool) -> windows::core::Result<Vec<Picture>> {
+    fn drain(&mut self, expects_picture: bool) -> windows::core::Result<Vec<DecodedFrame>> {
         let mut pictures = Vec::new();
         let mut waits = 0u32;
         loop {
@@ -399,7 +427,12 @@ impl Decoder {
             match result {
                 Ok(()) => {
                     if let Some(sample) = sample {
-                        pictures.push(self.picture(&sample)?);
+                        pictures.push(DecodedFrame {
+                            sample,
+                            width: self.coded.0,
+                            height: self.coded.1,
+                            colors: self.colors,
+                        });
                     }
                 }
                 Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => {
@@ -422,19 +455,31 @@ impl Decoder {
         }
     }
 
-    fn picture(&mut self, sample: &IMFSample) -> windows::core::Result<Picture> {
-        let (width, height) = self.coded;
+    pub fn read_frame(&mut self, frame: &DecodedFrame) -> windows::core::Result<Picture> {
+        let result = self.picture(frame);
+        if result.is_err()
+            && self.gpu.is_some()
+            && let Ok(software) = Self::create(&self.codec, false)
+        {
+            tracing::info!("GPU video readback failed; decoding in software");
+            *self = software;
+        }
+        result
+    }
+
+    fn picture(&mut self, frame: &DecodedFrame) -> windows::core::Result<Picture> {
+        let (width, height) = (frame.width, frame.height);
+        let colors = frame.colors;
+        let sample = &frame.sample;
         // SAFETY: the buffer is locked while it's read and unlocked after.
         unsafe {
             let buffer = sample.ConvertToContiguousBuffer()?;
-            if self.gpu.is_some()
-                && let Ok(dxgi) = buffer.cast::<IMFDXGIBuffer>()
-            {
+            if let Ok(dxgi) = buffer.cast::<IMFDXGIBuffer>() {
                 let mut texture: Option<ID3D11Texture2D> = None;
                 dxgi.GetResource(&ID3D11Texture2D::IID, std::ptr::from_mut(&mut texture).cast())?;
                 let texture = texture.ok_or_else(|| windows::core::Error::from(E_FAIL))?;
                 let index = dxgi.GetSubresourceIndex()?;
-                return self.read_texture(&texture, index, width, height);
+                return self.read_texture(&texture, index, width, height, colors);
             }
             if let Ok(two_d) = buffer.cast::<IMF2DBuffer>() {
                 let mut scan0 = std::ptr::null_mut();
@@ -445,7 +490,7 @@ impl Decoder {
                 let len = stride * rows * 3 / 2;
                 let nv12 = std::slice::from_raw_parts(scan0, len).to_vec();
                 two_d.Unlock2D()?;
-                return Ok(Picture { width, height, stride, plane_rows: rows, nv12, colors: self.colors });
+                return Ok(Picture { width, height, stride, plane_rows: rows, nv12, colors });
             }
             let mut data = std::ptr::null_mut();
             let mut length = 0;
@@ -454,7 +499,7 @@ impl Decoder {
             buffer.Unlock()?;
             let stride = width as usize;
             let plane_rows = (nv12.len() * 2 / 3) / stride.max(1);
-            Ok(Picture { width, height, stride, plane_rows, nv12, colors: self.colors })
+            Ok(Picture { width, height, stride, plane_rows, nv12, colors })
         }
     }
 }
@@ -469,6 +514,7 @@ impl Decoder {
         index: u32,
         width: u32,
         height: u32,
+        colors: Colors,
     ) -> windows::core::Result<Picture> {
         // SAFETY: Direct3D calls on the decoder's own device; the staging
         // texture is mapped while it's read and unmapped after.
@@ -508,7 +554,7 @@ impl Decoder {
             let len = stride * plane_rows * 3 / 2;
             let nv12 = std::slice::from_raw_parts(mapped.pData.cast::<u8>(), len).to_vec();
             context.Unmap(staging, 0);
-            Ok(Picture { width, height, stride, plane_rows, nv12, colors: self.colors })
+            Ok(Picture { width, height, stride, plane_rows, nv12, colors })
         }
     }
 }
@@ -596,6 +642,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gpu_frames_can_be_discarded_without_readback_then_materialized() {
+        let mut decoder = Decoder::new_gpu("h264").unwrap();
+        let mut count = 0;
+        let mut surfaces = 0;
+        for (i, unit) in test_stream("h264").iter().enumerate() {
+            for frame in decoder.decode_frames(unit, i as u64 * 33_333).unwrap() {
+                count += 1;
+                if frame.gpu_surface().unwrap().is_some() {
+                    surfaces += 1;
+                }
+                assert!(decoder.staging.is_none(), "decode_frames must not download discarded frames");
+                if count == 10 {
+                    let picture = decoder.read_frame(&frame).unwrap();
+                    assert_eq!((picture.width, picture.height), (320, 240));
+                    assert!(picture.nv12.len() >= 320 * 240 * 3 / 2);
+                    assert_eq!(picture.colors, frame.colors);
+                }
+            }
+        }
+        assert_eq!(count, 10);
+        if decoder.on_gpu() {
+            assert_eq!(surfaces, 10);
+            assert!(decoder.staging.is_some());
+        }
+    }
+
+    #[test]
     #[ignore]
     fn bench_to_bgrx_4k() {
         let (w, h) = (3840u32, 2160u32);
@@ -614,6 +687,79 @@ mod tests {
             std::hint::black_box(to_bgrx(&picture, w, h));
         }
         eprintln!("BENCH to_bgrx 4K: {:.1} ms/frame", start.elapsed().as_secs_f64() * 1000.0 / n as f64);
+    }
+
+    #[test]
+    fn decoder_sample_pool_survives_sustained_gpu_publication() {
+        let (done, finished) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            use nectarlink_vcam::gpu::{GpuPublisher, GpuReader};
+            use windows::Win32::Media::MediaFoundation::MFCreateDXGISurfaceBuffer;
+            let mut decoder = Decoder::new_gpu("h264").unwrap();
+            if !decoder.on_gpu() {
+                done.send(()).unwrap();
+                return;
+            }
+            let name = format!("Local\\NectarlinkDecoderPoolTest_{}", std::process::id());
+            let mut reader = GpuReader::new_with_mapping(&name).unwrap();
+            let mut publisher = GpuPublisher::new_with_mapping(&name).unwrap();
+            let mut output = None;
+            let mut count = 0;
+            for _ in 0..20 {
+                for unit in test_stream("h264") {
+                    for frame in decoder.decode_frames(unit, count * 33_333).unwrap() {
+                        let (texture, index) = frame.gpu_surface().unwrap().unwrap();
+                        if output.is_none() {
+                            unsafe {
+                                let mut desc = D3D11_TEXTURE2D_DESC::default();
+                                texture.GetDesc(&mut desc);
+                                desc.ArraySize = 1;
+                                desc.MipLevels = 1;
+                                desc.BindFlags =
+                                    windows::Win32::Graphics::Direct3D11::D3D11_BIND_RENDER_TARGET.0 as u32;
+                                let mut destination = None;
+                                texture
+                                    .GetDevice()
+                                    .unwrap()
+                                    .CreateTexture2D(&desc, None, Some(&mut destination))
+                                    .unwrap();
+                                output = Some(
+                                    MFCreateDXGISurfaceBuffer(
+                                        &ID3D11Texture2D::IID,
+                                        &destination.unwrap(),
+                                        0,
+                                        false,
+                                    )
+                                    .unwrap(),
+                                );
+                            }
+                        }
+                        assert!(
+                            publisher
+                                .publish(
+                                    &texture,
+                                    index,
+                                    &frame.sample,
+                                    (frame.width, frame.height),
+                                    false,
+                                    false
+                                )
+                                .unwrap()
+                        );
+                        assert!(
+                            reader.write_nv12(output.as_ref().unwrap(), frame.width, frame.height).unwrap()
+                        );
+                        count += 1;
+                    }
+                }
+            }
+            assert_eq!(count, 200);
+            assert_eq!(publisher.stats(), Some((200, 0)));
+            assert!(decoder.staging.is_none(), "publication must not download the decoded frames");
+            done.send(()).unwrap();
+        });
+        finished.recv_timeout(std::time::Duration::from_secs(30)).expect("decoder sample pool stalled");
+        worker.join().unwrap();
     }
 
     #[test]

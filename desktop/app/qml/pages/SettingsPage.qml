@@ -38,7 +38,9 @@ Item {
     }
 
     function syncSectionSideEffects() {
-        Webcam.setPreviewActive(page.active && (page.currentSection === "camera_audio" || Webcam.phase === "streaming"))
+        Webcam.setPreviewVisible("settings", page.active && page.currentSection === "camera_audio"
+                                 && page.Window.window !== null && page.Window.window.visible
+                                 && page.Window.window.visibility !== Window.Minimized)
         if (page.active && (page.currentSection === "storage" || page.currentSection === "appearance"))
             AppController.refreshDataRetention()
     }
@@ -116,7 +118,12 @@ Item {
         if (active)
             syncSectionSideEffects()
     }
-    Component.onDestruction: Webcam.setPreviewActive(false)
+    Component.onDestruction: Webcam.setPreviewVisible("settings", false)
+
+    Connections {
+        target: page.Window.window
+        function onVisibilityChanged() { page.syncSectionSideEffects() }
+    }
 
     Connections {
         target: DeviceList
