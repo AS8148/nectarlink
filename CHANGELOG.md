@@ -122,6 +122,11 @@ has a Stop button. Choosing another
   start its Bluetooth beacon, and the phone looked for the wrong bytes in
   it. Both are fixed; the beacon comes from the Windows app for now
   ([#47](https://github.com/thtbee/nectarlink/issues/47)).
+- **Typing on the PC from the phone lost letters** when voice typing
+  rewrote what it had typed: the PC turned away the burst of backspaces
+  as too fast. The PC now takes typing at full speed, and the phone
+  resends anything an older PC turns away
+  ([#52](https://github.com/thtbee/nectarlink/issues/52)).
 - With NectarLink in two profiles on one phone (a work profile, or a
   cloned app), only one of them could connect over USB, and the PC kept
   offering to pair the other. Each profile now connects over USB, and the

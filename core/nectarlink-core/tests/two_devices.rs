@@ -2670,6 +2670,21 @@ async fn remote_input_needs_toggle_and_delivers_motion_keys_and_slides() {
     }
     assert!(recorded.contains(&RemoteInput::Laser { on: false, x: 0.0, y: 0.0 }));
 
+    // Voice typing rewrites what it typed: the phone sends a backspace for each
+    // character it replaces, then the new text, each as soon as the last is
+    // answered. None of it may be refused (GitHub #52).
+    pc.platform.remote_inputs.lock().unwrap().clear();
+    let backspace = RemoteInput::Key { key: remote_keys::BACKSPACE.into(), mods: vec![] };
+    let rewrite = RemoteInput::Text { text: "नमस्ते, how are you doing today".into() };
+    for _ in 0..80 {
+        with_timeout("backspace", phone.node.remote_input(pc_id, backspace.clone())).await.unwrap();
+    }
+    with_timeout("rewritten text", phone.node.remote_input(pc_id, rewrite.clone())).await.unwrap();
+    let recorded = pc.platform.remote_inputs.lock().unwrap().clone();
+    let mut expected = vec![backspace; 80];
+    expected.push(rewrite);
+    assert_eq!(recorded, expected, "every backspace and the text arrive, in order");
+
     // Invalid inputs are rejected.
     assert!(
         phone

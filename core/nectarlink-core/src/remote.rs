@@ -29,13 +29,25 @@ pub(crate) const TOGGLE: &str = "remote_input";
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
+/// What a PC answers when a phone sends input faster than [`CONTROL_RATE_PER_SEC`].
+const RATE_LIMITED: &str = "rate limit exceeded";
+/// How long a phone keeps resending an input the PC turned away as too fast
+/// (older PCs allowed only 30 at once, then 60 a second), and how long it
+/// waits between tries. Inputs go one at a time, so their order is kept.
+const RATE_LIMIT_RETRY_FOR: Duration = Duration::from_secs(3);
+const RATE_LIMIT_RETRY_AFTER: Duration = Duration::from_millis(25);
+
 /// Maximum rate of incoming datagrams (`move`, `scroll`, `laser`) per peer.
 const DATAGRAM_RATE_PER_SEC: f64 = 240.0;
 const DATAGRAM_BURST: f64 = 60.0;
 
 /// Maximum rate of incoming control-stream `remote.input` requests per peer.
-const CONTROL_RATE_PER_SEC: f64 = 60.0;
-const CONTROL_BURST: f64 = 30.0;
+/// Typing sends one request per key: when voice typing rewrites a sentence,
+/// the phone sends a backspace for each character it replaces, one after the
+/// other as each is answered (several hundred a second over USB). The limit
+/// only stops a runaway flood.
+const CONTROL_RATE_PER_SEC: f64 = 500.0;
+const CONTROL_BURST: f64 = 500.0;
 
 /// Simple token bucket for per-peer input rate limiting.
 #[derive(Debug, Clone)]
@@ -168,9 +180,19 @@ pub(crate) async fn input(shared: &Arc<Shared>, session: &Arc<Session>, event: R
         check(shared, session).await?;
         return move_pointer(shared, session, dx, dy).await;
     }
-    let env = Envelope::new(types::REMOTE_INPUT, &event)?;
-    session.request(env, TIMEOUT).await?.expect(types::OK)?;
-    Ok(())
+    let give_up = Instant::now() + RATE_LIMIT_RETRY_FOR;
+    loop {
+        let env = Envelope::new(types::REMOTE_INPUT, &event)?;
+        let reply = session.request(env, TIMEOUT).await?;
+        match reply.expect(types::OK) {
+            Err(nectarlink_protocol::ProtocolError::Remote { code: ErrorCode::Denied, msg })
+                if msg == RATE_LIMITED && Instant::now() < give_up =>
+            {
+                tokio::time::sleep(RATE_LIMIT_RETRY_AFTER).await;
+            }
+            done => return Ok(done?),
+        }
+    }
 }
 
 /// Sends relative pointer motion `(dx, dy)` in a QUIC datagram (or a dedicated
@@ -263,7 +285,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
                         .unwrap_or_else(|e| e.into_inner())
                         .allow_control(session.peer, Instant::now());
                     if !allowed {
-                        Envelope::error(ErrorCode::Denied, "rate limit exceeded")
+                        Envelope::error(ErrorCode::Denied, RATE_LIMITED)
                     } else {
                         let platform = shared.platform.clone();
                         let peer = session.peer;
