@@ -40,6 +40,7 @@
     <string name="link_offline_seen">Offline · seen %1$s</string>
     <string name="link_offline_now">Offline · seen just now</string>
     <string name="link_never">Not connected yet</string>
+    <string name="link_not_reconnecting">Not reconnecting</string>
     <string name="battery_level">%1$d%%</string>
     <string name="battery_charging">%1$d%% · charging</string>
     <string name="ringing_title">%1$s is ringing your phone</string>
@@ -275,6 +276,8 @@
     <string name="action_lock_pc">Lock PC</string>
     <string name="action_sleep_pc">Sleep</string>
     <string name="action_wake_pc">Wake</string>
+    <string name="action_stop_reconnecting">Stop reconnecting</string>
+    <string name="action_reconnect">Reconnect</string>
     <string name="action_more">More actions</string>
     <string name="action_less">Fewer actions</string>
     <string name="wake_waking">Waking %1$s…</string>

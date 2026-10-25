@@ -25,6 +25,7 @@ class CoreStateTest {
         pairedAt = pairedAt,
         link = Link.Offline(null),
         canWake = canWake,
+        reconnect = true,
     )
 
     @Test
@@ -44,6 +45,16 @@ class CoreStateTest {
         assertFalse("no deck state yet", online.pcSpeakerRelayOn)
         val offline = online.reduce(Event.LinkChanged("a", Link.Offline(null)))
         assertFalse("a PC that is offline doesn't keep the phone busy", withDeck(offline, deck(speaker)).pcSpeakerRelayOn)
+    }
+
+    @Test
+    fun stopReconnectingIsShownPerPcAndCleared() {
+        var state = CoreState().reduce(Event.DeviceAdded(pc("a", "Desk", 10)))
+        assertTrue("on unless turned off", state.device("a")!!.reconnect)
+        state = state.reduce(Event.ReconnectChanged("a", false))
+        assertFalse(state.device("a")!!.reconnect)
+        state = state.reduce(Event.ReconnectChanged("a", true))
+        assertTrue(state.device("a")!!.reconnect)
     }
 
     @Test
@@ -192,7 +203,7 @@ class CoreStateTest {
 
         val initialInfo = DeviceInfo("Pixel", DeviceKind.PHONE, "android", "16", "Pixel 9", 0xFF4F7A4Eu)
         var state = CoreState().reduce(
-            Event.DeviceAdded(PairedDevice("p1", initialInfo, 100L, Link.Online(relayed = false, usb = true, rttMs = 4u), false)),
+            Event.DeviceAdded(PairedDevice("p1", initialInfo, 100L, Link.Online(relayed = false, usb = true, rttMs = 4u), false, true)),
         )
         assertEquals(0xFF4F7A4Eu, state.device("p1")!!.accent)
 

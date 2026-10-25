@@ -136,6 +136,8 @@ data class Device(
     val link: Link,
     val canWake: Boolean = false,
     val wakeState: WakeState = WakeState.Idle,
+    /** Whether this phone reconnects to it by itself; off after "Stop reconnecting". */
+    val reconnect: Boolean = true,
     val battery: app.nectarlink.core.Battery? = null,
     val power: PowerLevel = PowerLevel.NOT_APPLICABLE,
     val features: List<Feature> = emptyList(),
@@ -371,6 +373,7 @@ data class CoreState(
                 wakeState = if (!event.canWake) WakeState.Idle else it.wakeState,
             )
         }
+        is Event.ReconnectChanged -> update(event.id) { it.copy(reconnect = event.on) }
         is Event.Battery -> update(event.id) { it.copy(battery = event.battery) }
         is Event.Capabilities -> update(event.id) { it.copy(features = event.features) }
         is Event.DeckLayout -> update(event.id) { it.copy(deckLayout = event.layout) }
@@ -524,4 +527,5 @@ internal fun PairedDevice.toDevice() = Device(
     pairedAt = pairedAt,
     link = link,
     canWake = canWake,
+    reconnect = reconnect,
 )

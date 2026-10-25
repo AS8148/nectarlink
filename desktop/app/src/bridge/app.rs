@@ -223,6 +223,11 @@ pub mod qobject {
         #[qinvokable]
         fn unpair(self: Pin<&mut AppController>, device: &QString);
 
+        /// Stops reconnecting to a paired phone by itself, or starts again.
+        #[qinvokable]
+        #[cxx_name = "setReconnect"]
+        fn set_reconnect(self: Pin<&mut AppController>, device: &QString, on: bool);
+
         /// `{ state, limit, action, target, minutes, reason }` for a feature
         /// of a device (see docs/architecture/capabilities.md).
         #[qinvokable]
@@ -1615,6 +1620,13 @@ impl qobject::AppController {
                 show_message(describe(&e));
             }
         });
+    }
+
+    pub fn set_reconnect(self: Pin<&mut Self>, device: &QString, on: bool) {
+        let (Some(id), Some(node)) = (super::parse_device(device), core_host::node()) else { return };
+        if let Err(e) = node.set_reconnect(id, on) {
+            show_message(describe(&e));
+        }
     }
 
     pub fn feature_state(&self, device: &QString, feature: &QString) -> QMap<QMapPair_QString_QVariant> {
@@ -3359,6 +3371,7 @@ mod tests {
             },
             battery: None,
             power: nectarlink_core::PowerLevel::Basic,
+            reconnect: true,
         };
         // The stale pairing is listed first and has its own (old) color.
         let devices = [phone(1, 0xFF00_00FF, false), phone(2, 0xFFFF_8800, true)];

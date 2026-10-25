@@ -151,6 +151,7 @@ const ROLES: &[&str] = &[
     "pairedAt",
     "accent",
     "screen",
+    "reconnect",
 ];
 const USER_ROLE: i32 = 0x0100;
 
@@ -207,6 +208,7 @@ fn role_value(device: &Row, role: &str) -> QVariant {
             _ => 0.0,
         }),
         "pairedAt" => QVariant::from(&(device.paired_at as f64)),
+        "reconnect" => QVariant::from(&device.reconnect),
         "accent" => {
             text(&device.info.accent.map(|argb| format!("#{:06X}", argb & 0x00FF_FFFF)).unwrap_or_default())
         }
@@ -323,6 +325,7 @@ mod tests {
             link: LinkState::Offline { last_seen: None },
             battery: None,
             power: PowerLevel::Basic,
+            reconnect: true,
         }
     }
 

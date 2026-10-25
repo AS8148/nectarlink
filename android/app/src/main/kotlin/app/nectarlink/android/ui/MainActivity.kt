@@ -826,6 +826,7 @@ private fun App(
                                     onRefresh = core::refresh,
                                     onPower = core::pcPower,
                                     onWake = core::wake,
+                                    onSetReconnect = core::setReconnect,
                                     onRemote = { id ->
                                         remoteInitialMode = RemoteMode.Touchpad
                                         remotePcId = id

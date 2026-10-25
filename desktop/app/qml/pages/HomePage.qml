@@ -568,6 +568,7 @@ Item {
         required property real pairedAt
         required property string accent
         required property string screen
+        required property bool reconnect
 
         // Dropped files go to the device on screen (and Messages shows it).
         // Kept while the page is hidden.
@@ -1091,6 +1092,7 @@ Item {
                                                   ? ((home.cellType.length > 0 ? home.cellType : qsTr("Cellular"))
                                                      + (home.rttMs >= 1 ? qsTr(" · %1 ms").arg(home.rttMs) : ""))
                                                   : (home.rttMs >= 1 ? qsTr("Wi‑Fi · %1 ms").arg(home.rttMs) : qsTr("Wi‑Fi"))))))
+                                      : !home.reconnect ? qsTr("Not reconnecting")
                                       : (home.lastSeen > 0 ? qsTr("Offline · %1").arg(page.relativeTime(home.lastSeen))
                                                            : qsTr("Offline"))
                             }
@@ -1103,12 +1105,24 @@ Item {
                                 }
                             }
                         }
-                        Button {
+                        Flow {
                             visible: !home.online
-                            variant: "tonal"
-                            size: "sm"
-                            text: qsTr("Troubleshoot")
-                            onClicked: AppController.runDoctor()
+                            width: parent.width
+                            spacing: 6
+                            Button {
+                                visible: home.reconnect
+                                variant: "tonal"
+                                size: "sm"
+                                text: qsTr("Troubleshoot")
+                                onClicked: AppController.runDoctor()
+                            }
+                            // Stays paired, and stays disconnected until Reconnect (GitHub #48).
+                            Button {
+                                variant: "tonal"
+                                size: "sm"
+                                text: home.reconnect ? qsTr("Stop reconnecting") : qsTr("Reconnect")
+                                onClicked: AppController.setReconnect(home.deviceId, !home.reconnect)
+                            }
                         }
                     }
                 }

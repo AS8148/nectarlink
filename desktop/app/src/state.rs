@@ -115,6 +115,8 @@ pub struct DeviceView {
     pub link: LinkState,
     pub battery: Option<Battery>,
     pub power: PowerLevel,
+    /// Whether this PC reconnects to it by itself (`Node::set_reconnect`).
+    pub reconnect: bool,
 }
 
 impl From<PairedDevice> for DeviceView {
@@ -126,6 +128,7 @@ impl From<PairedDevice> for DeviceView {
             link: d.link,
             battery: None,
             power: PowerLevel::Basic,
+            reconnect: d.reconnect,
         }
     }
 }
@@ -415,6 +418,7 @@ impl AppState {
                 }
                 changes | self.set_media(*id, Vec::new())
             }
+            NodeEvent::ReconnectChanged { device, on } => self.update_device(device, |d| d.reconnect = *on),
             NodeEvent::LinkChanged { device, link } => {
                 let tier_or_path_changed = self.device(device).is_some_and(|d| {
                     !matches!(
@@ -1099,6 +1103,7 @@ mod tests {
             paired_at: at,
             link: LinkState::Offline { last_seen: None },
             can_wake: false,
+            reconnect: true,
         }
     }
 

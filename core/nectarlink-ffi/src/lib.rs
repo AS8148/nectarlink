@@ -138,6 +138,8 @@ pub struct PairedDevice {
     pub link: Link,
     /// Whether this phone has stored Wake-on-LAN addresses for this PC.
     pub can_wake: bool,
+    /// Whether this device reconnects to it by itself (`set_reconnect`).
+    pub reconnect: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -698,6 +700,12 @@ pub enum Event {
     WakeInfoChanged {
         id: String,
         can_wake: bool,
+    },
+    /// Reconnecting to a paired device by itself was turned off or back on
+    /// (`set_reconnect`).
+    ReconnectChanged {
+        id: String,
+        on: bool,
     },
     /// A paired PC's Deck layout arrived or changed (phones only).
     DeckLayout {
@@ -2034,6 +2042,7 @@ impl From<core::PairedDevice> for PairedDevice {
             paired_at: d.paired_at,
             link: d.link.into(),
             can_wake: d.can_wake,
+            reconnect: d.reconnect,
         }
     }
 }
@@ -2435,6 +2444,9 @@ impl Event {
             }
             NodeEvent::WakeInfoChanged { device, can_wake } => {
                 Event::WakeInfoChanged { id: device.to_string(), can_wake }
+            }
+            NodeEvent::ReconnectChanged { device, on } => {
+                Event::ReconnectChanged { id: device.to_string(), on }
             }
             NodeEvent::DeckLayout { device, layout } => {
                 Event::DeckLayout { id: device.to_string(), layout: layout.into() }
@@ -3262,6 +3274,10 @@ impl NectarlinkNode {
                                     id: d.id.to_string(),
                                     can_wake: d.can_wake,
                                 });
+                                listener.on_event(Event::ReconnectChanged {
+                                    id: d.id.to_string(),
+                                    on: d.reconnect,
+                                });
                                 listener.on_event(Event::PeerInfoChanged {
                                     id: d.id.to_string(),
                                     info: d.info.into(),
@@ -3375,6 +3391,13 @@ impl NectarlinkNode {
 
     pub fn set_device_toggle(&self, id: String, name: String, enabled: bool) -> Result<()> {
         Ok(self.node.set_device_toggle(parse_id(&id)?, &name, enabled)?)
+    }
+
+    /// Turns reconnecting to a paired device by itself off ("Stop
+    /// reconnecting": disconnects and stays disconnected, still paired) or
+    /// back on (dials it right away). Kept across restarts.
+    pub fn set_reconnect(&self, id: String, on: bool) -> Result<()> {
+        Ok(self.node.set_reconnect(parse_id(&id)?, on)?)
     }
 
     // ---- Files ----

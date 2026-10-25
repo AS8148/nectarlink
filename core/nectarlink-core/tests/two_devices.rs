@@ -1011,6 +1011,53 @@ async fn reconnects_after_a_restart() {
     with_timeout("ring after reconnect", pc.node.ring(phone_id, true)).await.expect("ring works again");
 }
 
+/// "Stop reconnecting" (GitHub #48): the device disconnects and stays
+/// disconnected, though the other side keeps dialing, across a restart too,
+/// until it's turned back on.
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_reconnecting_keeps_a_device_disconnected_until_turned_back_on() {
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = device("Pixel", DeviceKind::Phone).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+    let offline = |dev: &TestDevice| {
+        dev.node.paired_devices().unwrap().iter().all(|d| !matches!(d.link, LinkState::Online { .. }))
+    };
+
+    phone.node.set_reconnect(pc_id, false).unwrap();
+    wait_for(&mut phone, "reconnect off", |e| match e {
+        NodeEvent::ReconnectChanged { device, on: false } if *device == pc_id => Some(()),
+        _ => None,
+    })
+    .await;
+    wait_for(&mut pc, "peer offline", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == phone_id => Some(()),
+        _ => None,
+    })
+    .await;
+    assert!(!phone.node.paired_devices().unwrap()[0].reconnect);
+    assert!(pc.node.paired_devices().unwrap()[0].reconnect, "only the phone stopped");
+    // The PC dials again with its backoff (1 s, then 2 s); the phone refuses.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert!(offline(&pc) && offline(&phone), "still disconnected while the PC keeps dialing");
+
+    // Kept across a restart.
+    phone.node.shutdown().await;
+    let TestDevice { node: old_node, dir, .. } = phone;
+    drop(old_node);
+    let mut phone = start_in(dir, "Pixel", DeviceKind::Phone).await;
+    assert!(!phone.node.paired_devices().unwrap()[0].reconnect, "the setting survives a restart");
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert!(offline(&pc) && offline(&phone), "still disconnected after the restart");
+
+    // Reconnect: it dials right away.
+    phone.node.set_reconnect(pc_id, true).unwrap();
+    wait_online(&mut phone, pc_id).await;
+    wait_online(&mut pc, phone_id).await;
+    assert!(phone.node.paired_devices().unwrap()[0].reconnect);
+    with_timeout("ring after reconnecting", pc.node.ring(phone_id, true)).await.expect("ring works again");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_phone_stopped_and_started_again_in_the_same_process_reconnects() {
     // With its background connection off, the phone app stops the node when it goes to the

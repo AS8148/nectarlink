@@ -40,6 +40,9 @@ pub struct PairedDevice {
     /// Whether a stored Wake-on-LAN address (`pc.wake_info`) is available
     /// for this device.
     pub can_wake: bool,
+    /// Whether this device reconnects to it by itself (see
+    /// [`Node::set_reconnect`](crate::Node::set_reconnect)).
+    pub reconnect: bool,
 }
 
 /// A device found on the local network that could be paired with.
@@ -194,6 +197,12 @@ pub enum NodeEvent {
     WakeInfoChanged {
         device: DeviceId,
         can_wake: bool,
+    },
+    /// Reconnecting to a paired device by itself was turned off or back on
+    /// ([`Node::set_reconnect`](crate::Node::set_reconnect)).
+    ReconnectChanged {
+        device: DeviceId,
+        on: bool,
     },
     /// A paired PC's Deck layout arrived or changed (`docs/protocol/deck.md`).
     DeckLayout {

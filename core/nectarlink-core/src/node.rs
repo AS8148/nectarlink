@@ -43,6 +43,9 @@ use crate::{
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
+/// The per-device setting behind [`Node::set_reconnect`], on unless the user
+/// turned it off. Not one of the toggles the apps list.
+const RECONNECT_TOGGLE: &str = "reconnect";
 /// How long the device with the higher ID waits before dialing (see `maintain`).
 const DEFER_DIAL: Duration = Duration::from_millis(750);
 /// How long a phone plugged into a PC waits for the PC to dial through the cable before
@@ -519,6 +522,11 @@ impl Shared {
         lock(&self.sessions).values().filter(|s| s.is_alive()).cloned().collect()
     }
 
+    /// Whether this device reconnects to `peer` by itself (see [`Node::set_reconnect`]).
+    pub(crate) fn reconnects(&self, peer: &DeviceId) -> bool {
+        self.store.toggles(peer).ok().and_then(|t| t.get(RECONNECT_TOGGLE).copied()).unwrap_or(true)
+    }
+
     /// Whether a device toggle (see [`features::DEVICE_TOGGLES`]) is on for
     /// `peer`; unknown toggles are off.
     pub fn toggle_on(&self, peer: &DeviceId, toggle: &str) -> bool {
@@ -927,6 +935,7 @@ impl Shared {
             paired_at,
             link: LinkState::Offline { last_seen: None },
             can_wake: false,
+            reconnect: true,
         };
         self.emit(NodeEvent::DeviceAdded(device.clone()));
         self.emit(NodeEvent::Pairing(PairingEvent::Paired(device)));
@@ -1018,6 +1027,13 @@ impl Shared {
         if !self.is_connection_allowed(&conn) {
             tracing::debug!(peer = %peer.short(), "refusing session on non-LAN path while away_mode is off");
             conn.close(VarInt::from_u32(CLOSE_NORMAL), b"away mode disabled");
+            return None;
+        }
+        // Either side may have dialed: while the user has reconnecting off,
+        // this device stays disconnected from that one.
+        if !self.reconnects(&peer) {
+            tracing::debug!(peer = %peer.short(), "refusing session: reconnecting is off for this device");
+            conn.close(VarInt::from_u32(CLOSE_NORMAL), b"reconnect off");
             return None;
         }
         let mut sessions = lock(&self.sessions);
@@ -1233,6 +1249,18 @@ async fn maintain(shared: Weak<Shared>, peer: DeviceId, wake: Arc<Notify>, cance
         let Some(node) = shared.upgrade() else { return };
         if cancel.is_cancelled() {
             return;
+        }
+        // Reconnecting is off for this device: don't dial until the user
+        // turns it back on (which wakes this loop).
+        if node.session(&peer).is_none() && !node.reconnects(&peer) {
+            drop(node);
+            tokio::select! {
+                _ = wake.notified() => {}
+                _ = cancel.cancelled() => return,
+            }
+            backoff = BACKOFF_MIN;
+            waited_for_usb = false;
+            continue;
         }
         if node.session(&peer).is_none() && node.usb_tunnel_inbound(&peer) && !waited_for_usb {
             // Plugged in: the PC dials through the cable. Dial only if it hasn't by then.
@@ -1742,6 +1770,7 @@ impl Node {
             .map(|p| PairedDevice {
                 link: self.shared.link(&p.id, p.last_seen),
                 can_wake: p.wake_info.as_ref().is_some_and(|w| !w.macs.is_empty()),
+                reconnect: self.shared.reconnects(&p.id),
                 id: p.id,
                 info: p.info,
                 paired_at: p.paired_at,
@@ -1825,6 +1854,31 @@ impl Node {
             .iter()
             .map(|(name, default)| (*name, set.get(*name).copied().unwrap_or(*default)))
             .collect())
+    }
+
+    /// Turns reconnecting to a paired device by itself off or back on.
+    ///
+    /// Off ("Stop reconnecting"): this device disconnects from it if
+    /// connected, stops dialing it, and refuses its connections, until it's
+    /// turned back on. It stays paired, and the setting is kept across
+    /// restarts. On ("Reconnect"): it dials the device right away.
+    pub fn set_reconnect(&self, peer: DeviceId, on: bool) -> Result<()> {
+        if !self.shared.store.is_paired(&peer)? {
+            return Err(Error::NotPaired);
+        }
+        if self.shared.reconnects(&peer) == on {
+            return Ok(());
+        }
+        self.shared.store.set_toggle(&peer, RECONNECT_TOGGLE, on)?;
+        tracing::info!(peer = %peer.short(), on, "reconnecting");
+        if on {
+            lock(&self.shared.dial_failures).remove(&peer);
+            self.shared.wake_supervisor(&peer);
+        } else if let Some(session) = self.shared.session(&peer) {
+            session.close(CLOSE_NORMAL, b"reconnect off");
+        }
+        self.shared.emit(NodeEvent::ReconnectChanged { device: peer, on });
+        Ok(())
     }
 
     /// Allows or disallows something for one device, e.g. `"clipboard"`.

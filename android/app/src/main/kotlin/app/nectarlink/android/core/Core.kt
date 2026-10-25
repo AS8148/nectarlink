@@ -2268,6 +2268,17 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     // ---- Phone storage (File Explorer on PC) ----
 
     /** Turns phone storage access in File Explorer on or off for `pcId` (off by default). */
+    /** Stops reconnecting to a paired PC by itself ("Stop reconnecting"), or starts again. */
+    fun setReconnect(pcId: String, on: Boolean) {
+        _state.update { it.reduce(Event.ReconnectChanged(pcId, on)) }
+        scope.launch(Dispatchers.IO) {
+            startJob?.join()
+            val currentNode = node ?: return@launch
+            runCatching { currentNode.setReconnect(pcId, on) }
+                .onFailure { Log.w(TAG, "set reconnect failed", it) }
+        }
+    }
+
     fun setStorageEnabled(pcId: String, enabled: Boolean) {
         _state.update { it.withStorageEnabled(pcId, enabled) }
         scope.launch(Dispatchers.IO) {
