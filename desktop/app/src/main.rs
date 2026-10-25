@@ -567,9 +567,13 @@ fn main() -> ExitCode {
         tracing::error!(error = %e, "can't start the core runtime");
         return ExitCode::FAILURE;
     }
-    if let Some(node) = core_host::node() {
-        win::ble_beacon::start(node.device_id());
-    }
+    // The node starts in the background, so wait for it: the beacon carries
+    // its device ID.
+    core_host::spawn(async {
+        if let Some(node) = core_host::wait_for_node().await {
+            win::ble_beacon::start(node.device_id());
+        }
+    });
     core_host::host().hub.update(|s| {
         notification_store::load(&data_dir, s);
         state::Changes::APPS | state::Changes::HISTORY

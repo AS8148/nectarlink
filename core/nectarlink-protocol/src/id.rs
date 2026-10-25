@@ -92,6 +92,11 @@ mod tests {
     fn zbase32_matches_reference_vector() {
         // From the z-base-32 specification: 0xF0 0xBF 0xC7 -> "6n9hq".
         assert_eq!(ZBASE32.encode(&[0xF0, 0xBF, 0xC7]), "6n9hq");
+        // The Android app decodes IDs itself for its Bluetooth scan filter;
+        // its test uses this same ID (CompanionAndMigrationTest.kt).
+        let mut bytes = [0u8; 32];
+        bytes.iter_mut().enumerate().for_each(|(i, b)| *b = i as u8);
+        assert_eq!(DeviceId(bytes).to_string(), "yyyoryarywdyqnyjbefoadeqbhebnrounoktcfaadrpbs8y7daxo");
     }
 
     #[test]

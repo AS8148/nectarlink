@@ -1180,7 +1180,7 @@ private fun CompanionWakeAccess(
                 PcCompanion.requestAssociation(
                     activity = activity,
                     pcName = primaryPc?.name ?: "PC",
-                    pcDeviceIdHex = primaryPc?.id,
+                    pcDeviceId = primaryPc?.id,
                     onResult = { onAccessChanged() },
                     onLauncherFallback = { sender ->
                         runCatching {

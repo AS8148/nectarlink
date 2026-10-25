@@ -14,7 +14,8 @@ use std::{
 use nectarlink_core::DeviceId;
 use windows::{
     Devices::Bluetooth::Advertisement::{
-        BluetoothLEAdvertisementPublisher, BluetoothLEAdvertisementReceivedEventArgs,
+        BluetoothLEAdvertisementPublisher, BluetoothLEAdvertisementPublisherStatus,
+        BluetoothLEAdvertisementPublisherStatusChangedEventArgs, BluetoothLEAdvertisementReceivedEventArgs,
         BluetoothLEAdvertisementWatcher, BluetoothLEManufacturerData,
     },
     Foundation::TypedEventHandler,
@@ -98,14 +99,14 @@ pub fn build_manufacturer_payload(device_id: &DeviceId) -> [u8; 13] {
     out
 }
 
-/// Starts advertising the NectarLink BLE proximity beacon for `device_id` and
-/// watching for paired phone BLE proximity frames for RSSI walk-away ranging.
+/// Starts advertising the NectarLink BLE proximity beacon for `device_id`.
+///
+/// The RSSI watcher (`try_start_watcher`) stays off: phones don't broadcast a
+/// beacon yet, so it would scan all the time and only ever hear other PCs.
 pub fn start(device_id: DeviceId) {
+    // Phones find this PC by it ("Wake when PC is nearby"), so say when it can't run.
     if let Err(e) = try_start(&device_id) {
-        tracing::debug!(error = %e, "BLE beacon advertising unavailable on this PC");
-    }
-    if let Err(e) = try_start_watcher(device_id) {
-        tracing::debug!(error = %e, "BLE proximity RSSI watcher unavailable on this PC");
+        tracing::warn!(error = %e, "this PC can't broadcast its Bluetooth beacon");
     }
 }
 
@@ -132,6 +133,19 @@ fn try_start(device_id: &DeviceId) -> windows::core::Result<()> {
     let mfg_data = BluetoothLEManufacturerData::Create(COMPANY_ID, &buffer)?;
     let publisher = BluetoothLEAdvertisementPublisher::new()?;
     publisher.Advertisement()?.ManufacturerData()?.Append(&mfg_data)?;
+    // Windows can accept Start and stop a moment later (an adapter that can't
+    // advertise, Bluetooth turned off), so log why it stops.
+    publisher.StatusChanged(&TypedEventHandler::<
+        BluetoothLEAdvertisementPublisher,
+        BluetoothLEAdvertisementPublisherStatusChangedEventArgs,
+    >::new(|_, args| {
+        if let Some(args) = args.as_ref()
+            && args.Status()? == BluetoothLEAdvertisementPublisherStatus::Aborted
+        {
+            tracing::warn!(error = ?args.Error()?, "the Bluetooth beacon stopped");
+        }
+        Ok(())
+    }))?;
     publisher.Start()?;
 
     if let Ok(mut guard) = publisher_slot().lock()
@@ -139,7 +153,7 @@ fn try_start(device_id: &DeviceId) -> windows::core::Result<()> {
     {
         let _ = prev.Stop();
     }
-    tracing::debug!("started PC BLE proximity beacon");
+    tracing::info!("broadcasting the Bluetooth beacon");
     Ok(())
 }
 

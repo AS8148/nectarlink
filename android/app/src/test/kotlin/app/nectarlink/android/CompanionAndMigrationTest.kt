@@ -14,37 +14,41 @@ import org.junit.Test
 class CompanionAndMigrationTest {
 
     @Test
-    fun `PcCompanion buildBeaconPayload and buildBeaconMask encode 5-byte magic and 8-byte device ID prefix`() {
-        val hexId = "0123456789abcdef-fedcba9876543210"
-        val payload = PcCompanion.buildBeaconPayload(hexId)
-        assertEquals(13, payload.size)
+    fun `z-base-32 decodes like the core encodes device IDs`() {
+        // The z-base-32 specification's own example.
         assertArrayEquals(
-            byteArrayOf(
-                'N'.code.toByte(),
-                'C'.code.toByte(),
-                'T'.code.toByte(),
-                'R'.code.toByte(),
-                1,
-                0x01,
-                0x23,
-                0x45,
-                0x67,
-                0x89.toByte(),
-                0xAB.toByte(),
-                0xCD.toByte(),
-                0xEF.toByte(),
-            ),
-            payload,
+            byteArrayOf(0xF0.toByte(), 0xBF.toByte(), 0xC7.toByte()),
+            PcCompanion.decodeZBase32("6n9hq"),
         )
+        // The device ID whose 32 bytes are 0, 1, 2 ... 31, as the core writes it
+        // (pinned on the Rust side in core/nectarlink-protocol/src/id.rs).
+        assertArrayEquals(
+            ByteArray(32) { it.toByte() },
+            PcCompanion.decodeZBase32("yyyoryarywdyqnyjbefoadeqbhebnrounoktcfaadrpbs8y7daxo"),
+        )
+        assertEquals(null, PcCompanion.decodeZBase32("not-an-id"))
+    }
+
+    @Test
+    fun `the scan filter matches the beacon a PC broadcasts for its device ID`() {
+        // What desktop/app/src/win/ble_beacon.rs broadcasts: the magic, then the
+        // ID's first 8 bytes, here A5 3C 00 FF 12 34 56 78, which no hex reading of
+        // the ID could produce.
+        val id = "ww6yb9a1gtm8tgw4ukpjigw4ukpjigw4ukpjigw4ukpjigw4ukpy"
+        val broadcast = PcCompanion.BEACON_MAGIC + byteArrayOf(
+            0xA5.toByte(), 0x3C, 0x00, 0xFF.toByte(), 0x12, 0x34, 0x56, 0x78,
+        )
+        assertArrayEquals(broadcast, PcCompanion.buildBeaconPayload(id))
+        assertArrayEquals(broadcast, PcCompanion.buildBeaconPayload(id.uppercase()))
 
         val maskWithId = PcCompanion.buildBeaconMask(hasDeviceId = true)
         assertEquals(13, maskWithId.size)
         assertTrue(maskWithId.all { it == 0xFF.toByte() })
 
-        val shortPayload = PcCompanion.buildBeaconPayload("abcd")
-        assertArrayEquals(PcCompanion.BEACON_MAGIC, shortPayload)
+        // Not a device ID: match any NectarLink PC.
+        assertArrayEquals(PcCompanion.BEACON_MAGIC, PcCompanion.buildBeaconPayload("abcd"))
+        assertArrayEquals(PcCompanion.BEACON_MAGIC, PcCompanion.buildBeaconPayload("0123456789abcdef-fedcba9876543210"))
         assertArrayEquals(PcCompanion.BEACON_MAGIC, PcCompanion.buildBeaconPayload(null))
-
         val maskWithoutId = PcCompanion.buildBeaconMask(hasDeviceId = false)
         assertEquals(5, maskWithoutId.size)
         assertTrue(maskWithoutId.all { it == 0xFF.toByte() })
