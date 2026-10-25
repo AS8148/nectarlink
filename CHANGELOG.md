@@ -118,6 +118,10 @@ has a Stop button. Choosing another
 
 ### Fixed
 
+- **Wake when PC is nearby** never found the PC: the Windows app didn't
+  start its Bluetooth beacon, and the phone looked for the wrong bytes in
+  it. Both are fixed; the beacon comes from the Windows app for now
+  ([#47](https://github.com/thtbee/nectarlink/issues/47)).
 - With NectarLink in two profiles on one phone (a work profile, or a
   cloned app), only one of them could connect over USB, and the PC kept
   offering to pair the other. Each profile now connects over USB, and the
