@@ -115,8 +115,10 @@ update-desktop-database -q /usr/share/applications >/dev/null 2>&1 || :
 gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor >/dev/null 2>&1 || :
 EOF
 
-rpmbuild -bb \
+# Its own database: a Debian or Ubuntu host has no system one.
+rpmbuild -bb --quiet \
     --define "_topdir ${STAGE_DIR}/rpmbuild" \
+    --define "_dbpath ${STAGE_DIR}/rpmdb" \
     --define "_rpmfilename %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
     "${STAGE_DIR}/rpmbuild/SPECS/nectarlink.spec"
 

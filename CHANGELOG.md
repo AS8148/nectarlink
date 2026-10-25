@@ -9,8 +9,8 @@ change things that need a step from you, and its notes say so.
 ### New
 
 - **The PC app on Linux**, for Ubuntu 24.04 or newer, Debian 13, Fedora 40
-  or newer and other distributions from 2024 on, as a `.deb`, an AppImage
-  or a tarball. It does what the Windows app does: notifications with
+  or newer and other distributions from 2024 on, as a `.deb`, an `.rpm`,
+  an AppImage or a tarball. It does what the Windows app does: notifications with
   replies, messages and calls, the clipboard, files, your phone's storage
   in the file manager, photos, media controls, mirroring and phone apps in
   windows, your PC's screen on the phone, the phone as webcam and
@@ -24,6 +24,13 @@ change things that need a step from you, and its notes say so.
   [#42](https://github.com/thtbee/nectarlink/pull/42),
   [#43](https://github.com/thtbee/nectarlink/pull/43),
   [#44](https://github.com/thtbee/nectarlink/pull/44)).
+- **One command installs NectarLink on Linux** with everything it needs,
+  showing each step:
+  `curl -fsSL https://github.com/thtbee/nectarlink/releases/latest/download/install.sh | sh`.
+  It picks the package for your system, checks it against the release's
+  sums, installs it with its dependencies, and sets up the phone as webcam,
+  the phone as keyboard and mouse, and the firewall for your local network.
+  `--uninstall` removes it all again.
 - **The PC app on macOS, as a preview.** It builds and runs on macOS 14
   and later with pairing, files and folders, the photos browser,
   Continuity Camera, calls and SMS, the phone's toggles and volume,

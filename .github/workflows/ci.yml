@@ -186,6 +186,22 @@ jobs:
       - name: Release build
         run: cargo build --locked --release -p nectarlink-desktop -p nectarlink-vcam
 
+  linux-install:
+    name: Linux packages and install.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm shellcheck
+      - name: Check the scripts
+        run: |
+          shellcheck -s sh desktop/packaging/linux/install.sh
+          shellcheck desktop/packaging/linux/build-rpm.sh desktop/packaging/linux/test-install.sh
+      - name: Install and remove each package with install.sh
+        run: desktop/packaging/linux/test-install.sh
+
   android:
     name: Android app
     runs-on: ubuntu-latest

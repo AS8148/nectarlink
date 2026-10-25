@@ -40,11 +40,28 @@ of new features I wanted that I think you'll enjoy having too.
 |---|---|---|
 | **Windows (x64)** | [Installer (.exe)](https://github.com/thtbee/nectarlink/releases/download/v0.1.4/Nectarlink-0.1.4-x64-setup.exe) | Windows 11, 64-bit Intel or AMD |
 | **Windows (ARM64)** | From the next release | Windows 11 on ARM (Snapdragon) |
-| **Linux (x86_64)** | From the next release (.deb, AppImage and .tar.gz) | Ubuntu 24.04 or newer, Debian 13, Fedora 40 or newer, 64-bit Intel or AMD |
+| **Linux (x86_64)** | From the next release: [one command](#on-linux), or a .deb, .rpm, AppImage or .tar.gz | Ubuntu 24.04 or newer, Debian 13, Fedora 40 or newer, 64-bit Intel or AMD |
 | **Android** | [App (.apk)](https://github.com/thtbee/nectarlink/releases/download/v0.1.4/Nectarlink-0.1.4-android.apk) | Android 8.0 or newer |
 
 The apps update themselves from GitHub Releases and check every download
 against its SHA-256 sums.
+
+### On Linux
+
+From the next release, one command installs NectarLink with everything it
+needs, and shows each step as it goes:
+
+```bash
+curl -fsSL https://github.com/thtbee/nectarlink/releases/latest/download/install.sh | sh
+```
+
+It picks the package for your system (.deb with apt, .rpm with dnf or zypper,
+the tarball elsewhere), checks it against the release's SHA-256 sums and
+installs it with its dependencies. Then it sets up the phone as a webcam, the
+phone as a keyboard and mouse, and the firewall for your local network only.
+To remove it all again, end the same command with `sh -s -- --uninstall`
+instead of `sh`. See [Installing on Linux](docs/guide/getting-started.md#on-linux)
+for the details.
 
 > [!NOTE]
 > SmartScreen may warn about the Windows installer the first time, because it

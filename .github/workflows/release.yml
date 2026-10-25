@@ -111,7 +111,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config libgl1-mesa-dev libx11-dev libxcb1-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig1-dev \
-            libfreetype-dev libdbus-1-dev libxtst-dev file desktop-file-utils appstream
+            libfreetype-dev libdbus-1-dev libxtst-dev file desktop-file-utils appstream rpm shellcheck
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -139,14 +139,18 @@ jobs:
         run: |
           desktop-file-validate desktop/packaging/linux/nectarlink.desktop
           appstreamcli validate --no-net desktop/packaging/linux/org.nectarlink.desktop.metainfo.xml
-      - name: Build and package (.deb, AppImage, tarball)
+      - name: Check the install script
+        run: shellcheck -s sh desktop/packaging/linux/install.sh
+      - name: Build and package (.deb, .rpm, AppImage, tarball)
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           cargo build --release -p nectarlink-desktop
           ./desktop/packaging/linux/build-deb.sh
+          ./desktop/packaging/linux/build-rpm.sh
           ./desktop/packaging/linux/build-appimage.sh
           ./desktop/packaging/linux/build-tarball.sh
+          cp desktop/packaging/linux/install.sh dist/install.sh
       - name: Check that each package starts
         # A package that doesn't start must not reach a release. The .deb goes
         # into a clean Ubuntu 24.04, the oldest system the build supports.
@@ -155,16 +159,37 @@ jobs:
             apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends /dist/*.deb >/dev/null
             nectarlink-desktop --version'
+          docker run --rm -v "$PWD/dist:/dist:ro" fedora:40 bash -euc '
+            dnf install -y -q --nogpgcheck /dist/*.rpm >/dev/null
+            nectarlink-desktop --version'
           APPIMAGE_EXTRACT_AND_RUN=1 ./dist/*.AppImage --version
           mkdir -p /tmp/tarball && tar -xzf dist/*.tar.gz -C /tmp/tarball
           /tmp/tarball/*/nectarlink-desktop --version
+      - name: Check that install.sh installs and removes each package
+        # The one-line install, from these files instead of GitHub: the .deb on
+        # Ubuntu, the .rpm on Fedora, and the tarball in a home folder.
+        run: |
+          (cd dist && sha256sum *.deb *.rpm *.tar.gz > SHA256SUMS.txt)
+          for image in ubuntu:24.04 fedora:40; do
+            docker run --rm -v "$PWD/dist:/dist:ro" -e NECTARLINK_ASSETS_DIR=/dist "$image" sh -euc '
+              sh /dist/install.sh
+              nectarlink-desktop --version
+              sh /dist/install.sh --uninstall
+              ! command -v nectarlink-desktop'
+          done
+          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:24.04 sh -euc '
+            useradd -m user
+            su user -c "NECTARLINK_ASSETS_DIR=/dist sh /dist/install.sh && ~/.local/bin/nectarlink-desktop --version"'
+          rm dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: |
             dist/*.deb
+            dist/*.rpm
             dist/*.AppImage
             dist/*.tar.gz
+            dist/install.sh
 
   android:
     name: Android app (signed)
@@ -238,7 +263,7 @@ jobs:
           name=$(awk '/^\[workspace.metadata.release\]/{f=1;next} /^\[/{f=0} f && /^name = /{print $3}' source/Cargo.toml | tr -d '"')
           title="NectarLink ${GITHUB_REF_NAME#v}${name:+ $name}"
           cd files
-          sha256sum *.exe *.deb *.AppImage *.tar.gz *.apk > SHA256SUMS.txt
+          sha256sum *.exe *.deb *.rpm *.AppImage *.tar.gz *.apk install.sh > SHA256SUMS.txt
           cat SHA256SUMS.txt
           # The notes: this version's section of CHANGELOG.md ("## <version> ..."),
           # with its wrapped lines joined, or GitHub's generated notes when
@@ -246,5 +271,5 @@ jobs:
           awk -v v="${GITHUB_REF_NAME#v}" '$1=="##" && $2==v {f=1; next} f && /^## / {exit} f' \
             ../source/CHANGELOG.md | awk -f ../source/.github/scripts/unwrap-notes.awk > notes.md || true
           if [ -s notes.md ]; then notes=(--notes-file notes.md); else notes=(--generate-notes); fi
-          gh release create "${{ github.ref_name }}" *.exe *.deb *.AppImage *.tar.gz *.apk SHA256SUMS.txt \
+          gh release create "${{ github.ref_name }}" *.exe *.deb *.rpm *.AppImage *.tar.gz *.apk install.sh SHA256SUMS.txt \
             --repo "${{ github.repository }}" --draft "${notes[@]}" --title "$title"

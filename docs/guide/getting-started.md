@@ -1,12 +1,13 @@
 # Getting Started
 
-This guide walks you through installing NectarLink on Windows 11 and Android, completing the first-run setup walkthrough, pairing your devices, and choosing the Android power level that fits how you work.
+This guide walks you through installing NectarLink on Windows 11, Linux and Android, completing the first-run setup walkthrough, pairing your devices, and choosing the Android power level that fits how you work.
 
 ## System Requirements
 
 | Platform | Minimum Version | Notes |
 | :--- | :--- | :--- |
 | **Windows PC** | Windows 11 (build 22000 or newer, 64-bit) | Required for Mica backdrop, Windows Cloud Files (`cfapi`) storage mounting, and the `MFCreateVirtualCamera` webcam add-on. |
+| **Linux PC** | Ubuntu 24.04 or newer, Debian 13, Fedora 40 or newer, or another distribution from 2024 on (glibc 2.39 or newer), 64-bit Intel or AMD | X11 or Wayland. The phone as a webcam needs the `v4l2loopback` driver, which the install command sets up. |
 | **Android Phone or Tablet** | Android 8.0 (API 26) or newer | Android 10+ required for internal audio capture during mirroring; Android 11+ required for on-device Wireless Debugging (`Elevated`) and `app window` streaming; Android 12+ required for `Elevated` in-call mute/hold/speaker controls. |
 | **Network** | Shared Wi-Fi / LAN, USB cable, or **Connect over mobile data** | By default, all device-to-device traffic travels directly over your local network or a USB data cable without leaving your LAN (installed copies only contact GitHub Releases over HTTPS to check for app updates; see [Privacy and Security](privacy-and-security.md)). |
 
@@ -19,6 +20,29 @@ This guide walks you through installing NectarLink on Windows 11 and Android, co
 3. Click **Install** and allow the administrator prompt. Setup installs NectarLink, registers the required Windows Firewall rule for local QUIC discovery and connections, adds Start Menu and desktop shortcuts, and sets NectarLink to start in the system tray when you sign in (turn this off with **Start with Windows** in **Settings › General**). **What this installs** on the first screen lists everything it adds.
 4. The last screen shows a QR code for the Android app's download page. Scan it with your phone's camera, then click **Open NectarLink**.
 
+### On Linux
+
+Open a terminal and run:
+
+```bash
+curl -fsSL https://github.com/thtbee/nectarlink/releases/latest/download/install.sh | sh
+```
+
+It shows each step as it runs, and `sudo` asks for your password once. It:
+
+1. Checks that your system can run NectarLink.
+2. Downloads the package for your system (a `.deb` with apt on Ubuntu and Debian, an `.rpm` with dnf on Fedora or zypper on openSUSE, the tarball elsewhere) and checks it against the release's `SHA256SUMS.txt`. If it doesn't match, nothing is installed.
+3. Installs it with the libraries and tools it needs, and adds NectarLink to your app menu.
+4. Sets up the phone as a webcam: installs the `v4l2loopback` driver and loads it as **NectarLink Webcam**, now and at every start. On Fedora the driver comes from RPM Fusion, which the installer doesn't add for you; it tells you how. With Secure Boot on, it also tells you how to enroll the driver's key.
+5. Lets the phone type and move the pointer: a udev rule gives the signed-in user access to `/dev/uinput`, as game controller drivers do.
+6. Opens NectarLink's ports (7718, mDNS on 5353, and LocalSend on 53317) in ufw or firewalld, to your local network only.
+
+To install only the app, end the command with `sh -s -- --no-extras` instead of `sh`. Without `sudo` or `doas`, it installs the tarball in your home folder and skips steps 4 to 6.
+
+You can also download a package from the GitHub Releases page yourself: `nectarlink_<version>_amd64.deb`, `nectarlink-<version>-1.x86_64.rpm`, `Nectarlink-<version>-x86_64.AppImage`, or `Nectarlink-<version>-linux-x86_64.tar.gz` (run its `install.sh`). The AppImage adds itself to your app menu the first time it runs. **Connection Doctor** in NectarLink's **Settings › Connection & About** finds anything still missing for the webcam, input or firewall and says how to fix it.
+
+Each kind of install updates itself the same way it was installed.
+
 ### On Android
 
 1. Download `Nectarlink-<version>-android.apk` from the GitHub Releases page (or scan the QR code shown when Windows setup finishes, or in the PC walkthrough).
@@ -30,6 +54,7 @@ This guide walks you through installing NectarLink on Windows 11 and Android, co
 ### Uninstalling
 
 - **Windows:** open **Settings › Apps › Installed apps**, choose **NectarLink**, then **Uninstall**. This removes the app, its firewall rule, update task, shortcuts and Share sheet entry, and deletes its settings and pairings on this PC. Files you received and voice recordings stay where they were saved.
+- **Linux:** run `curl -fsSL https://github.com/thtbee/nectarlink/releases/latest/download/install.sh | sh -s -- --uninstall`. This removes the app however it was installed, its webcam, input and firewall settings, its menu entry and starting with your computer. Your settings and pairings stay in `~/.local/share/Nectarlink`; delete that folder to remove them too. An AppImage is removed by deleting the file.
 - **Android:** uninstall it like any other app.
 
 ## First-Run Setup Walkthrough
