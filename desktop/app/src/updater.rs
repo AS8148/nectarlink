@@ -242,7 +242,8 @@ const TARBALL_SUFFIXES: &[&str] = if cfg!(target_arch = "aarch64") {
 // An RPM install only takes an RPM: a tarball would land in /opt as a
 // second copy beside the package.
 #[cfg(target_os = "linux")]
-const RPM_SUFFIXES: &[&str] = if cfg!(target_arch = "aarch64") { &[".aarch64.rpm"] } else { &[".x86_64.rpm"] };
+const RPM_SUFFIXES: &[&str] =
+    if cfg!(target_arch = "aarch64") { &[".aarch64.rpm"] } else { &[".x86_64.rpm"] };
 
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -907,7 +908,7 @@ apt-get install -y -- \"$dst\" || dpkg -i -- \"$dst\"\n";
 
 /// Installs the RPM in `$1` with whichever package manager the system has.
 /// Its SHA-256 is checked before this runs; release RPMs aren't GPG-signed.
-#[cfg(target_os = "linux")]
+#[cfg(not(windows))]
 const RPM_INSTALL_COMMAND: &str = "\
 if command -v dnf >/dev/null 2>&1; then dnf install -y --nogpgcheck -- \"$1\"; \
 elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive --no-gpg-checks install -- \"$1\"; \

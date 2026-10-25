@@ -448,7 +448,7 @@ remember_firewall() {
     if [ "$(id -u)" -eq 0 ] && [ "$TARGET_USER" != "root" ]; then
         su -s /bin/sh "$TARGET_USER" -c "mkdir -p '$dir' && printf '$DATA_PORT\n' > '$dir/firewall_verified'" 2>/dev/null || true
     elif [ "$(id -u)" -ne 0 ]; then
-        mkdir -p "$dir" && printf '%s\n' "$DATA_PORT" > "$dir/firewall_verified" || true
+        if mkdir -p "$dir"; then printf '%s\n' "$DATA_PORT" > "$dir/firewall_verified" || true; fi
     fi
 }
 
