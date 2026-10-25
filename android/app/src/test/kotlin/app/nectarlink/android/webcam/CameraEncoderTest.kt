@@ -1,43 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package app.nectarlink.android.webcam
 
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class CameraEncoderTest {
-    @Test
-    fun `HEVC keyframes carry VPS SPS PPS and a codec specific AUD`() {
-        val parameters = byteArrayOf(0, 0, 0, 1, 0x40, 1, 0x11, 0, 0, 0, 1, 0x42, 1, 0x22, 0, 0, 0, 1, 0x44, 1, 0x33)
-        val idr = byteArrayOf(0, 0, 0, 1, 0x26, 1, 0x55)
-        val aud = CameraEncoder.HEVC_AUD_NAL
-        assertArrayEquals(aud + parameters + idr, CameraEncoder.ensureAudAndParameters(idr, parameters, true, "h265"))
-        assertArrayEquals(aud + parameters + idr, CameraEncoder.ensureAudAndParameters(aud + idr, aud + parameters, true, "h265"))
-        val shortAud = byteArrayOf(0, 0, 1, 0x46, 1, 0x50)
-        assertArrayEquals(aud + idr, CameraEncoder.ensureAudAndParameters(shortAud + idr, parameters, false, "h265"))
-        // Parameter-set headers must survive; HEVC types use different bits from AVC.
-        assertArrayEquals(aud + parameters, CameraEncoder.ensureAudAndParameters(parameters, byteArrayOf(), false, "h265"))
-    }
-
-    @Test
-    fun `prepends AUD and SPS PPS to keyframes and avoids duplicate AUD`() {
-        val spsPps = byteArrayOf(0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x00, 0x00, 0x01, 0x68, 0x11)
-        val idrSlice = byteArrayOf(0x00, 0x00, 0x00, 0x01, 0x65, 0xAA.toByte())
-
-        val keyOut = CameraEncoder.ensureAudAndParameters(idrSlice, spsPps, isKeyframe = true)
-        assertArrayEquals(CameraEncoder.AUD_NAL + spsPps + idrSlice, keyOut)
-
-        // When the encoder already emitted an AUD at the front of the slice, it is not duplicated.
-        val idrWithAud = CameraEncoder.AUD_NAL + idrSlice
-        val keyDedup = CameraEncoder.ensureAudAndParameters(idrWithAud, spsPps, isKeyframe = true)
-        assertArrayEquals(CameraEncoder.AUD_NAL + spsPps + idrSlice, keyDedup)
-
-        // Non-keyframe gets AUD prepended without SPS/PPS.
-        val pSlice = byteArrayOf(0x00, 0x00, 0x00, 0x01, 0x41, 0x55)
-        val pOut = CameraEncoder.ensureAudAndParameters(pSlice, spsPps, isKeyframe = false)
-        assertArrayEquals(CameraEncoder.AUD_NAL + pSlice, pOut)
-    }
-
     @Test
     fun `normalizes resolution height and selects matching width and bitrate`() {
         assertEquals(720, CameraEncoder.normalizeHeight(720, supports4k = false))

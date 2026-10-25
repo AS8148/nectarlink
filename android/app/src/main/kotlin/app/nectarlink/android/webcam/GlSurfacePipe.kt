@@ -13,9 +13,6 @@ import android.opengl.GLES20
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.FloatBuffer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -45,6 +42,7 @@ internal class GlSurfacePipe(
     @Volatile private var released = false
 
     private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
+    private var eglConfig: EGLConfig? = null
     private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
     private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
     private var oesTexId: Int = 0
@@ -58,10 +56,18 @@ internal class GlSurfacePipe(
         private set
 
     private val stMatrix = FloatArray(16)
-    private val quadBuffer: FloatBuffer = ByteBuffer
-        .allocateDirect(4 * 4 * 4)
-        .order(ByteOrder.nativeOrder())
-        .asFloatBuffer()
+    private val quad = FrameQuad(srcWidth, srcHeight, dstWidth, dstHeight)
+    private var lastTimestampNs = Long.MIN_VALUE
+    @Volatile private var previewTarget: WebcamPreviewTarget? = null
+    private var previewWindow = EGL14.EGL_NO_SURFACE
+    private var previewWindowTarget: WebcamPreviewTarget? = null
+    private var previewQuad: FrameQuad? = null
+
+    fun setPreviewTarget(target: WebcamPreviewTarget?) {
+        if (released) return
+        previewTarget = target
+        if (target == null) handler.post { if (previewTarget == null) releasePreviewWindow() }
+    }
 
     init {
         val ready = CountDownLatch(1)
@@ -91,7 +97,8 @@ internal class GlSurfacePipe(
 
     override fun onFrameAvailable(st: SurfaceTexture?) {
         if (released) return
-        handler.post { drawFrame() }
+        // SurfaceTexture dispatches this callback on our GL handler already.
+        drawFrame()
     }
 
     fun release() {
@@ -127,6 +134,7 @@ internal class GlSurfacePipe(
         val numConfigs = IntArray(1)
         EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0)
         val config = configs[0] ?: return
+        eglConfig = config
 
         val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
         eglContext = EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, ctxAttribs, 0)
@@ -157,6 +165,7 @@ internal class GlSurfacePipe(
     }
 
     private fun drawFrame() {
+        if (released) return
         val st = surfaceTexture ?: return
         if (eglDisplay === EGL14.EGL_NO_DISPLAY || eglSurface === EGL14.EGL_NO_SURFACE) return
 
@@ -165,11 +174,11 @@ internal class GlSurfacePipe(
             st.getTransformMatrix(stMatrix)
         }.onFailure { return }
 
+        val tsNs = st.timestamp
+        if (tsNs == lastTimestampNs) return
+
         // stMatrix is column-major 4x4: stMatrix[0] is dU/dX, stMatrix[1] is dV/dX.
         val stSwapsAxes = kotlin.math.abs(stMatrix[1]) > kotlin.math.abs(stMatrix[0])
-        // Dimensions of the image in UV space AFTER stMatrix is applied:
-        val uvWidth = if (stSwapsAxes) srcHeight.toFloat() else srcWidth.toFloat()
-        val uvHeight = if (stSwapsAxes) srcWidth.toFloat() else srcHeight.toFloat()
         // If stMatrix already rotated the sensor to Surface.ROTATION_0, we only need
         // to compensate for displayRotationDegrees (0 in portrait, 90 in landscape-left,
         // 270 in landscape-right, 180 upside-down). Otherwise apply sensorRotationDegrees.
@@ -179,103 +188,68 @@ internal class GlSurfacePipe(
             ((sensorRotationDegrees % 360) + 360) % 360
         }
 
-        val uprightWidth = if (effectiveRot % 180 != 0) uvHeight else uvWidth
-        val uprightHeight = if (effectiveRot % 180 != 0) uvWidth else uvHeight
-        val srcAspect = (uprightWidth / uprightHeight.coerceAtLeast(1f)).coerceAtLeast(0.01f)
-        val dstAspect = (dstWidth.toFloat() / dstHeight.coerceAtLeast(1).toFloat()).coerceAtLeast(0.01f)
+        quad.update(effectiveRot, stSwapsAxes, mirrorHorizontally && !stSwapsAxes)
 
-        // Aspect-preserving FIT_CENTER vertex positions so the camera frame is never stretched:
-        val posScaleX: Float
-        val posScaleY: Float
-        if (srcAspect > dstAspect) {
-            posScaleX = 1f
-            posScaleY = dstAspect / srcAspect
-        } else {
-            posScaleX = srcAspect / dstAspect
-            posScaleY = 1f
+        if (renderSurface(eglSurface, dstWidth, dstHeight, quad, tsNs)) lastTimestampNs = tsNs
+
+        val target = previewTarget
+        try {
+            if (target == null || !target.surface.isValid) {
+                releasePreviewWindow()
+                return
+            }
+            if (previewWindowTarget !== target) {
+                releasePreviewWindow()
+                previewWindow = EGL14.eglCreateWindowSurface(eglDisplay, eglConfig, target.surface, intArrayOf(EGL14.EGL_NONE), 0)
+                if (previewWindow === EGL14.EGL_NO_SURFACE) return
+                previewWindowTarget = target
+                previewQuad = FrameQuad(srcWidth, srcHeight, target.width, target.height, fitCenter = false)
+            }
+            val localQuad = previewQuad ?: return
+            localQuad.update(effectiveRot, stSwapsAxes, mirrorHorizontally && !stSwapsAxes)
+            if (!renderSurface(previewWindow, target.width, target.height, localQuad, tsNs)) releasePreviewWindow()
+        } catch (_: Exception) {
+            // A disappearing display must never end the encoder stream.
+            releasePreviewWindow()
+        } finally {
+            EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
         }
+    }
 
-        updateQuadVertices(effectiveRot, posScaleX, posScaleY, mirrorHorizontally && !stSwapsAxes)
-
-        GLES20.glViewport(0, 0, dstWidth, dstHeight)
+    private fun renderSurface(surface: EGLSurface, width: Int, height: Int, geometry: FrameQuad, timestampNs: Long): Boolean {
+        if (!EGL14.eglMakeCurrent(eglDisplay, surface, surface, eglContext)) return false
+        GLES20.glViewport(0, 0, width, height)
         GLES20.glClearColor(0.07f, 0.075f, 0.09f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexId)
         GLES20.glUniformMatrix4fv(uStMatrixLoc, 1, false, stMatrix, 0)
-
-        quadBuffer.position(0)
-        GLES20.glVertexAttribPointer(aPositionLoc, 2, GLES20.GL_FLOAT, false, 16, quadBuffer)
+        val vertices = geometry.buffer
+        vertices.position(0)
+        GLES20.glVertexAttribPointer(aPositionLoc, 2, GLES20.GL_FLOAT, false, 16, vertices)
         GLES20.glEnableVertexAttribArray(aPositionLoc)
-
-        quadBuffer.position(2)
-        GLES20.glVertexAttribPointer(aTexCoordLoc, 2, GLES20.GL_FLOAT, false, 16, quadBuffer)
+        vertices.position(2)
+        GLES20.glVertexAttribPointer(aTexCoordLoc, 2, GLES20.GL_FLOAT, false, 16, vertices)
         GLES20.glEnableVertexAttribArray(aTexCoordLoc)
-
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-
-        val tsNs = st.timestamp
-        if (tsNs > 0L) {
-            EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, tsNs)
-        }
-        EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+        if (timestampNs > 0L) EGLExt.eglPresentationTimeANDROID(eglDisplay, surface, timestampNs)
+        return EGL14.eglSwapBuffers(eglDisplay, surface)
     }
 
-    private fun updateQuadVertices(
-        effectiveRot: Int,
-        posScaleX: Float,
-        posScaleY: Float,
-        mirror: Boolean,
-    ) {
-        val sx = if (mirror) -posScaleX else posScaleX
-        val sy = posScaleY
-        val posX = floatArrayOf(-sx, sx, -sx, sx)
-        val posY = floatArrayOf(-sy, -sy, sy, sy)
-
-        // Base UV corners: bl = (0f, 0f), br = (1f, 0f), tl = (0f, 1f), tr = (1f, 1f)
-        // Surface.ROTATION_90 (standard landscape, phone rotated 90° CCW) puts phone's
-        // top edge on the left and right edge on the top: bottom-left is tl, bottom-right
-        // is bl, top-left is tr, top-right is br.
-        val uvs = when (((effectiveRot % 360) + 360) % 360) {
-            90 -> floatArrayOf(
-                0f, 1f, // uv0 = tl
-                0f, 0f, // uv1 = bl
-                1f, 1f, // uv2 = tr
-                1f, 0f, // uv3 = br
-            )
-            180 -> floatArrayOf(
-                1f, 1f, // uv0 = tr
-                0f, 1f, // uv1 = tl
-                1f, 0f, // uv2 = br
-                0f, 0f, // uv3 = bl
-            )
-            270 -> floatArrayOf(
-                1f, 0f, // uv0 = br
-                1f, 1f, // uv1 = tr
-                0f, 0f, // uv2 = bl
-                0f, 1f, // uv3 = tl
-            )
-            else -> floatArrayOf(
-                0f, 0f, // uv0 = bl
-                1f, 0f, // uv1 = br
-                0f, 1f, // uv2 = tl
-                1f, 1f, // uv3 = tr
-            )
+    private fun releasePreviewWindow() {
+        if (previewWindow !== EGL14.EGL_NO_SURFACE) {
+            EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+            EGL14.eglDestroySurface(eglDisplay, previewWindow)
         }
-
-        quadBuffer.position(0)
-        for (i in 0 until 4) {
-            quadBuffer.put(posX[i])
-            quadBuffer.put(posY[i])
-            quadBuffer.put(uvs[i * 2])
-            quadBuffer.put(uvs[i * 2 + 1])
-        }
-        quadBuffer.position(0)
+        previewWindow = EGL14.EGL_NO_SURFACE
+        previewWindowTarget = null
+        previewQuad = null
     }
 
     private fun releaseGl() {
+        previewTarget = null
+        releasePreviewWindow()
         runCatching { inputSurface?.release() }
         inputSurface = null
         runCatching {

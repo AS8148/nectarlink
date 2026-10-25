@@ -455,12 +455,6 @@ fn refresh_idle_frame() {
     }
 }
 
-/// Marks whether the Settings webcam preview is on screen so the idle
-/// placeholder image is only held while needed.
-pub fn set_preview_active(active: bool) {
-    set_preview_demand(1, active);
-}
-
 /// Each view owns its request so hiding one cannot turn off another visible
 /// preview. Window visibility participates in the QML demand expression.
 pub fn set_preview_visible(owner: &str, active: bool) {

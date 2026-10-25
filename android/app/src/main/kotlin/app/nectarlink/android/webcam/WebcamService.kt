@@ -14,7 +14,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import androidx.camera.core.Preview
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -200,7 +199,7 @@ class WebcamService : LifecycleService() {
                         }
                     },
                 )
-                camEncoder.setUiSurfaceProvider(uiSurfaceProvider)
+                camEncoder.setUiPreview(uiPreviewTarget)
                 encoder = camEncoder
                 camEncoder.start()
             }
@@ -287,7 +286,7 @@ class WebcamService : LifecycleService() {
         private const val EXTRA_CAMERA = "camera"
 
         @Volatile private var current: WebcamService? = null
-        @Volatile private var uiSurfaceProvider: Preview.SurfaceProvider? = null
+        @Volatile private var uiPreviewTarget: WebcamPreviewTarget? = null
 
         private val _session = MutableStateFlow(WebcamSession())
         val session: StateFlow<WebcamSession> = _session.asStateFlow()
@@ -381,9 +380,9 @@ class WebcamService : LifecycleService() {
             current?.encoder?.setTorch(on)
         }
 
-        fun attachUiPreview(provider: Preview.SurfaceProvider?) {
-            uiSurfaceProvider = provider
-            current?.encoder?.setUiSurfaceProvider(provider)
+        internal fun attachUiPreview(target: WebcamPreviewTarget?) {
+            uiPreviewTarget = target
+            current?.encoder?.setUiPreview(target)
         }
 
         fun createChannel(context: Context) {
