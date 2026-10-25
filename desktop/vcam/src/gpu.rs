@@ -926,7 +926,12 @@ mod tests {
         }
     }
 
+    // These integration tests exercise driver-dependent D3D11 sharing and video
+    // processing. Run them explicitly on a GPU-equipped Windows machine with:
+    // cargo test -p nectarlink-vcam --lib -- --include-ignored
+
     #[test]
+    #[ignore = "requires D3D11 cross-process texture sharing"]
     fn shared_gpu_cpu_output_contention_stop_and_padded_height() {
         let (mut publisher, mut reader) = pair();
         let device = device().unwrap();
@@ -979,6 +984,7 @@ mod tests {
         assert!(data[160 * 120..].iter().all(|b| *b == 128));
     }
     #[test]
+    #[ignore = "requires D3D11 cross-process texture sharing"]
     fn nonstandard_colors_and_scaled_rgb_clients_keep_a_cpu_fallback() {
         let (mut publisher, mut reader) = pair();
         let producer = device().unwrap();
@@ -997,6 +1003,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires D3D11 shared textures and GPU video scaling"]
     fn gpu_video_scaling_keeps_pixels_on_gpu_and_letterboxes() {
         let (mut publisher, mut reader) = pair();
         let producer = device().unwrap();
@@ -1076,6 +1083,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires D3D11 cross-process texture sharing"]
     fn separate_process_opens_and_verifies_shared_gpu_frames() {
         let name = format!("Local\\NectarlinkGpuCrossProcess_{}", std::process::id());
         let mut reader = reader_with_mapping(&name);
@@ -1103,6 +1111,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires D3D11 cross-process texture sharing"]
     fn native_nv12_scaling_and_letterbox_avoid_rgb_materialization() {
         let (mut publisher, mut reader) = pair();
         let producer = device().unwrap();
