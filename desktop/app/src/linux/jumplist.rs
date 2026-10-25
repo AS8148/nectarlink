@@ -53,6 +53,8 @@ pub fn register(custom_data_dir: Option<&Path>) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
+    // An AppImage puts itself in the app menu this way, by its own path.
+    let exe = super::autostart::launcher(&exe);
     let Some(apps_dir) = applications_dir() else {
         return;
     };

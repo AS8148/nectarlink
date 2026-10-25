@@ -239,11 +239,17 @@ const TARBALL_SUFFIXES: &[&str] = if cfg!(target_arch = "aarch64") {
     &["-linux-x86_64.tar.gz", "_amd64.deb", "-x86_64.AppImage"]
 };
 
+// An RPM install only takes an RPM: a tarball would land in /opt as a
+// second copy beside the package.
+#[cfg(target_os = "linux")]
+const RPM_SUFFIXES: &[&str] = if cfg!(target_arch = "aarch64") { &[".aarch64.rpm"] } else { &[".x86_64.rpm"] };
+
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LinuxInstallKind {
     AppImage,
     Deb,
+    Rpm,
     Tarball,
 }
 
@@ -260,12 +266,28 @@ fn detect_linux_install_kind() -> LinuxInstallKind {
             return LinuxInstallKind::Tarball;
         }
     }
-    if Path::new("/var/lib/dpkg/info/nectarlink.list").is_file()
-        || Path::new("/var/lib/dpkg/status").is_file()
-    {
+    if Path::new("/var/lib/dpkg/info/nectarlink.list").is_file() {
+        return LinuxInstallKind::Deb;
+    }
+    if rpm_installed() {
+        return LinuxInstallKind::Rpm;
+    }
+    if Path::new("/var/lib/dpkg/status").is_file() {
         return LinuxInstallKind::Deb;
     }
     LinuxInstallKind::Tarball
+}
+
+/// Whether the `nectarlink` RPM package is installed.
+#[cfg(target_os = "linux")]
+fn rpm_installed() -> bool {
+    std::process::Command::new("rpm")
+        .args(["-q", "--quiet", "nectarlink"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// The release as an update, if it's a newer published one with an
@@ -297,6 +319,7 @@ fn newer_release_linux_kind(release: Release, current: &str, kind: LinuxInstallK
     let suffixes = match kind {
         LinuxInstallKind::AppImage => APPIMAGE_SUFFIXES,
         LinuxInstallKind::Deb => DEB_SUFFIXES,
+        LinuxInstallKind::Rpm => RPM_SUFFIXES,
         LinuxInstallKind::Tarball => TARBALL_SUFFIXES,
     };
     for &suffix in suffixes {
@@ -727,6 +750,14 @@ pub fn run_service() -> ExitCode {
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()
+        } else if name.ends_with(".rpm") {
+            std::process::Command::new("sh")
+                .args(["-c", RPM_INSTALL_COMMAND, "sh"])
+                .arg(&path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
         } else if name.ends_with(".tar.gz") {
             std::process::Command::new("sh")
                 .args([
@@ -874,6 +905,29 @@ install -m 0600 -o 0 -g 0 \"$1\" \"$dst\"\n\
 printf '%s  %s\\n' \"$2\" \"$dst\" | sha256sum -c --status -\n\
 apt-get install -y -- \"$dst\" || dpkg -i -- \"$dst\"\n";
 
+/// Installs the RPM in `$1` with whichever package manager the system has.
+/// Its SHA-256 is checked before this runs; release RPMs aren't GPG-signed.
+#[cfg(target_os = "linux")]
+const RPM_INSTALL_COMMAND: &str = "\
+if command -v dnf >/dev/null 2>&1; then dnf install -y --nogpgcheck -- \"$1\"; \
+elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive --no-gpg-checks install -- \"$1\"; \
+else rpm -U --replacepkgs -- \"$1\"; fi";
+
+/// The `.rpm` counterpart of [`PRIVILEGED_DEB_INSTALL_SCRIPT`].
+#[cfg(target_os = "linux")]
+const PRIVILEGED_RPM_INSTALL_SCRIPT: &str = "\
+dir=\"/var/cache/nectarlink-update\"\n\
+rm -rf -- \"$dir\"\n\
+install -d -m 0700 -o 0 -g 0 \"$dir\"\n\
+trap 'rm -rf -- \"$dir\"' EXIT\n\
+dst=\"$dir/nectarlink-update.rpm\"\n\
+install -m 0600 -o 0 -g 0 \"$1\" \"$dst\"\n\
+printf '%s  %s\\n' \"$2\" \"$dst\" | sha256sum -c --status -\n\
+set -- \"$dst\"\n\
+if command -v dnf >/dev/null 2>&1; then dnf install -y --nogpgcheck -- \"$1\"; \
+elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive --no-gpg-checks install -- \"$1\"; \
+else rpm -U --replacepkgs -- \"$1\"; fi\n";
+
 #[cfg(target_os = "linux")]
 const PRIVILEGED_TAR_INSTALL_SCRIPT: &str = "\
 dir=\"/var/cache/nectarlink-update\"\n\
@@ -928,6 +982,23 @@ fn install_with_prompt(update: &Update, staged: &Path) -> Result<(), String> {
         .map_err(failed)?;
         if code != 0 {
             return Err(failed(format!("privileged .deb install exited with status {code}")));
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = spawn_relauncher(&exe, &update.version, true);
+        }
+        crate::bridge::app::request_quit();
+        return Ok(());
+    }
+
+    if staged_name.ends_with(".rpm") {
+        let staged_str = staged.to_string_lossy();
+        let code = crate::win::elevated::run_elevated(
+            Path::new("sh"),
+            &["-e", "-c", PRIVILEGED_RPM_INSTALL_SCRIPT, "sh", &staged_str, &expected],
+        )
+        .map_err(failed)?;
+        if code != 0 {
+            return Err(failed(format!("privileged .rpm install exited with status {code}")));
         }
         if let Ok(exe) = std::env::current_exe() {
             let _ = spawn_relauncher(&exe, &update.version, true);
@@ -1119,6 +1190,10 @@ mod tests {
                     name: "nectarlink_9.0.0_amd64.deb".into(),
                     browser_download_url: "https://x/deb-amd64".into(),
                 },
+                Asset {
+                    name: "nectarlink-9.0.0-1.x86_64.rpm".into(),
+                    browser_download_url: "https://x/rpm-x86_64".into(),
+                },
                 Asset { name: "SHA256SUMS.txt".into(), browser_download_url: "https://x/sums".into() },
             ],
         }
@@ -1213,6 +1288,14 @@ mod tests {
             assert!(PRIVILEGED_DEB_INSTALL_SCRIPT.contains("install -d -m 0700 -o 0 -g 0"));
             assert!(PRIVILEGED_DEB_INSTALL_SCRIPT.contains("sha256sum -c --status -"));
             assert!(PRIVILEGED_DEB_INSTALL_SCRIPT.contains("dpkg -i -- \"$dst\""));
+            let rpm = newer_release_linux_kind(release("v9.0.0"), "0.0.1", LinuxInstallKind::Rpm).unwrap();
+            assert_eq!(rpm.installer_name, "nectarlink-9.0.0-1.x86_64.rpm");
+            assert!(PRIVILEGED_RPM_INSTALL_SCRIPT.contains("sha256sum -c --status -"));
+            assert!(PRIVILEGED_RPM_INSTALL_SCRIPT.contains("dnf install -y --nogpgcheck -- \"$1\""));
+            // An RPM install never falls back to a tarball, a second copy in /opt.
+            let mut no_rpm = release("v9.0.0");
+            no_rpm.assets.retain(|a| !a.name.ends_with(".rpm"));
+            assert!(newer_release_linux_kind(no_rpm, "0.0.1", LinuxInstallKind::Rpm).is_none());
         }
     }
 

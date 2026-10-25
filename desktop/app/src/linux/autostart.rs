@@ -28,6 +28,20 @@ pub(crate) fn escape_desktop_exec_arg(raw: &str) -> String {
     out
 }
 
+/// What a launcher should run to start this copy: the AppImage itself when
+/// running from one (`exe` is then inside a mount that changes every run),
+/// otherwise `exe`.
+pub fn launcher(exe: &Path) -> PathBuf {
+    launcher_from(exe, std::env::var_os("APPIMAGE").map(PathBuf::from))
+}
+
+fn launcher_from(exe: &Path, appimage: Option<PathBuf>) -> PathBuf {
+    match appimage {
+        Some(path) if path.is_absolute() && path.is_file() => path,
+        _ => exe.to_path_buf(),
+    }
+}
+
 /// The command line written into the autostart entry's `Exec=` line.
 pub fn command(exe: &Path) -> String {
     format!("\"{}\" --minimized", escape_desktop_exec_arg(&exe.to_string_lossy()))
@@ -90,7 +104,7 @@ fn is_enabled_in(config_dir: &Path) -> bool {
 pub fn set(enabled: bool, exe: &Path) -> io::Result<()> {
     let path = autostart_file_path()?;
     if let Some(config_dir) = path.parent().and_then(Path::parent) {
-        set_in(config_dir, enabled, exe)
+        set_in(config_dir, enabled, &launcher(exe))
     } else {
         Err(io::Error::new(io::ErrorKind::NotFound, "invalid XDG autostart path"))
     }
@@ -170,6 +184,20 @@ mod tests {
         assert!(is_installed_location(Path::new("/home/user/.local/bin/nectarlink-desktop")));
         assert!(!is_installed(Path::new("/home/user/repo/target/debug/nectarlink-desktop")));
         assert!(!is_installed(Path::new("/home/user/repo/target/release/nectarlink-desktop")));
+    }
+
+    #[test]
+    fn launchers_run_the_appimage_not_its_mount() {
+        let dir = tempfile::tempdir().unwrap();
+        let appimage = dir.path().join("Nectarlink-0.1.5-x86_64.AppImage");
+        fs::write(&appimage, b"").unwrap();
+        let mounted = Path::new("/tmp/.mount_NectarAbc123/usr/bin/nectarlink-desktop");
+        assert_eq!(launcher_from(mounted, Some(appimage.clone())), appimage);
+        // Not from an AppImage, or one that isn't there: the program itself.
+        let exe = Path::new("/usr/lib/nectarlink/nectarlink-desktop");
+        assert_eq!(launcher_from(exe, None), exe);
+        assert_eq!(launcher_from(exe, Some(dir.path().join("gone.AppImage"))), exe);
+        assert_eq!(launcher_from(exe, Some(PathBuf::from("relative.AppImage"))), exe);
     }
 
     #[test]
