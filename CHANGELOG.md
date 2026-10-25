@@ -95,9 +95,9 @@ has a Stop button. Choosing another
   Features guide are translated too, with the timeline's wording from
   [@zzz1465720680](https://github.com/zzz1465720680)
   ([#18](https://github.com/thtbee/nectarlink/pull/18)).
-- **Stop reconnecting to a device without unpairing it.** While a phone or
-  PC isn't connected, **Stop reconnecting** on Home keeps it disconnected,
-  even after a restart, until you tap **Reconnect**
+- **Disconnect from a device without unpairing it.** **Disconnect** on
+  Home (**Stop reconnecting** while it isn't connected) keeps a phone or PC
+  disconnected, even after a restart, until you tap **Reconnect**
   ([#48](https://github.com/thtbee/nectarlink/issues/48)).
 
 ### Changed

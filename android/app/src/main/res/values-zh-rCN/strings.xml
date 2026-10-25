@@ -268,6 +268,7 @@
     <string name="action_lock_pc">锁定电脑</string>
     <string name="action_sleep_pc">睡眠</string>
     <string name="action_wake_pc">唤醒</string>
+    <string name="action_disconnect">断开连接</string>
     <string name="action_stop_reconnecting">停止自动重连</string>
     <string name="action_reconnect">重新连接</string>
     <string name="action_more">更多操作</string>

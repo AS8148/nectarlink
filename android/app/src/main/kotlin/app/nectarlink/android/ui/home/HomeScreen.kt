@@ -1462,14 +1462,17 @@ private fun PcCard(
                 }
             }
             // Stays paired, and stays disconnected until Reconnect (GitHub #48).
-            if (!device.online && device.reconnect && device.wakeState != WakeState.Waking) {
+            if (device.reconnect && device.wakeState != WakeState.Waking) {
                 TextButton(
                     onClick = { onSetReconnect(device.id, false) },
                     colors = ButtonDefaults.textButtonColors(contentColor = ink),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 4.dp),
                     modifier = Modifier.heightIn(min = 32.dp),
                 ) {
-                    Text(stringResource(R.string.action_stop_reconnecting), style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        stringResource(if (device.online) R.string.action_disconnect else R.string.action_stop_reconnecting),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
                 }
             }
             Spacer(Modifier.height(10.dp))

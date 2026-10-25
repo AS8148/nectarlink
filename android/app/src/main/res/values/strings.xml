@@ -276,6 +276,7 @@
     <string name="action_lock_pc">Lock PC</string>
     <string name="action_sleep_pc">Sleep</string>
     <string name="action_wake_pc">Wake</string>
+    <string name="action_disconnect">Disconnect</string>
     <string name="action_stop_reconnecting">Stop reconnecting</string>
     <string name="action_reconnect">Reconnect</string>
     <string name="action_more">More actions</string>

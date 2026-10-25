@@ -1104,25 +1104,21 @@ Item {
                                     return eta.length > 0 ? eta : qsTr("Charging")
                                 }
                             }
-                        }
-                        Flow {
-                            visible: !home.online
-                            width: parent.width
-                            spacing: 6
-                            Button {
-                                visible: home.reconnect
-                                variant: "tonal"
-                                size: "sm"
-                                text: qsTr("Troubleshoot")
-                                onClicked: AppController.runDoctor()
-                            }
                             // Stays paired, and stays disconnected until Reconnect (GitHub #48).
-                            Button {
-                                variant: "tonal"
-                                size: "sm"
-                                text: home.reconnect ? qsTr("Stop reconnecting") : qsTr("Reconnect")
-                                onClicked: AppController.setReconnect(home.deviceId, !home.reconnect)
+                            Chip {
+                                visible: home.reconnect
+                                interactive: true
+                                text: home.online ? qsTr("Disconnect") : qsTr("Stop reconnecting")
+                                onClicked: AppController.setReconnect(home.deviceId, false)
                             }
+                        }
+                        Button {
+                            visible: !home.online
+                            variant: "tonal"
+                            size: "sm"
+                            text: home.reconnect ? qsTr("Troubleshoot") : qsTr("Reconnect")
+                            onClicked: home.reconnect ? AppController.runDoctor()
+                                                      : AppController.setReconnect(home.deviceId, true)
                         }
                     }
                 }
