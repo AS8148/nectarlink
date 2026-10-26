@@ -77,6 +77,10 @@ object Elevated {
     private const val ROOT = "root"
     /** The shell user, which the helper runs as however it's started. */
     private const val SHELL_UID = "2000"
+    /** The version [compileIfUpdated] last asked Android to compile. */
+    private const val COMPILED_VERSION = "compiled_version"
+    /** How long after the helper starts the compile waits, so Android has recorded which code starting up uses. */
+    private const val COMPILE_AFTER_MS = 2 * 60_000L
 
     private val _state = MutableStateFlow<State>(State.NotSetUp)
     val state: StateFlow<State> = _state.asStateFlow()
@@ -468,6 +472,7 @@ object Elevated {
         input = writer
         _state.value = State.Running
         if (screenOffRequested) send(writer, "P 0")
+        compileIfUpdated()
         Thread {
             runCatching {
                 local.inputStream.bufferedReader().lineSequence().forEach { line ->
@@ -500,6 +505,23 @@ object Elevated {
             }
         }.start()
         onChange()
+    }
+
+    private var compileJob: Job? = null
+
+    /**
+     * A sideloaded app starts slowly after each install or update, about twice
+     * as slowly, until Android compiles it during idle maintenance, often days
+     * later. With the helper running, ask for that compile now, once per version.
+     */
+    private fun compileIfUpdated() {
+        val version = app.nectarlink.android.BuildConfig.VERSION_CODE
+        if (app.nectarlink.android.BuildConfig.DEBUG || compileJob?.isActive == true) return
+        if (prefs().getInt(COMPILED_VERSION, -1) == version) return
+        compileJob = scope.launch {
+            delay(COMPILE_AFTER_MS)
+            if (runCommand(COMPILE_APP_COMMAND)) prefs().edit { putInt(COMPILED_VERSION, version) }
+        }
     }
 
     /** Attaches to an [InputServer] started directly from `adb shell`. */

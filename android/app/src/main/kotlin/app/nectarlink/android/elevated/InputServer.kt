@@ -38,6 +38,13 @@ import java.security.MessageDigest
  * (see [AppDisplay]); a `K` line asks for a keyframe; closing the
  * connection closes the window.
  */
+/**
+ * Compiles NectarLink ahead of time from its startup profile, as Android does
+ * on its own only during idle maintenance. Asked once per version by
+ * [Elevated]; allowed by name in the helper.
+ */
+internal const val COMPILE_APP_COMMAND = "cmd package compile -m speed-profile app.nectarlink"
+
 object InputServer {
     private const val POWER_MODE_OFF = 0
     private const val POWER_MODE_NORMAL = 2
@@ -558,6 +565,8 @@ object InputServer {
                     when (rest) {
                         "hotspot on" -> setHotspot(true)
                         "hotspot off" -> setHotspot(false)
+                        // Takes up to a minute: off this thread, which also carries input.
+                        COMPILE_APP_COMMAND -> Thread { runCatching { Runtime.getRuntime().exec(rest.split(' ').toTypedArray()).waitFor() } }.start()
                         else -> Runtime.getRuntime().exec(rest.split(' ').toTypedArray()).waitFor()
                     }
                 }
@@ -763,6 +772,8 @@ object InputServer {
             "cmd wifi stop-softap",
             // Pause for banking apps: seeing which app is in front.
             "appops set app.nectarlink GET_USAGE_STATS allow",
+            // Fast starts right after an install or update.
+            COMPILE_APP_COMMAND,
         )
 
         private companion object {

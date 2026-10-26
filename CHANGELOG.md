@@ -109,6 +109,13 @@ has a Stop button. Choosing another
 
 ### Changed
 
+- **The phone app starts about twice as fast right after an update.**
+  Android compiles an app installed outside the Play Store only during
+  idle maintenance, often days later. With Elevated set up, NectarLink
+  asks for that compile a couple of minutes after each update.
+- **Mirroring and control from the PC use less CPU.** Each mirrored frame
+  takes about 14% less work to draw, and permission checks for every
+  touch and message are read from memory instead of the database.
 - **4K for Phone as webcam shows on the PC only when the phone can stream
   it.** The PC offered 4K for every phone and camera; picked for one that
   can't, the stream stayed at 1080p and the choice moved back. The phone
