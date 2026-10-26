@@ -4819,9 +4819,10 @@ async fn transfer_manual_pause_and_resume_both_sides() {
     let big = data(64 * 1024 * 1024, 77);
     let id = pc.node.send_files(phone_id, vec![outgoing(src.path(), "movie.bin", &big)]).await.unwrap();
 
-    // 1. Wait until bytes flow, then pause from the sender (PC).
+    // 1. Pause from the sender (PC) as soon as it runs: an optimized build can
+    //    send all 64 MB before the first progress report.
     wait_transfer(&mut phone, &id, "receiving initial", |t| {
-        (t.state == TransferState::Running && t.done > 0).then_some(())
+        (t.state == TransferState::Running).then_some(())
     })
     .await;
     pc.node.pause_transfer(&id);
@@ -4860,7 +4861,7 @@ async fn transfer_manual_pause_and_resume_both_sides() {
     let id2 =
         pc.node.send_files(phone_id, vec![outgoing(src.path(), "cancel_paused.bin", &big)]).await.unwrap();
     wait_transfer(&mut phone, &id2, "receiving second", |t| {
-        (t.state == TransferState::Running && t.done > 0).then_some(())
+        (t.state == TransferState::Running).then_some(())
     })
     .await;
     phone.node.pause_transfer(&id2);
