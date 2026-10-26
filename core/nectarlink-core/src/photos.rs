@@ -165,7 +165,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
     match env.t.as_str() {
         types::PHOTOS_NEW => {
             let photo: PhotoNew = env.body()?;
-            let shows = shared.local_capabilities().iter().any(|c| c == photos::SHOW);
+            let shows = shared.we_offer(photos::SHOW);
             if shows && photo.is_valid() && shared.toggle_on(&peer, TOGGLE) {
                 shared.emit(NodeEvent::PhotoAdded { device: peer, photo });
             }
@@ -173,7 +173,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
         }
         types::PHOTOS_CHANGED => {
             let PhotosChanged {} = env.body()?;
-            let shows = shared.local_capabilities().iter().any(|c| c == photos::SHOW);
+            let shows = shared.we_offer(photos::SHOW);
             if shows && shared.toggle_on(&peer, TOGGLE) {
                 shared.emit(NodeEvent::PhotosChanged { device: peer });
             }
@@ -215,7 +215,7 @@ async fn answer_query(shared: &Arc<Shared>, peer: DeviceId, env: &Envelope) -> R
     if !shared.toggle_on(&peer, TOGGLE) {
         return Ok(Envelope::error(ErrorCode::Denied, "photos are off for this device"));
     }
-    if !shared.local_capabilities().iter().any(|c| c == photos::READ) {
+    if !shared.we_offer(photos::READ) {
         return Ok(Envelope::error(ErrorCode::Unsupported, "this phone doesn't share photos"));
     }
     let platform = shared.platform.clone();
@@ -313,7 +313,7 @@ async fn send_photos(shared: &Arc<Shared>, peer: DeviceId, mut ids: Vec<String>)
     if !shared.toggle_on(&peer, TOGGLE) {
         return Err(Error::Denied);
     }
-    if !shared.local_capabilities().iter().any(|c| c == photos::READ) {
+    if !shared.we_offer(photos::READ) {
         return Err(Error::Unsupported);
     }
     ids.retain(|id| is_valid_photo_id(id));

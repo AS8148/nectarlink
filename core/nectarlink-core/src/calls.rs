@@ -233,7 +233,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
     match env.t.as_str() {
         types::CALL_STATE => {
             let call: CallState = env.body()?;
-            let shows = shared.local_capabilities().iter().any(|c| c == calls::SHOW);
+            let shows = shared.we_offer(calls::SHOW);
             if shows && call.is_valid() && shared.toggle_on(&peer, TOGGLE) {
                 shared.emit(NodeEvent::Call { device: peer, call });
             }
@@ -241,7 +241,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
         }
         types::CALL_LOG_CHANGED => {
             let CallLogChanged {} = env.body()?;
-            let shows = shared.local_capabilities().iter().any(|c| c == calls::SHOW);
+            let shows = shared.we_offer(calls::SHOW);
             if shows && shared.toggle_on(&peer, TOGGLE) {
                 shared.emit(NodeEvent::CallLogChanged { device: peer });
             }
@@ -250,7 +250,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
         types::CALL_ACTION => {
             let CallAction { id, action, digit } = env.body()?;
             let current = shared.calls.get();
-            let offers = |cap: &str| shared.local_capabilities().iter().any(|c| c == cap);
+            let offers = |cap: &str| shared.we_offer(cap);
             let command = CallCommand::parse(&action, digit.as_deref());
             let reply = if !shared.toggle_on(&peer, TOGGLE) {
                 Envelope::error(ErrorCode::Denied, "calls are off for this device")
@@ -301,7 +301,7 @@ async fn answer_log_or_dial(shared: &Arc<Shared>, session: &Session, env: &Envel
     if !shared.toggle_on(&session.peer, TOGGLE) {
         return Ok(Envelope::error(ErrorCode::Denied, "calls are off for this device"));
     }
-    let offers = |cap: &str| shared.local_capabilities().iter().any(|c| c == cap);
+    let offers = |cap: &str| shared.we_offer(cap);
     let platform = shared.platform.clone();
     let result = match env.t.as_str() {
         types::CALL_LOG => {

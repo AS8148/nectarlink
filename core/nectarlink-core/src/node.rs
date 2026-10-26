@@ -100,6 +100,14 @@ impl LocalState {
         }
         caps
     }
+
+    /// Whether this device offers `cap`: `capabilities()` without building the list.
+    pub fn offers(&self, cap: &str) -> bool {
+        BASE_CAPABILITIES.contains(&cap)
+            || (cap == nectarlink_protocol::messages::continuity_camera::RECEIVE
+                && !matches!(self.device.kind, DeviceKind::Phone | DeviceKind::Tablet))
+            || self.extra_capabilities.iter().any(|c| c == cap)
+    }
 }
 
 struct Supervisor {
@@ -524,16 +532,16 @@ impl Shared {
 
     /// Whether this device reconnects to `peer` by itself (see [`Node::set_reconnect`]).
     pub(crate) fn reconnects(&self, peer: &DeviceId) -> bool {
-        self.store.toggles(peer).ok().and_then(|t| t.get(RECONNECT_TOGGLE).copied()).unwrap_or(true)
+        self.store.toggle(peer, RECONNECT_TOGGLE).ok().flatten().unwrap_or(true)
     }
 
     /// Whether a device toggle (see [`features::DEVICE_TOGGLES`]) is on for
     /// `peer`; unknown toggles are off.
     pub fn toggle_on(&self, peer: &DeviceId, toggle: &str) -> bool {
         self.store
-            .toggles(peer)
+            .toggle(peer, toggle)
             .ok()
-            .and_then(|t| t.get(toggle).copied())
+            .flatten()
             .or_else(|| features::toggle_default(toggle))
             .unwrap_or(false)
     }
@@ -541,6 +549,12 @@ impl Shared {
     /// The capabilities this device offers right now.
     pub fn local_capabilities(&self) -> Vec<String> {
         self.local.read().unwrap_or_else(|e| e.into_inner()).capabilities()
+    }
+
+    /// Whether this device offers `cap` right now (checked per message, so it
+    /// doesn't build the list).
+    pub fn we_offer(&self, cap: &str) -> bool {
+        self.local.read().unwrap_or_else(|e| e.into_inner()).offers(cap)
     }
 
     pub fn session(&self, peer: &DeviceId) -> Option<Arc<Session>> {

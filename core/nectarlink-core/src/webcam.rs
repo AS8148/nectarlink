@@ -63,13 +63,12 @@ pub(crate) async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendS
         let _ = send.reset(VarInt::from_u32(webcam::STOPPED));
         let _ = recv.stop(VarInt::from_u32(webcam::STOPPED));
     };
-    let supports = shared.local_capabilities().iter().any(|c| c == webcam::VIRTUAL);
+    let supports = shared.we_offer(webcam::VIRTUAL);
     if !supports || !shared.toggle_on(&peer, TOGGLE) {
         return refuse(send, recv);
     }
     let accepted = |config: &WebcamConfig| {
-        config.is_valid()
-            && (config.codec != webcam::H265 || shared.local_capabilities().iter().any(|c| c == webcam::HEVC))
+        config.is_valid() && (config.codec != webcam::H265 || shared.we_offer(webcam::HEVC))
     };
     let first = match read_video_packet(&mut recv).await {
         Ok(Some(p)) if p.kind == PacketKind::Config => WebcamConfig::from_cbor(&p.data).ok().filter(accepted),
@@ -143,7 +142,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
                 Envelope::error(ErrorCode::Denied, "webcam is off for this device")
             } else if !options.is_valid() {
                 Envelope::error(ErrorCode::BadMessage, "invalid webcam options")
-            } else if !shared.local_capabilities().iter().any(|c| c == webcam::STREAM) {
+            } else if !shared.we_offer(webcam::STREAM) {
                 Envelope::error(ErrorCode::Unsupported, "this device doesn't stream a camera")
             } else {
                 match tokio::task::spawn_blocking(move || platform.webcam_requested(&peer, &options))

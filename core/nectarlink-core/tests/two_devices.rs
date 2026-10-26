@@ -4752,8 +4752,10 @@ async fn transfer_blake3_integrity_verified_and_mismatch_keeps_partial() {
     // Paused as soon as it runs: the offer and its hash are sent by then, and
     // waiting for the first progress report lets an optimized build finish
     // all 48 MB before it comes.
-    wait_transfer(&mut pc, &id, "sending before pause", |t| (t.state == TransferState::Running).then_some(()))
-        .await;
+    wait_transfer(&mut pc, &id, "sending before pause", |t| {
+        (t.state == TransferState::Running).then_some(())
+    })
+    .await;
     pc.node.pause_transfer(&id);
     wait_transfer(&mut pc, &id, "sender paused", |t| (t.state == TransferState::Paused).then_some(())).await;
     wait_transfer(&mut phone, &id, "receiver paused", |t| (t.state == TransferState::Paused).then_some(()))
@@ -6283,7 +6285,8 @@ async fn bench_file_throughput() {
     let files = vec![OutgoingFile { name: "bench.bin".into(), folder: None, source: FileSource::Path(path) }];
     let started = std::time::Instant::now();
     let id = pc.node.send_files(phone_id, files).await.expect("send starts");
-    let first_byte = wait_transfer(&mut phone, &id, "first bytes", |t| (t.done > 0).then(|| started.elapsed())).await;
+    let first_byte =
+        wait_transfer(&mut phone, &id, "first bytes", |t| (t.done > 0).then(|| started.elapsed())).await;
     wait_transfer(&mut phone, &id, "received", saved).await;
     let total = started.elapsed();
     let moving = total - first_byte;

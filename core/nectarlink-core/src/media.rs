@@ -265,7 +265,7 @@ pub(crate) async fn offer_watch(
     if !watch.is_valid() {
         return Err(Error::Internal("not a player to offer".into()));
     }
-    if !shared.local_capabilities().iter().any(|c| c == media_watch::STREAM) {
+    if !shared.we_offer(media_watch::STREAM) {
         return Err(Error::Unsupported);
     }
     if !shared.store.get_peer(&peer)?.is_some_and(|p| p.caps.contains(media_watch::WATCH)) {
@@ -421,7 +421,7 @@ pub(crate) async fn read_file(session: &Session, offset: u64, length: u64) -> Re
 
 /// The phone's side of `media.watch`: show the offer.
 async fn watch_offered(shared: &Arc<Shared>, peer: &DeviceId, watch: MediaWatch) -> Envelope {
-    if !shared.local_capabilities().iter().any(|c| c == media_watch::WATCH) {
+    if !shared.we_offer(media_watch::WATCH) {
         return Envelope::error(ErrorCode::Unsupported, "this device doesn't show a PC's playback");
     }
     if !shared.toggle_on(peer, TOGGLE) {
@@ -448,7 +448,7 @@ async fn watch_offered(shared: &Arc<Shared>, peer: &DeviceId, watch: MediaWatch)
 }
 
 async fn run_command(shared: &Arc<Shared>, peer: &DeviceId, command: MediaCommand) -> Envelope {
-    if !shared.local_capabilities().iter().any(|c| c == SHARES) {
+    if !shared.we_offer(SHARES) {
         return Envelope::error(ErrorCode::Unsupported, "media control is not available");
     }
     if !shared.toggle_on(peer, TOGGLE) {

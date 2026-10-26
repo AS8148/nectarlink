@@ -35,7 +35,7 @@ impl Shared {
     }
 
     fn offers_locally(&self, capability: &str) -> bool {
-        self.local_capabilities().iter().any(|c| c == capability)
+        self.we_offer(capability)
     }
 }
 

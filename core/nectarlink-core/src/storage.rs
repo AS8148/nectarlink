@@ -146,10 +146,6 @@ fn peer_offers(shared: &Shared, peer: &DeviceId, cap: &str) -> Result<bool> {
     Ok(shared.store.get_peer(peer)?.is_some_and(|p| p.caps.contains(cap)))
 }
 
-fn we_offer(shared: &Shared, cap: &str) -> bool {
-    shared.local_capabilities().iter().any(|c| c == cap)
-}
-
 /// Checks if the client user explicitly turned `storage` (a PC browsing a
 /// phone) or `remote_files` (over Relay) off for `peer`.
 fn pc_allows(shared: &Shared, peer: &DeviceId) -> Result<bool> {
@@ -172,7 +168,7 @@ fn check_phone_allowed(
     peer: &DeviceId,
     cap: &str,
 ) -> std::result::Result<(), (ErrorCode, String)> {
-    if !we_offer(shared, cap) {
+    if !shared.we_offer(cap) {
         return Err((ErrorCode::Unsupported, format!("{cap} is not offered by this device")));
     }
     // The `storage` toggle is a phone's "let this PC browse my storage". On a

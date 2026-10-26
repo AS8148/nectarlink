@@ -125,17 +125,13 @@ fn peer_offers(shared: &Shared, peer: &DeviceId, cap: &str) -> Result<bool> {
     Ok(shared.store.get_peer(peer)?.is_some_and(|p| p.caps.contains(cap)))
 }
 
-fn we_offer(shared: &Shared, cap: &str) -> bool {
-    shared.local_capabilities().iter().any(|c| c == cap)
-}
-
 fn check_allowed_with(
     shared: &Shared,
     peer: &DeviceId,
     allow_deck: bool,
 ) -> std::result::Result<(), (ErrorCode, &'static str)> {
     let supported =
-        we_offer(shared, INPUT_INJECT) || (allow_deck && we_offer(shared, crate::deck::DECK_ACTIONS));
+        shared.we_offer(INPUT_INJECT) || (allow_deck && shared.we_offer(crate::deck::DECK_ACTIONS));
     if !supported {
         return Err((ErrorCode::Unsupported, "remote input is not supported here"));
     }

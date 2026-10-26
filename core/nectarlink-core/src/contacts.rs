@@ -68,7 +68,7 @@ pub(crate) async fn list(
 pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &Envelope) -> Result<bool> {
     if env.t == types::CONTACTS_CHANGED {
         let ContactsChanged {} = env.body()?;
-        let shows = shared.local_capabilities().iter().any(|c| c == contacts::SHOW);
+        let shows = shared.we_offer(contacts::SHOW);
         if shows && shared.toggle_on(&session.peer, TOGGLE) {
             shared.emit(NodeEvent::ContactsChanged { device: session.peer });
         }
@@ -93,7 +93,7 @@ async fn answer(shared: &Arc<Shared>, session: &Session, env: &Envelope) -> Resu
     if !shared.toggle_on(&session.peer, TOGGLE) {
         return Ok(Envelope::error(ErrorCode::Denied, "contacts are off for this device"));
     }
-    if !shared.local_capabilities().iter().any(|c| c == contacts::READ) {
+    if !shared.we_offer(contacts::READ) {
         return Ok(Envelope::error(ErrorCode::Unsupported, "this phone doesn't share contacts"));
     }
     let ContactsListGet { query, offset, limit } = env.body()?;

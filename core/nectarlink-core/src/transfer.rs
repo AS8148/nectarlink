@@ -1565,7 +1565,7 @@ async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendStream, mut 
         return refuse(&mut send, ErrorCode::BadMessage, "invalid offer").await;
     };
     if offer.recording {
-        if !shared.local_capabilities().iter().any(|c| c == RECORDER) {
+        if !shared.we_offer(RECORDER) {
             return refuse(&mut send, ErrorCode::Unsupported, "recordings aren't supported").await;
         }
         if !shared.toggle_on(&peer, RECORDINGS_TOGGLE) {

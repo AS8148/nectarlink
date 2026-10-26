@@ -417,7 +417,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
         }
         types::PC_POWER => {
             let PcPower { action } = env.body()?;
-            if !shared.local_capabilities().iter().any(|c| c == POWER) {
+            if !shared.we_offer(POWER) {
                 Envelope::error(ErrorCode::Unsupported, "this device doesn't lock or sleep on request")
             } else if !shared.toggle_on(&peer, POWER_TOGGLE) {
                 Envelope::error(ErrorCode::Denied, "PC actions are off for this device")

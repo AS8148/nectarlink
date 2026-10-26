@@ -59,7 +59,7 @@ pub(crate) async fn receive(shared: Arc<Shared>, peer: DeviceId, mut send: SendS
         let _ = send.reset(VarInt::from_u32(mic::STOPPED));
         let _ = recv.stop(VarInt::from_u32(mic::STOPPED));
     };
-    let listens = shared.local_capabilities().iter().any(|c| c == mic::LISTEN);
+    let listens = shared.we_offer(mic::LISTEN);
     if !listens || !shared.toggle_on(&peer, TOGGLE) {
         return refuse(send, recv);
     }
@@ -117,7 +117,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
         types::MIC_START => {
             let reply = if !shared.toggle_on(&peer, TOGGLE) {
                 Envelope::error(ErrorCode::Denied, "the microphone is off for this device")
-            } else if !shared.local_capabilities().iter().any(|c| c == mic::STREAM) {
+            } else if !shared.we_offer(mic::STREAM) {
                 Envelope::error(ErrorCode::Unsupported, "this device doesn't stream its microphone")
             } else {
                 match tokio::task::spawn_blocking(move || platform.mic_requested(&peer))

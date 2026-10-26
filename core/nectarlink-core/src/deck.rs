@@ -556,11 +556,11 @@ impl Current {
 
 impl Shared {
     fn offers_deck(&self) -> bool {
-        self.local_capabilities().iter().any(|c| c == DECK_ACTIONS)
+        self.we_offer(DECK_ACTIONS)
     }
 
     fn offers_pc_audio(&self) -> bool {
-        self.local_capabilities().iter().any(|c| c == PC_AUDIO)
+        self.we_offer(PC_AUDIO)
     }
 
     /// Sends this PC's Deck layout and live state to `session` if this device

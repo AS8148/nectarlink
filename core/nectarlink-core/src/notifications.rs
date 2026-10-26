@@ -374,7 +374,7 @@ pub(crate) async fn handle(shared: &Arc<Shared>, session: &Arc<Session>, env: &E
 
 /// Whether a PC may act on this phone's notifications; the error reply if not.
 fn allowed(shared: &Shared, peer: &DeviceId) -> std::result::Result<(), Envelope> {
-    if !shared.local_capabilities().iter().any(|c| c == "notify.reply") {
+    if !shared.we_offer("notify.reply") {
         return Err(Envelope::error(ErrorCode::Unsupported, "notification actions are not available"));
     }
     if !shared.notifications_allowed(peer) {

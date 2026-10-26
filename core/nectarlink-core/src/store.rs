@@ -6,7 +6,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use nectarlink_protocol::{
@@ -595,6 +595,11 @@ pub(crate) struct PeerRecord {
 pub(crate) struct Store {
     conn: Mutex<Connection>,
     data_dir: Option<PathBuf>,
+    /// Each device's toggles as stored, read once: they're checked on every
+    /// message (each touch while mirroring), and change only when the user
+    /// flips one. Filled and cleared while `conn` is held, so a write never
+    /// leaves an old copy behind.
+    toggles: Mutex<HashMap<DeviceId, Arc<HashMap<String, bool>>>>,
 }
 
 impl Store {
@@ -619,12 +624,16 @@ impl Store {
         conn.pragma_update(None, "temp_store", "MEMORY")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         migrate(&conn)?;
-        Ok(Store { conn: Mutex::new(conn), data_dir })
+        Ok(Store { conn: Mutex::new(conn), data_dir, toggles: Mutex::default() })
     }
 
     fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
         let conn = self.conn.lock().map_err(|_| Error::Internal("store lock poisoned".into()))?;
         f(&conn).map_err(Error::from)
+    }
+
+    fn toggle_cache(&self) -> MutexGuard<'_, HashMap<DeviceId, Arc<HashMap<String, bool>>>> {
+        self.toggles.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Adds or replaces a paired device.
@@ -654,7 +663,10 @@ impl Store {
                     valid_install_id(info)
                 ],
             )?;
-            cleanup_peers(c, Some(id))
+            cleanup_peers(c, Some(id))?;
+            // A stale copy of this device may be gone, toggles and all.
+            self.toggle_cache().clear();
+            Ok(())
         })
     }
 
@@ -693,6 +705,7 @@ impl Store {
             )?;
             if valid_install_id(info).is_some() {
                 cleanup_peers(c, Some(id))?;
+                self.toggle_cache().clear();
             }
             c.execute(
                 "UPDATE timeline SET device_name = ?2 WHERE device_id = ?1",
@@ -747,12 +760,28 @@ impl Store {
     /// The per-device toggles the user has set. Unset toggles are absent;
     /// callers apply the defaults.
     pub fn toggles(&self, id: &DeviceId) -> Result<HashMap<String, bool>> {
+        Ok((*self.cached_toggles(id)?).clone())
+    }
+
+    /// One toggle as the user set it, or `None` if they never did.
+    pub fn toggle(&self, id: &DeviceId, toggle: &str) -> Result<Option<bool>> {
+        Ok(self.cached_toggles(id)?.get(toggle).copied())
+    }
+
+    fn cached_toggles(&self, id: &DeviceId) -> Result<Arc<HashMap<String, bool>>> {
+        if let Some(toggles) = self.toggle_cache().get(id) {
+            return Ok(toggles.clone());
+        }
         self.with(|c| {
             let mut stmt = c.prepare_cached("SELECT toggle, enabled FROM peer_toggles WHERE peer = ?1")?;
-            stmt.query_map([id.as_bytes().as_slice()], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0))
-            })?
-            .collect()
+            let toggles: HashMap<String, bool> = stmt
+                .query_map([id.as_bytes().as_slice()], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0))
+                })?
+                .collect::<rusqlite::Result<_>>()?;
+            let toggles = Arc::new(toggles);
+            self.toggle_cache().insert(*id, toggles.clone());
+            Ok(toggles)
         })
     }
 
@@ -762,8 +791,9 @@ impl Store {
                 "INSERT INTO peer_toggles (peer, toggle, enabled) VALUES (?1, ?2, ?3)
                  ON CONFLICT(peer, toggle) DO UPDATE SET enabled = excluded.enabled",
                 params![id.as_bytes().as_slice(), toggle, i64::from(enabled)],
-            )
-            .map(drop)
+            )?;
+            self.toggle_cache().remove(id);
+            Ok(())
         })
     }
 
@@ -773,7 +803,10 @@ impl Store {
         self.with(|c| {
             let _ = c.execute("DELETE FROM chat_messages WHERE peer = ?1", [&peer_str]);
             let _ = c.execute("DELETE FROM chat_threads WHERE peer = ?1", [&peer_str]);
-            c.execute("DELETE FROM peers WHERE id = ?1", [id.as_bytes().as_slice()]).map(|n| n > 0)
+            let removed = c.execute("DELETE FROM peers WHERE id = ?1", [id.as_bytes().as_slice()])? > 0;
+            // Its toggles went with it.
+            self.toggle_cache().remove(id);
+            Ok(removed)
         })
     }
 
@@ -2562,10 +2595,19 @@ mod tests {
         assert_eq!(toggles.len(), 2);
         assert_eq!(toggles.get("clipboard"), Some(&true));
         assert_eq!(toggles.get("photos"), Some(&false));
+        assert_eq!(store.toggle(&id, "photos").unwrap(), Some(false));
+        assert_eq!(store.toggle(&id, "sms").unwrap(), None);
+        // Read back from memory now, so a change must show at once.
+        store.set_toggle(&id, "photos", true).unwrap();
+        assert_eq!(store.toggle(&id, "photos").unwrap(), Some(true));
 
         // Unpairing forgets the device's settings too.
         store.remove_peer(&id).unwrap();
         assert!(store.toggles(&id).unwrap().is_empty());
+        assert_eq!(store.toggle(&id, "photos").unwrap(), None);
+        // Paired again, it starts from the defaults.
+        store.upsert_peer(&id, &info("Pixel"), 2).unwrap();
+        assert_eq!(store.toggle(&id, "clipboard").unwrap(), None);
     }
 
     #[test]
