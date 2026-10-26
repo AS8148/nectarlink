@@ -182,7 +182,6 @@
     <string name="clipboard_history_no_match">Keine Treffer für „%1$s“.</string>
     <string name="clipboard_history_from">Von %1$s</string>
     <string name="clipboard_history_sent_to">Gesendet an %1$s</string>
-    <string name="clipboard_history_pinned">Angeheftet</string>
     <string name="clipboard_history_image">Bild</string>
     <string name="clipboard_history_copy">Kopieren</string>
     <string name="clipboard_history_copied">In die Zwischenablage kopiert</string>
@@ -194,8 +193,6 @@
     <string name="settings_clipboard_title">Zwischenablage</string>
     <string name="settings_clipboard_suggestions">Aktionen für kopierten Text vorschlagen</string>
     <string name="settings_clipboard_suggestions_hint">Aktionen für Text von deinem PC vorschlagen: Links öffnen, Karten, Anrufe, Sendungsverfolgung und E-Mail.</string>
-    <string name="settings_clipboard_history">Zwischenablageverlauf speichern</string>
-    <string name="settings_clipboard_history_hint">Speichert die letzten 50 Einträge verschlüsselt auf diesem Gerät. Passwörter und Einmalcodes werden niemals gespeichert.</string>
     <string name="clip_received_from">Kopiert von %1$s</string>
     <string name="clip_action_open">Öffnen</string>
     <string name="clip_action_maps">In Karten öffnen</string>
@@ -279,8 +276,6 @@
     <string name="action_disconnect">Trennen</string>
     <string name="action_stop_reconnecting">Nicht mehr neu verbinden</string>
     <string name="action_reconnect">Neu verbinden</string>
-    <string name="action_more">Weitere Aktionen</string>
-    <string name="action_less">Weniger Aktionen</string>
     <string name="wake_waking">%1$s wird aufgeweckt…</string>
     <string name="wake_timeout_title">%1$s ist noch nicht aufgewacht</string>
     <string name="wake_timeout_text">Prüfe Folgendes:\n• Wake-on-LAN ist im BIOS/UEFI sowie in den Windows-Einstellungen des Netzwerkadapters aktiviert (Energieverwaltung und „Aktivierungsfunktion über Magic Packet“).\n• %1$s ist per LAN-Kabel verbunden, falls er heruntergefahren war (Aufwecken über WLAN funktioniert aus dem ausgeschalteten Zustand selten).\n• Dieses Gerät befindet sich im selben Netzwerk wie %1$s.</string>
@@ -310,7 +305,6 @@
     <string name="channel_connection">Verbindung</string>
     <string name="channel_ringing">Mein Gerät finden</string>
     <string name="notification_connected_to">Verbunden mit %1$s</string>
-    <string name="notification_connected_many">Mit %1$d PCs verbunden</string>
     <plurals name="notification_connected_pcs">
         <item quantity="one">Mit %1$d PC verbunden</item>
         <item quantity="other">Mit %1$d PCs verbunden</item>
@@ -425,7 +419,6 @@
     <!-- Deck (macro pad to PC) -->
     <string name="action_deck_pc">Deck</string>
     <string name="action_desk_pc">Tischuhr</string>
-    <string name="deck_title">Deck</string>
     <string name="deck_fullscreen">Vollbild</string>
     <string name="deck_exit_fullscreen">Vollbild beenden</string>
     <string name="deck_playing">Wiedergabe</string>
@@ -433,12 +426,10 @@
     <string name="deck_muted">Stumm</string>
     <string name="deck_live">Live</string>
     <string name="deck_volume_percent">%1$d%%</string>
-    <string name="deck_waiting">Deck von %1$s wird geladen…</string>
     <string name="deck_empty_page">Noch keine Kacheln auf dieser Seite. Füge Kacheln in NectarLink auf %1$s hinzu.</string>
     <string name="deck_commands_denied_title">Befehle auf %1$s erlauben</string>
     <string name="deck_commands_denied_text">Um Shell-Befehle von diesem Gerät auszuführen, aktiviere „Deck-Befehle ausführen“ für dieses Gerät unter „NectarLink › Einstellungen › Geräte“ auf %1$s.</string>
     <string name="deck_hint">Kacheln im Deck auf %1$s anpassen</string>
-    <string name="pc_audio_title">PC-Audio</string>
     <string name="pc_audio_volume">Lautstärke</string>
     <string name="pc_audio_mute">Stummschalten</string>
     <string name="pc_audio_unmute">Stummschaltung aufheben</string>
@@ -455,7 +446,6 @@
     <string name="pc_audio_use_phone_mic_on">Der PC hört das Mikrofon dieses Geräts</string>
 
     <!-- Phone storage in File Explorer -->
-    <string name="settings_storage">Speicher im Datei-Explorer</string>
     <string name="storage_all_files_title">Zugriff auf alle Dateien</string>
     <string name="storage_all_files_on">Ein: Von dir autorisierte PCs können die Dateien dieses Geräts im Datei-Explorer durchsuchen, öffnen und kopieren.</string>
     <string name="storage_all_files_off">Durchsuche die Ordner dieses Geräts im Datei-Explorer auf deinem PC. Benötigt „Zugriff auf alle Dateien“ oder wähle unten bestimmte Ordner aus.</string>
@@ -480,7 +470,6 @@
     <string name="webcam_permission_title">Kamerazugriff erlauben</string>
     <string name="webcam_permission_text">NectarLink verwendet die Kamera nur, während du Video als Webcam an %1$s streamst.</string>
     <string name="webcam_allow_camera">Kamera erlauben</string>
-    <string name="webcam_status_streaming">Streame %1$d × %2$d an %3$s</string>
     <string name="webcam_status_connecting">Kamera wird mit %1$s verbunden…</string>
     <string name="webcam_status_ready">Bereit zum Streamen an %1$s</string>
     <string name="webcam_start">Webcam starten</string>
@@ -517,9 +506,6 @@
     <string name="timeline_action_load_more">Mehr laden</string>
     <string name="timeline_today">Heute</string>
     <string name="timeline_yesterday">Gestern</string>
-    <string name="settings_timeline_title">Zeitverlauf</string>
-    <string name="settings_timeline_retention">Einträge im Zeitverlauf behalten</string>
-    <string name="settings_timeline_retention_hint">Ältere Einträge automatisch entfernen oder bis zu 5.000 Einträge lokal auf diesem Gerät behalten.</string>
     <string name="timeline_retention_30d">30 T.</string>
     <string name="timeline_retention_90d">90 T.</string>
     <string name="timeline_retention_1y">1 J.</string>
@@ -557,7 +543,6 @@
     <string name="localsend_card_title">LocalSend in der Nähe</string>
     <string name="localsend_card_empty">Noch keine LocalSend-Geräte in diesem WLAN gefunden.</string>
     <string name="localsend_nearby_device">Gerät in der Nähe</string>
-    <string name="transfer_requested_from">%1$s möchte Dateien senden</string>
     <string name="action_accept">Annehmen</string>
     <string name="action_decline">Ablehnen</string>
     <string name="action_dismiss">Verwerfen</string>

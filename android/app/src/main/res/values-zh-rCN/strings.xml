@@ -176,7 +176,6 @@
     <string name="clipboard_history_no_match">没有与“%1$s”匹配的内容。</string>
     <string name="clipboard_history_from">来自 %1$s</string>
     <string name="clipboard_history_sent_to">已发送到 %1$s</string>
-    <string name="clipboard_history_pinned">已固定</string>
     <string name="clipboard_history_image">图片</string>
     <string name="clipboard_history_copy">复制</string>
     <string name="clipboard_history_copied">已复制到剪贴板</string>
@@ -188,8 +187,6 @@
     <string name="settings_clipboard_title">剪贴板</string>
     <string name="settings_clipboard_suggestions">为复制的文本推荐操作</string>
     <string name="settings_clipboard_suggestions_hint">为来自电脑的文本推荐操作：打开链接、地图、拨号、快递和邮件。</string>
-    <string name="settings_clipboard_history">保留剪贴板历史记录</string>
-    <string name="settings_clipboard_history_hint">保留最近50条剪贴内容，加密保存在本手机上。密码和一次性验证码不会被保存。</string>
     <string name="clip_received_from">复制自 %1$s</string>
     <string name="clip_action_open">打开</string>
     <string name="clip_action_maps">在地图中打开</string>
@@ -271,8 +268,6 @@
     <string name="action_disconnect">断开连接</string>
     <string name="action_stop_reconnecting">停止自动重连</string>
     <string name="action_reconnect">重新连接</string>
-    <string name="action_more">更多操作</string>
-    <string name="action_less">收起操作</string>
     <string name="wake_waking">正在唤醒 %1$s…</string>
     <string name="wake_timeout_title">%1$s 尚未唤醒</string>
     <string name="wake_timeout_text">请检查：\n• 已在 BIOS/UEFI 和 Windows 的网卡设置中启用网络唤醒（电源管理与“魔术封包唤醒”）。\n• 若 %1$s 是关机状态，请使用有线网络（关机状态下 Wi-Fi 唤醒通常无效）。\n• 本手机与 %1$s 处于同一网络。</string>
@@ -299,7 +294,6 @@
     <string name="channel_connection">连接</string>
     <string name="channel_ringing">查找我的手机</string>
     <string name="notification_connected_to">已连接到 %1$s</string>
-    <string name="notification_connected_many">已连接到 %1$d 台电脑</string>
     <plurals name="notification_connected_pcs">
         <item quantity="one">已连接到 %1$d 台电脑</item>
         <item quantity="other">已连接到 %1$d 台电脑</item>
@@ -407,7 +401,6 @@
     </plurals>
     <string name="action_deck_pc">面板</string>
     <string name="action_desk_pc">桌面时钟</string>
-    <string name="deck_title">面板</string>
     <string name="deck_fullscreen">全屏</string>
     <string name="deck_exit_fullscreen">退出全屏</string>
     <string name="deck_playing">播放中</string>
@@ -415,12 +408,10 @@
     <string name="deck_muted">已静音</string>
     <string name="deck_live">直播</string>
     <string name="deck_volume_percent">%1$d%%</string>
-    <string name="deck_waiting">正在加载 %1$s 的面板…</string>
     <string name="deck_empty_page">此页面还没有磁贴。请在 %1$s 上的 NectarLink 中添加磁贴。</string>
     <string name="deck_commands_denied_title">在 %1$s 上允许执行命令</string>
     <string name="deck_commands_denied_text">要从本手机运行 shell 命令，请在 %1$s 上的 NectarLink › 设置 › 设备中为本手机开启“运行面板命令”。</string>
     <string name="deck_hint">在 %1$s 的面板中自定义磁贴</string>
-    <string name="pc_audio_title">电脑音频</string>
     <string name="pc_audio_volume">音量</string>
     <string name="pc_audio_mute">静音</string>
     <string name="pc_audio_unmute">取消静音</string>
@@ -435,7 +426,6 @@
     <string name="pc_audio_use_phone_mic">将手机用作麦克风</string>
     <string name="pc_audio_use_phone_mic_sub">将此手机的麦克风发送到电脑</string>
     <string name="pc_audio_use_phone_mic_on">电脑正在接收此手机的麦克风</string>
-    <string name="settings_storage">文件资源管理器中的存储</string>
     <string name="storage_all_files_title">所有文件访问权限</string>
     <string name="storage_all_files_on">已开启。你允许的电脑可在文件资源管理器中浏览、打开和复制此手机的文件。</string>
     <string name="storage_all_files_off">在电脑的文件资源管理器中浏览此手机的文件夹。需要“所有文件访问权限”，或在下方选择特定文件夹。</string>
@@ -458,7 +448,6 @@
     <string name="webcam_permission_title">允许访问摄像头</string>
     <string name="webcam_permission_text">仅当你将视频作为摄像头传输到 %1$s 时，NectarLink 才会使用摄像头。</string>
     <string name="webcam_allow_camera">允许使用摄像头</string>
-    <string name="webcam_status_streaming">正在以 %1$d × %2$d 传输到 %3$s</string>
     <string name="webcam_status_connecting">正在将摄像头连接到 %1$s…</string>
     <string name="webcam_status_ready">已准备好传输到 %1$s</string>
     <string name="webcam_start">启动摄像头</string>
@@ -493,9 +482,6 @@
     <string name="timeline_action_load_more">加载更多</string>
     <string name="timeline_today">今天</string>
     <string name="timeline_yesterday">昨天</string>
-    <string name="settings_timeline_title">时间线</string>
-    <string name="settings_timeline_retention">保留时间线条目</string>
-    <string name="settings_timeline_retention_hint">自动移除较早的条目，或在此手机上本地保留最多 5,000 条。</string>
     <string name="timeline_retention_30d">30 天</string>
     <string name="timeline_retention_90d">90 天</string>
     <string name="timeline_retention_1y">1 年</string>
@@ -529,7 +515,6 @@
     <string name="localsend_card_title">附近的 LocalSend</string>
     <string name="localsend_card_empty">此 Wi-Fi 网络上尚未发现 LocalSend 设备。</string>
     <string name="localsend_nearby_device">附近设备</string>
-    <string name="transfer_requested_from">%1$s 想要发送文件</string>
     <string name="action_accept">接受</string>
     <string name="action_decline">拒绝</string>
     <string name="action_dismiss">忽略</string>

@@ -166,14 +166,16 @@ impl qobject::Messages {
             return;
         }
         let last = self.rust().last.clone();
-        let differs = |f: fn(&messages::View) -> String| last.as_ref().is_none_or(|l| f(l) != f(&view));
+        // Compared as values: printing both lists to compare them cost more than the update.
+        let differs =
+            |f: fn(&messages::View) -> &serde_json::Value| last.as_ref().is_none_or(|l| f(l) != f(&view));
         self.as_mut().set_device(QString::from(&view.device.map(|d| d.to_string()).unwrap_or_default()));
         self.as_mut().set_status(QString::from(view.status.as_str()));
-        if differs(|v| v.threads.to_string()) {
+        if differs(|v| &v.threads) {
             self.as_mut().set_threads(QString::from(&view.threads.to_string()));
         }
         self.as_mut().set_thread(QString::from(view.thread.as_deref().unwrap_or_default()));
-        if differs(|v| v.messages.to_string()) {
+        if differs(|v| &v.messages) {
             self.as_mut().set_messages(QString::from(&view.messages.to_string()));
         }
         self.as_mut().set_more(view.more);
@@ -182,7 +184,7 @@ impl qobject::Messages {
         self.as_mut().set_compose_to(QString::from(view.compose_to.as_deref().unwrap_or_default()));
         self.as_mut().set_compose_name(QString::from(view.compose_name.as_deref().unwrap_or_default()));
         self.as_mut().set_app_filter(QString::from(&view.app_filter));
-        if differs(|v| v.available_apps.to_string()) {
+        if differs(|v| &v.available_apps) {
             self.as_mut().set_available_apps(QString::from(&view.available_apps.to_string()));
         }
         self.as_mut().set_has_chat_threads(view.has_chat_threads);

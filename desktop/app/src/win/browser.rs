@@ -430,7 +430,7 @@ mod tests {
     /// With a Chromium browser showing a page whose title has
     /// `NECTARLINK_TEST_TAB` in it: reads its address and its video's place.
     #[test]
-    #[ignore]
+    #[ignore = "needs a browser tab titled NECTARLINK_TEST_TAB"]
     fn reads_a_real_browser() {
         let wanted = std::env::var("NECTARLINK_TEST_TAB").expect("NECTARLINK_TEST_TAB");
         // SAFETY: COM for this test's thread.

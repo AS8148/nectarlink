@@ -301,7 +301,7 @@ mod tests {
     /// `NECTARLINK_TEST_TAB` in it: captures its window's video, covered
     /// or not, and writes it to `NECTARLINK_TEST_DUMP` (raw BGRA) if set.
     #[test]
-    #[ignore]
+    #[ignore = "needs a browser tab titled NECTARLINK_TEST_TAB"]
     fn captures_a_window_behind_others() {
         use crate::win::browser::{Automation, frame_of, use_physical_pixels, window_for};
         let wanted = std::env::var("NECTARLINK_TEST_TAB").expect("NECTARLINK_TEST_TAB");

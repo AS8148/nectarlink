@@ -669,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "benchmark"]
     fn bench_to_bgrx_4k() {
         let (w, h) = (3840u32, 2160u32);
         let stride = w as usize;
@@ -773,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "benchmark; needs BENCH_4K_H264"]
     fn bench_decode_4k() {
         let path = std::env::var("BENCH_4K_H264").expect("BENCH_4K_H264");
         let stream = std::fs::read(path).unwrap();

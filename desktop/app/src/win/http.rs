@@ -328,7 +328,7 @@ mod tests {
 
     /// Needs the internet: `cargo test -- --ignored`.
     #[test]
-    #[ignore]
+    #[ignore = "needs the internet"]
     fn fetches_over_https() {
         let body = get("https://api.github.com/repos/rust-lang/rust", 1024 * 1024).unwrap();
         assert!(String::from_utf8_lossy(&body).contains("\"full_name\""));
@@ -338,7 +338,7 @@ mod tests {
 
     /// Needs the internet: resumes a download from the middle.
     #[test]
-    #[ignore]
+    #[ignore = "needs the internet"]
     fn resumes_a_download() {
         let url = "https://github.com/thtbee/nectarlink/releases/download/v0.1.0/SHA256SUMS.txt";
         let dir = tempfile::tempdir().unwrap();
@@ -356,7 +356,7 @@ mod tests {
 mod release_download {
     /// Needs the internet: the real installer, as an update downloads it.
     #[test]
-    #[ignore]
+    #[ignore = "needs the internet"]
     fn downloads_a_release_installer() {
         let url =
             "https://github.com/thtbee/nectarlink/releases/download/v0.1.2/Nectarlink-0.1.2-x64-setup.exe";

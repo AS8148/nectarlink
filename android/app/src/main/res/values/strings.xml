@@ -182,7 +182,6 @@
     <string name="clipboard_history_no_match">Nothing matches “%1$s”.</string>
     <string name="clipboard_history_from">From %1$s</string>
     <string name="clipboard_history_sent_to">Sent to %1$s</string>
-    <string name="clipboard_history_pinned">Pinned</string>
     <string name="clipboard_history_image">Image</string>
     <string name="clipboard_history_copy">Copy</string>
     <string name="clipboard_history_copied">Copied to clipboard</string>
@@ -194,8 +193,6 @@
     <string name="settings_clipboard_title">Clipboard</string>
     <string name="settings_clipboard_suggestions">Suggest actions for copied text</string>
     <string name="settings_clipboard_suggestions_hint">Suggest actions for text from your PC: open links, maps, calls, parcels and email.</string>
-    <string name="settings_clipboard_history">Keep clipboard history</string>
-    <string name="settings_clipboard_history_hint">Keeps the last 50 clips, encrypted on this phone. Passwords and one-time codes are never saved.</string>
     <string name="clip_received_from">Copied from %1$s</string>
     <string name="clip_action_open">Open</string>
     <string name="clip_action_maps">Open in Maps</string>
@@ -279,8 +276,6 @@
     <string name="action_disconnect">Disconnect</string>
     <string name="action_stop_reconnecting">Stop reconnecting</string>
     <string name="action_reconnect">Reconnect</string>
-    <string name="action_more">More actions</string>
-    <string name="action_less">Fewer actions</string>
     <string name="wake_waking">Waking %1$s…</string>
     <string name="wake_timeout_title">%1$s hasn\'t woken up yet</string>
     <string name="wake_timeout_text">Check that:\n• Wake-on-LAN is enabled in BIOS/UEFI and in the network adapter\'s settings in Windows (Power Management and Wake on Magic Packet).\n• %1$s is on Ethernet if it was shut down (Wi-Fi wake rarely works from shutdown).\n• This phone is on the same network as %1$s.</string>
@@ -310,7 +305,6 @@
     <string name="channel_connection">Connection</string>
     <string name="channel_ringing">Find my phone</string>
     <string name="notification_connected_to">Connected to %1$s</string>
-    <string name="notification_connected_many">Connected to %1$d PCs</string>
     <plurals name="notification_connected_pcs">
         <item quantity="one">Connected to %1$d PC</item>
         <item quantity="other">Connected to %1$d PCs</item>
@@ -425,7 +419,6 @@
     <!-- Deck (macro pad to PC) -->
     <string name="action_deck_pc">Deck</string>
     <string name="action_desk_pc">Desk clock</string>
-    <string name="deck_title">Deck</string>
     <string name="deck_fullscreen">Full screen</string>
     <string name="deck_exit_fullscreen">Exit full screen</string>
     <string name="deck_playing">Playing</string>
@@ -433,12 +426,10 @@
     <string name="deck_muted">Muted</string>
     <string name="deck_live">Live</string>
     <string name="deck_volume_percent">%1$d%%</string>
-    <string name="deck_waiting">Loading %1$s\'s Deck…</string>
     <string name="deck_empty_page">No tiles on this page yet. Add tiles in NectarLink on %1$s.</string>
     <string name="deck_commands_denied_title">Allow commands on %1$s</string>
     <string name="deck_commands_denied_text">To run shell commands from this phone, turn on “Run Deck commands” for this phone in NectarLink › Settings › Devices on %1$s.</string>
     <string name="deck_hint">Customize tiles in Deck on %1$s</string>
-    <string name="pc_audio_title">PC audio</string>
     <string name="pc_audio_volume">Volume</string>
     <string name="pc_audio_mute">Mute</string>
     <string name="pc_audio_unmute">Unmute</string>
@@ -455,7 +446,6 @@
     <string name="pc_audio_use_phone_mic_on">The PC hears this phone\'s microphone</string>
 
     <!-- Phone storage in File Explorer -->
-    <string name="settings_storage">Storage in File Explorer</string>
     <string name="storage_all_files_title">All files access</string>
     <string name="storage_all_files_on">On. PCs you allow can browse, open and copy this phone\'s files in File Explorer.</string>
     <string name="storage_all_files_off">Browse this phone\'s folders in File Explorer on your PC. Needs All files access, or pick specific folders below.</string>
@@ -480,7 +470,6 @@
     <string name="webcam_permission_title">Allow camera access</string>
     <string name="webcam_permission_text">NectarLink uses the camera only while you stream video to %1$s as a webcam.</string>
     <string name="webcam_allow_camera">Allow camera</string>
-    <string name="webcam_status_streaming">Streaming %1$d × %2$d to %3$s</string>
     <string name="webcam_status_connecting">Connecting camera to %1$s…</string>
     <string name="webcam_status_ready">Ready to stream to %1$s</string>
     <string name="webcam_start">Start webcam</string>
@@ -517,9 +506,6 @@
     <string name="timeline_action_load_more">Load more</string>
     <string name="timeline_today">Today</string>
     <string name="timeline_yesterday">Yesterday</string>
-    <string name="settings_timeline_title">Timeline</string>
-    <string name="settings_timeline_retention">Keep timeline items</string>
-    <string name="settings_timeline_retention_hint">Automatically remove older items, or keep up to 5,000 items locally on this phone.</string>
     <string name="timeline_retention_30d">30d</string>
     <string name="timeline_retention_90d">90d</string>
     <string name="timeline_retention_1y">1y</string>
@@ -557,7 +543,6 @@
     <string name="localsend_card_title">LocalSend nearby</string>
     <string name="localsend_card_empty">No LocalSend devices found on this Wi-Fi network yet.</string>
     <string name="localsend_nearby_device">Nearby device</string>
-    <string name="transfer_requested_from">%1$s wants to send files</string>
     <string name="action_accept">Accept</string>
     <string name="action_decline">Decline</string>
     <string name="action_dismiss">Dismiss</string>

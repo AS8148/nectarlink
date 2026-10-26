@@ -2233,7 +2233,7 @@ mod imp {
         /// Play on phone does.
         #[cfg(windows)]
         #[test]
-        #[ignore]
+        #[ignore = "needs a browser tab titled NECTARLINK_TEST_TAB"]
         fn captures_a_browsers_video() {
             use crate::win::browser::{Automation, window_for};
             let wanted = std::env::var("NECTARLINK_TEST_TAB").expect("NECTARLINK_TEST_TAB");

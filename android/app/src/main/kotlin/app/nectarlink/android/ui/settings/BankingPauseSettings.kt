@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -27,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,6 +47,8 @@ import app.nectarlink.android.R
 import app.nectarlink.android.banking.BankingPause
 import app.nectarlink.android.banking.OpenWithPauseActivity
 import app.nectarlink.android.elevated.Elevated
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** An app the user can choose: package, name and a small icon. */
 private data class Choosable(val pkg: String, val label: String, val icon: ImageBitmap?)
@@ -140,10 +145,14 @@ internal fun BankingPauseAccess() {
 @Composable
 private fun AppPicker(initial: Set<String>, onDone: (Set<String>) -> Unit, onCancel: () -> Unit) {
     val context = LocalContext.current
-    val apps = remember { launchableApps(context) }
+    // Every app's name and icon: read away from the main thread, which they
+    // held for the whole time the dialog took to open.
+    val apps by produceState<List<Choosable>?>(initialValue = null) {
+        value = withContext(Dispatchers.Default) { launchableApps(context) }
+    }
     var selected by remember { mutableStateOf(initial) }
     var query by remember { mutableStateOf("") }
-    val shown = apps.filter { query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) }
+    val shown = apps.orEmpty().filter { query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) }
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text(stringResource(R.string.banking_pick_title)) },
@@ -156,6 +165,13 @@ private fun AppPicker(initial: Set<String>, onDone: (Set<String>) -> Unit, onCan
                     label = { Text(stringResource(R.string.banking_search)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (apps == null) {
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                    ) { CircularProgressIndicator() }
+                }
                 LazyColumn(Modifier.heightIn(max = 360.dp)) {
                     items(shown, key = { it.pkg }) { app ->
                         val on = app.pkg in selected
