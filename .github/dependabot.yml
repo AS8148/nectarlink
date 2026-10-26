@@ -15,6 +15,9 @@ updates:
       # Moves with windows, whose own windows-core it has to be: the
       # implement macro and windows' COM types come from that one crate.
       - dependency-name: windows-core
+      # Drops the connection when a receiver pauses (see Cargo.toml).
+      - dependency-name: noq-proto
+        versions: ["1.4.0"]
   - package-ecosystem: gradle
     directory: /android
     schedule:

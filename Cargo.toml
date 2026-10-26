@@ -46,7 +46,11 @@ dirs = "7"
 hostname = "0.4"
 hmac = "0.13"
 iroh = "1.3"
-noq-proto = { version = "1.3", default-features = false }
+# 1.4.0 closes a connection when a stream buffers more than 1024 chunks, and
+# its compaction never merges chunks it has already compacted, so a receiver
+# that stops reading for a moment (a paused transfer, slow storage) loses the
+# link. Held on 1.3 until a release fixes it.
+noq-proto = { version = "~1.3", default-features = false }
 iroh-mdns-address-lookup = "0.6"
 material-colors = { version = "0.5", default-features = false, features = ["std", "quantize"] }
 n0-future = "0.3"
