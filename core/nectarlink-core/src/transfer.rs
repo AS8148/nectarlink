@@ -807,24 +807,7 @@ pub(crate) async fn deliver_queued_files(
             }
         };
         let name_for_err = spec.name.clone();
-        let res = tokio::task::spawn_blocking(move || -> std::io::Result<(std::fs::File, u64, String)> {
-            use std::io::{Read, Seek, SeekFrom};
-            let mut f = handle;
-            let size = f.metadata()?.len();
-            f.seek(SeekFrom::Start(0))?;
-            let mut hasher = blake3::Hasher::new();
-            let mut buf = vec![0u8; 64 * 1024];
-            loop {
-                let n = f.read(&mut buf)?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buf[..n]);
-            }
-            f.seek(SeekFrom::Start(0))?;
-            Ok((f, size, hasher.finalize().to_hex().to_string()))
-        })
-        .await;
+        let res = tokio::task::spawn_blocking(move || hash_whole_file(handle)).await;
         let (handle, size, digest) = match res {
             Ok(Ok(v)) => v,
             _ => {
@@ -1052,24 +1035,7 @@ async fn send_inner(
             }
             FileSource::File(handle) => handle,
         };
-        let (handle, size, digest) =
-            tokio::task::spawn_blocking(move || -> std::io::Result<(std::fs::File, u64, String)> {
-                use std::io::{Read, Seek, SeekFrom};
-                let mut f = handle;
-                let size = f.metadata()?.len();
-                f.seek(SeekFrom::Start(0))?;
-                let mut hasher = blake3::Hasher::new();
-                let mut buf = vec![0u8; 64 * 1024];
-                loop {
-                    let n = f.read(&mut buf)?;
-                    if n == 0 {
-                        break;
-                    }
-                    hasher.update(&buf[..n]);
-                }
-                f.seek(SeekFrom::Start(0))?;
-                Ok((f, size, hasher.finalize().to_hex().to_string()))
-            })
+        let (handle, size, digest) = tokio::task::spawn_blocking(move || hash_whole_file(handle))
             .await
             .map_err(|e| Error::Internal(e.to_string()))??;
         let entry =
@@ -1551,6 +1517,18 @@ pub(crate) async fn accept_stream(
 async fn refuse(send: &mut SendStream, code: ErrorCode, msg: &str) {
     let _ = write_frame(send, &Envelope::error(code, msg).to_cbor()).await;
     let _ = send.finish();
+}
+
+/// A file's size and BLAKE3 digest (hex), read from the start; the file is
+/// handed back rewound, ready to send.
+fn hash_whole_file(mut f: std::fs::File) -> std::io::Result<(std::fs::File, u64, String)> {
+    use std::io::{Seek, SeekFrom};
+    let size = f.metadata()?.len();
+    f.seek(SeekFrom::Start(0))?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_reader(&mut f)?;
+    f.seek(SeekFrom::Start(0))?;
+    Ok((f, size, hasher.finalize().to_hex().to_string()))
 }
 
 fn hash_file_prefix(path: &Path, mut left: u64) -> std::io::Result<blake3::Hasher> {

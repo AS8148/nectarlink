@@ -4749,10 +4749,11 @@ async fn transfer_blake3_integrity_verified_and_mismatch_keeps_partial() {
         .await
         .unwrap();
 
-    wait_transfer(&mut phone, &id, "receiving before pause", |t| {
-        (t.state == TransferState::Running && t.done > 0).then_some(())
-    })
-    .await;
+    // Paused as soon as it runs: the offer and its hash are sent by then, and
+    // waiting for the first progress report lets an optimized build finish
+    // all 48 MB before it comes.
+    wait_transfer(&mut pc, &id, "sending before pause", |t| (t.state == TransferState::Running).then_some(()))
+        .await;
     pc.node.pause_transfer(&id);
     wait_transfer(&mut pc, &id, "sender paused", |t| (t.state == TransferState::Paused).then_some(())).await;
     wait_transfer(&mut phone, &id, "receiver paused", |t| (t.state == TransferState::Paused).then_some(()))
@@ -6254,6 +6255,45 @@ async fn usb_upgrade_reconnect_and_realtime_pcm_do_not_starve_control_rpcs() {
         .await
         .expect("ring works after restart");
 
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+/// Throughput of one large file between two devices in this process, over
+/// loopback. Not a check: run it to measure (`--ignored --nocapture`, in
+/// release), with NECTARLINK_BENCH_MB for the size (default 1024).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "benchmark"]
+async fn bench_file_throughput() {
+    use std::io::Write;
+    let mb: usize = std::env::var("NECTARLINK_BENCH_MB").ok().and_then(|v| v.parse().ok()).unwrap_or(1024);
+    let mut pc = device("Desktop", DeviceKind::Desktop).await;
+    let mut phone = device("Pixel", DeviceKind::Phone).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let phone_id = phone.node.device_id();
+    let src = tempfile::tempdir().unwrap();
+    let path = src.path().join("bench.bin");
+    {
+        let block = data(8 * 1024 * 1024, 7);
+        let mut f = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+        for _ in 0..mb / 8 {
+            f.write_all(&block).unwrap();
+        }
+    }
+    let files = vec![OutgoingFile { name: "bench.bin".into(), folder: None, source: FileSource::Path(path) }];
+    let started = std::time::Instant::now();
+    let id = pc.node.send_files(phone_id, files).await.expect("send starts");
+    let first_byte = wait_transfer(&mut phone, &id, "first bytes", |t| (t.done > 0).then(|| started.elapsed())).await;
+    wait_transfer(&mut phone, &id, "received", saved).await;
+    let total = started.elapsed();
+    let moving = total - first_byte;
+    println!(
+        "bench: {mb} MB in {:.2} s = {:.0} MB/s overall; first byte after {:.2} s, then {:.0} MB/s",
+        total.as_secs_f64(),
+        mb as f64 / total.as_secs_f64(),
+        first_byte.as_secs_f64(),
+        mb as f64 / moving.as_secs_f64()
+    );
     pc.node.shutdown().await;
     phone.node.shutdown().await;
 }
