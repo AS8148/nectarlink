@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Linux BLE proximity RSSI monitor via BlueZ D-Bus (`org.freedesktop.DBus.ObjectManager`).
-//! Never spawns interactive `bluetoothctl` sessions or `scan on`, and matches only
-//! paired NectarLink phones (or devices advertising the NectarLink BLE UUID /
-//! manufacturer frame) when walk-away automation is enabled.
+//! Bluetooth through BlueZ over D-Bus. Broadcasts the PC's proximity beacon
+//! (company `0xFFFF`, `NCTR\x01` + 8-byte device ID prefix, as on Windows) so
+//! phones set to "Wake when PC is nearby" find it, and, when walk-away
+//! automation is on, watches the signal strength of paired phones. Never
+//! spawns `bluetoothctl` or starts a scan of its own.
 
 use std::collections::HashMap;
 use std::sync::{
-    Condvar, Mutex,
+    Arc, Condvar, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use nectarlink_core::DeviceId;
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 
 pub const COMPANY_ID: u16 = 0xFFFF;
 pub const MAGIC: &[u8; 5] = b"NCTR\x01";
@@ -22,6 +23,13 @@ pub const WALK_AWAY_RSSI_DBM: i16 = -85;
 pub const NECTARLINK_BLE_UUID: &str = "f81d4fae-7dec-11d0-a765-00a0c91e6bf6";
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// How often the beacon is checked when walk-away is off: it comes back this
+/// long after Bluetooth is turned back on.
+const BEACON_CHECK_INTERVAL: Duration = Duration::from_secs(15);
+
+const BLUEZ: &str = "org.bluez";
+const ADVERTISING_MANAGER: &str = "org.bluez.LEAdvertisingManager1";
+const ADVERTISEMENT_PATH: &str = "/app/nectarlink/beacon";
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static STOP_MU: Mutex<bool> = Mutex::new(false);
@@ -263,52 +271,143 @@ fn extract_mfg_ffff(val: &OwnedValue) -> Option<Vec<u8>> {
     None
 }
 
-fn is_adapter_powered(conn: &zbus::blocking::Connection) -> bool {
-    if !super::dbus_name_has_owner(conn, "org.bluez") {
-        return false;
-    }
-    let Ok(reply) = conn.call_method(
-        Some("org.bluez"),
-        "/",
-        Some("org.freedesktop.DBus.ObjectManager"),
-        "GetManagedObjects",
-        &(),
-    ) else {
-        return false;
-    };
-    let Ok(objects) = reply.body().deserialize::<ManagedObjects>() else {
-        return false;
-    };
-    objects.values().any(|ifaces| {
-        ifaces
-            .get("org.bluez.Adapter1")
-            .and_then(|props| props.get("Powered"))
-            .and_then(|v| bool::try_from(v).ok())
-            .unwrap_or(false)
-    })
+/// The beacon as BlueZ reads it: a non-connectable broadcast that carries only
+/// the manufacturer data.
+struct Advertisement {
+    payload: [u8; 13],
+    released: Arc<AtomicBool>,
 }
 
-fn poll_bluez_devices(conn: &zbus::blocking::Connection, own_prefix: &[u8; 8], tracker: &mut RssiTracker) {
-    if !walk_away_lock_enabled() {
-        return;
+#[zbus::interface(name = "org.bluez.LEAdvertisement1")]
+impl Advertisement {
+    /// BlueZ dropped the beacon (its adapter went away); it is registered again.
+    fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
     }
+
+    #[zbus(property, name = "Type")]
+    fn kind(&self) -> String {
+        "broadcast".to_owned()
+    }
+
+    #[zbus(property)]
+    fn manufacturer_data(&self) -> HashMap<u16, OwnedValue> {
+        let bytes =
+            OwnedValue::try_from(Value::from(self.payload.to_vec())).expect("byte arrays hold no fds");
+        HashMap::from([(COMPANY_ID, bytes)])
+    }
+}
+
+/// Keeps the beacon registered with the first powered adapter that can
+/// advertise, following adapters as they are turned off and on.
+struct Beacon {
+    adapter: Option<OwnedObjectPath>,
+    released: Arc<AtomicBool>,
+    last_error: Option<String>,
+}
+
+impl Beacon {
+    /// Connects with the beacon served. It has to be served from the builder:
+    /// adding it to a connection afterwards needs a tokio runtime.
+    fn serve(
+        builder: zbus::blocking::connection::Builder<'_>,
+        device_id: &DeviceId,
+    ) -> zbus::Result<(zbus::blocking::Connection, Self)> {
+        let released = Arc::new(AtomicBool::new(false));
+        let advertisement =
+            Advertisement { payload: build_manufacturer_payload(device_id), released: released.clone() };
+        let conn = builder.serve_at(ADVERTISEMENT_PATH, advertisement)?.build()?;
+        Ok((conn, Self { adapter: None, released, last_error: None }))
+    }
+
+    fn sync(&mut self, conn: &zbus::blocking::Connection, objects: &ManagedObjects) {
+        if self.released.swap(false, Ordering::SeqCst) {
+            self.adapter = None;
+        }
+        let wanted = advertising_adapter(objects);
+        if self.adapter.is_some() && self.adapter == wanted {
+            return;
+        }
+        if let Some(previous) = self.adapter.take() {
+            unregister(conn, &previous);
+        }
+        let Some(adapter) = wanted else {
+            return;
+        };
+        let options: HashMap<&str, Value<'_>> = HashMap::new();
+        let path = ObjectPath::from_static_str_unchecked(ADVERTISEMENT_PATH);
+        match conn.call_method(
+            Some(BLUEZ),
+            &adapter,
+            Some(ADVERTISING_MANAGER),
+            "RegisterAdvertisement",
+            &(path, options),
+        ) {
+            Ok(_) => {
+                tracing::info!(adapter = adapter.as_str(), "broadcasting the Bluetooth beacon");
+                self.adapter = Some(adapter);
+                self.last_error = None;
+            }
+            Err(e) => {
+                // Tried again on every check, so say it once.
+                let error = e.to_string();
+                if self.last_error.as_ref() != Some(&error) {
+                    tracing::warn!(%error, "this PC can't broadcast its Bluetooth beacon");
+                    self.last_error = Some(error);
+                }
+            }
+        }
+    }
+
+    fn stop(&mut self, conn: &zbus::blocking::Connection) {
+        if let Some(adapter) = self.adapter.take() {
+            unregister(conn, &adapter);
+        }
+    }
+}
+
+fn unregister(conn: &zbus::blocking::Connection, adapter: &OwnedObjectPath) {
+    let path = ObjectPath::from_static_str_unchecked(ADVERTISEMENT_PATH);
+    // Fails when the adapter is gone, which takes the beacon with it.
+    let _ = conn.call_method(
+        Some(BLUEZ),
+        adapter,
+        Some(ADVERTISING_MANAGER),
+        "UnregisterAdvertisement",
+        &(path,),
+    );
+}
+
+/// The first powered adapter (by path, so the choice is stable) that can
+/// advertise.
+fn advertising_adapter(objects: &ManagedObjects) -> Option<OwnedObjectPath> {
+    objects
+        .iter()
+        .filter(|(_, ifaces)| {
+            ifaces.contains_key(ADVERTISING_MANAGER)
+                && ifaces
+                    .get("org.bluez.Adapter1")
+                    .and_then(|props| props.get("Powered"))
+                    .and_then(|v| bool::try_from(v).ok())
+                    .unwrap_or(false)
+        })
+        .map(|(path, _)| path)
+        .min_by(|a, b| a.as_str().cmp(b.as_str()))
+        .cloned()
+}
+
+fn managed_objects(conn: &zbus::blocking::Connection) -> Option<ManagedObjects> {
+    let reply = conn
+        .call_method(Some(BLUEZ), "/", Some("org.freedesktop.DBus.ObjectManager"), "GetManagedObjects", &())
+        .ok()?;
+    reply.body().deserialize::<ManagedObjects>().ok()
+}
+
+fn poll_bluez_devices(objects: &ManagedObjects, own_prefix: &[u8; 8], tracker: &mut RssiTracker) {
     let paired_phones = paired_phones_from_hub();
     if paired_phones.is_empty() {
         return;
     }
-
-    let Ok(reply) = conn.call_method(
-        Some("org.bluez"),
-        "/",
-        Some("org.freedesktop.DBus.ObjectManager"),
-        "GetManagedObjects",
-        &(),
-    ) else {
-        return;
-    };
-    let Ok(objects) = reply.body().deserialize::<ManagedObjects>() else {
-        return;
-    };
 
     for ifaces in objects.values() {
         let Some(props) = ifaces.get("org.bluez.Device1") else {
@@ -335,13 +434,23 @@ fn poll_bluez_devices(conn: &zbus::blocking::Connection, own_prefix: &[u8; 8], t
 }
 
 fn run_worker(device_id: DeviceId) {
-    let Ok(conn) = zbus::blocking::Connection::system() else {
-        tracing::debug!("BLE beacon: system D-Bus unavailable; exiting worker");
-        RUNNING.store(false, Ordering::SeqCst);
-        return;
+    let served = zbus::blocking::connection::Builder::system().and_then(|b| Beacon::serve(b, &device_id));
+    let (conn, mut beacon) = match served {
+        Ok((conn, beacon)) => (conn, Some(beacon)),
+        Err(e) => {
+            tracing::debug!(error = %e, "BLE beacon: can't serve it on the system D-Bus");
+            match zbus::blocking::Connection::system() {
+                Ok(conn) => (conn, None),
+                Err(_) => {
+                    tracing::debug!("BLE beacon: system D-Bus unavailable; exiting worker");
+                    RUNNING.store(false, Ordering::SeqCst);
+                    return;
+                }
+            }
+        }
     };
-    if !is_adapter_powered(&conn) {
-        tracing::debug!("BLE beacon: no powered BlueZ adapter found; exiting worker");
+    if !super::dbus_name_has_owner(&conn, BLUEZ) {
+        tracing::debug!("BLE beacon: BlueZ isn't running; exiting worker");
         RUNNING.store(false, Ordering::SeqCst);
         return;
     }
@@ -351,11 +460,23 @@ fn run_worker(device_id: DeviceId) {
     let mut tracker = RssiTracker::default();
 
     while RUNNING.load(Ordering::Relaxed) {
-        poll_bluez_devices(&conn, &own_prefix, &mut tracker);
+        let walk_away = walk_away_lock_enabled();
+        if let Some(objects) = managed_objects(&conn) {
+            if let Some(beacon) = beacon.as_mut() {
+                beacon.sync(&conn, &objects);
+            }
+            if walk_away {
+                poll_bluez_devices(&objects, &own_prefix, &mut tracker);
+            }
+        }
 
+        let interval = if walk_away { POLL_INTERVAL } else { BEACON_CHECK_INTERVAL };
         let guard = STOP_MU.lock().unwrap_or_else(|e| e.into_inner());
         let _ = STOP_CV
-            .wait_timeout_while(guard, POLL_INTERVAL, |stopped| !*stopped && RUNNING.load(Ordering::Relaxed));
+            .wait_timeout_while(guard, interval, |stopped| !*stopped && RUNNING.load(Ordering::Relaxed));
+    }
+    if let Some(beacon) = beacon.as_mut() {
+        beacon.stop(&conn);
     }
 }
 
@@ -480,6 +601,154 @@ mod tests {
             mfg_payload: None,
         };
         assert_eq!(match_nectarlink_device(&by_uuid, &own_prefix, &paired), Some(phone_prefix));
+    }
+
+    fn adapter(path: &str, powered: bool, can_advertise: bool) -> ManagedObjects {
+        let mut ifaces = HashMap::from([(
+            "org.bluez.Adapter1".to_owned(),
+            HashMap::from([("Powered".to_owned(), powered.into())]),
+        )]);
+        if can_advertise {
+            ifaces.insert(ADVERTISING_MANAGER.to_owned(), HashMap::new());
+        }
+        HashMap::from([(OwnedObjectPath::try_from(path).unwrap(), ifaces)])
+    }
+
+    #[test]
+    fn beacon_uses_the_first_powered_adapter_that_can_advertise() {
+        let mut objects = adapter("/org/bluez/hci2", true, true);
+        objects.extend(adapter("/org/bluez/hci0", false, true));
+        objects.extend(adapter("/org/bluez/hci1", true, false));
+        objects.extend(adapter("/org/bluez/hci3", true, true));
+        assert_eq!(advertising_adapter(&objects).unwrap().as_str(), "/org/bluez/hci2");
+        assert_eq!(advertising_adapter(&adapter("/org/bluez/hci0", false, true)), None);
+        assert_eq!(advertising_adapter(&HashMap::new()), None);
+    }
+
+    /// A private bus from `dbus-daemon`, stopped when dropped.
+    struct TestBus {
+        daemon: std::process::Child,
+        address: String,
+    }
+
+    impl TestBus {
+        fn start() -> Option<Self> {
+            use std::io::BufRead;
+            let mut daemon = std::process::Command::new("dbus-daemon")
+                .args(["--session", "--nofork", "--print-address"])
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .ok()?;
+            let mut address = String::new();
+            std::io::BufReader::new(daemon.stdout.take()?).read_line(&mut address).ok()?;
+            Some(Self { daemon, address: address.trim().to_owned() })
+        }
+
+        fn connect(&self) -> zbus::blocking::connection::Builder<'static> {
+            zbus::blocking::connection::Builder::address(self.address.as_str()).unwrap()
+        }
+    }
+
+    impl Drop for TestBus {
+        fn drop(&mut self) {
+            let _ = self.daemon.kill();
+            let _ = self.daemon.wait();
+        }
+    }
+
+    /// Stands in for BlueZ's advertising manager: reads each beacon back the
+    /// way BlueZ does and records what it was asked.
+    #[derive(Clone, Default)]
+    struct FakeManager {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FakeManager {
+        fn take(&self) -> Vec<String> {
+            std::mem::take(&mut *self.calls.lock().unwrap())
+        }
+    }
+
+    #[zbus::interface(name = "org.bluez.LEAdvertisingManager1")]
+    impl FakeManager {
+        async fn register_advertisement(
+            &self,
+            #[zbus(header)] header: zbus::message::Header<'_>,
+            #[zbus(connection)] conn: &zbus::Connection,
+            path: OwnedObjectPath,
+            _options: HashMap<String, OwnedValue>,
+        ) -> zbus::fdo::Result<()> {
+            let reply = conn
+                .call_method(
+                    header.sender().map(|s| s.as_str()),
+                    &path,
+                    Some("org.freedesktop.DBus.Properties"),
+                    "GetAll",
+                    &("org.bluez.LEAdvertisement1",),
+                )
+                .await?;
+            let props: HashMap<String, OwnedValue> = reply.body().deserialize()?;
+            let kind = props.get("Type").and_then(extract_string).unwrap_or_default();
+            let data = props.get("ManufacturerData").and_then(extract_mfg_ffff);
+            self.calls.lock().unwrap().push(format!("register {} {kind} {data:?}", path.as_str()));
+            Ok(())
+        }
+
+        fn unregister_advertisement(&self, path: OwnedObjectPath) {
+            self.calls.lock().unwrap().push(format!("unregister {}", path.as_str()));
+        }
+    }
+
+    #[test]
+    fn beacon_registers_with_bluez_and_follows_its_adapter() {
+        let Some(bus) = TestBus::start() else {
+            eprintln!("skipped: dbus-daemon isn't installed");
+            return;
+        };
+        let manager = FakeManager::default();
+        let bluez = bus
+            .connect()
+            .name(BLUEZ)
+            .unwrap()
+            .serve_at("/org/bluez/hci0", manager.clone())
+            .unwrap()
+            .build()
+            .unwrap();
+        let id = DeviceId([0x5A; 32]);
+        let (conn, mut beacon) = Beacon::serve(bus.connect(), &id).unwrap();
+        let register = format!(
+            "register {ADVERTISEMENT_PATH} broadcast {:?}",
+            Some(build_manufacturer_payload(&id).to_vec())
+        );
+        let unregister = format!("unregister {ADVERTISEMENT_PATH}");
+        let (on, off) = (adapter("/org/bluez/hci0", true, true), adapter("/org/bluez/hci0", false, true));
+
+        beacon.sync(&conn, &on);
+        beacon.sync(&conn, &on);
+        assert_eq!(manager.take(), std::slice::from_ref(&register));
+
+        // BlueZ dropped it, so it goes back.
+        bluez
+            .call_method(
+                conn.unique_name().map(|n| n.as_str()),
+                ADVERTISEMENT_PATH,
+                Some("org.bluez.LEAdvertisement1"),
+                "Release",
+                &(),
+            )
+            .unwrap();
+        beacon.sync(&conn, &on);
+        assert_eq!(manager.take(), std::slice::from_ref(&register));
+
+        // Bluetooth turned off, then on again.
+        beacon.sync(&conn, &off);
+        beacon.sync(&conn, &off);
+        assert_eq!(manager.take(), std::slice::from_ref(&unregister));
+        beacon.sync(&conn, &on);
+        assert_eq!(manager.take(), [register]);
+
+        beacon.stop(&conn);
+        assert_eq!(manager.take(), [unregister]);
     }
 
     #[test]

@@ -134,7 +134,7 @@ has a Stop button. Choosing another
 
 - **Wake when PC is nearby** never found the PC: the Windows app didn't
   start its Bluetooth beacon, and the phone looked for the wrong bytes in
-  it. Both are fixed; the beacon comes from the Windows app for now
+  it. Both are fixed, and the Linux app broadcasts the beacon too
   ([#47](https://github.com/thtbee/nectarlink/issues/47)).
 - **Typing on the PC from the phone lost letters** when voice typing
   rewrote what it had typed: the PC turned away the burst of backspaces
