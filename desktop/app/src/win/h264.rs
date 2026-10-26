@@ -617,18 +617,34 @@ fn convert_rows(p: &Picture, w: usize, first: usize, out: &mut [u8]) {
     let uv_plane = p.stride * p.plane_rows;
     let (luma, vr, ug, vg, ub) = p.colors.coefficients();
     let black = if p.colors.full_range { 0 } else { 16 };
+    // Scaled luma for each byte value, looked up instead of multiplied.
+    let mut scaled = [0i32; 256];
+    for (y, slot) in scaled.iter_mut().enumerate() {
+        *slot = (y as i32 - black) * luma;
+    }
+    let pixel = |c: i32, (b, g, r): (i32, i32, i32)| {
+        [clamp((c + b) >> 8), clamp((c + g) >> 8), clamp((c + r) >> 8), 255]
+    };
     for (i, row) in out.chunks_exact_mut(w * 4).enumerate() {
         let y_row = first + i;
         let y_line = &p.nv12[y_row * p.stride..][..w];
         let uv_line = &p.nv12[uv_plane + (y_row / 2) * p.stride..][..w.next_multiple_of(2).min(p.stride)];
-        for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-            let c = (i32::from(y_line[x]) - black) * luma;
-            let d = i32::from(uv_line[x & !1]) - 128;
-            let e = i32::from(uv_line[(x & !1) + 1]) - 128;
-            px[0] = clamp((c + ub * d + 128) >> 8);
-            px[1] = clamp((c - ug * d - vg * e + 128) >> 8);
-            px[2] = clamp((c + vr * e + 128) >> 8);
-            px[3] = 255;
+        // Two neighbouring pixels share their colour: worked out once for both.
+        let tint = |k: usize| {
+            let d = i32::from(uv_line[2 * k]) - 128;
+            let e = i32::from(uv_line[2 * k + 1]) - 128;
+            (ub * d + 128, -ug * d - vg * e + 128, vr * e + 128)
+        };
+        let (pairs, last) = row.as_chunks_mut::<8>();
+        for (k, px) in pairs.iter_mut().enumerate() {
+            let t = tint(k);
+            let (left, right) = px.split_at_mut(4);
+            left.copy_from_slice(&pixel(scaled[usize::from(y_line[2 * k])], t));
+            right.copy_from_slice(&pixel(scaled[usize::from(y_line[2 * k + 1])], t));
+        }
+        // An odd width leaves one pixel.
+        if !last.is_empty() {
+            last.copy_from_slice(&pixel(scaled[usize::from(y_line[w - 1])], tint((w - 1) / 2)));
         }
     }
 }
@@ -828,6 +844,56 @@ mod tests {
         assert_eq!(&out[4..8], &[255, 255, 255, 255], "white");
         let red = &out[8..12];
         assert!(red[2] > 240 && red[1] < 20 && red[0] < 20, "red: {red:?}");
+    }
+
+    /// The conversion per pixel, as the formula reads: the faster code must
+    /// give exactly these bytes.
+    fn reference_rows(p: &Picture, w: usize, first: usize, out: &mut [u8]) {
+        let uv_plane = p.stride * p.plane_rows;
+        let (luma, vr, ug, vg, ub) = p.colors.coefficients();
+        let black = if p.colors.full_range { 0 } else { 16 };
+        for (i, row) in out.chunks_exact_mut(w * 4).enumerate() {
+            let y_row = first + i;
+            for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                let c = (i32::from(p.nv12[y_row * p.stride + x]) - black) * luma;
+                let d = i32::from(p.nv12[uv_plane + (y_row / 2) * p.stride + (x & !1)]) - 128;
+                let e = i32::from(p.nv12[uv_plane + (y_row / 2) * p.stride + (x & !1) + 1]) - 128;
+                *px = [
+                    clamp((c + ub * d + 128) >> 8),
+                    clamp((c - ug * d - vg * e + 128) >> 8),
+                    clamp((c + vr * e + 128) >> 8),
+                    255,
+                ];
+            }
+        }
+    }
+
+    #[test]
+    fn conversion_matches_the_formula_for_every_size_and_color_space() {
+        for (w, h, stride) in
+            [(1usize, 2usize, 2usize), (2, 2, 2), (3, 3, 4), (5, 4, 8), (64, 33, 64), (1081, 9, 1088)]
+        {
+            let plane_rows = h.next_multiple_of(2);
+            let nv12: Vec<u8> = (0..stride * plane_rows * 3 / 2).map(|i| (i * 37 % 256) as u8).collect();
+            for (bt601, full_range) in [(false, false), (false, true), (true, false), (true, true)] {
+                let p = Picture {
+                    width: w as u32,
+                    height: h as u32,
+                    stride,
+                    plane_rows,
+                    nv12: nv12.clone(),
+                    colors: Colors { bt601, full_range },
+                };
+                // The whole picture, and a band starting further down as the threads get.
+                for first in [0, 1, h / 2] {
+                    let rows = h - first;
+                    let (mut fast, mut slow) = (vec![0u8; w * rows * 4], vec![0u8; w * rows * 4]);
+                    convert_rows(&p, w, first, &mut fast);
+                    reference_rows(&p, w, first, &mut slow);
+                    assert!(fast == slow, "{w}x{h} from row {first}, bt601 {bt601}, full range {full_range}");
+                }
+            }
+        }
     }
 
     #[test]
