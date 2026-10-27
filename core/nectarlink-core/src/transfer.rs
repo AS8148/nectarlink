@@ -878,6 +878,11 @@ pub(crate) async fn deliver_queued_files(
         if shutdown.is_cancelled() {
             break TransferState::Failed(TransferFailure::Interrupted);
         }
+        // Resumed: show it now, not once the receiver answers, so a pause
+        // from the receiver before then still reads as a change.
+        if reporter.transfer.state == TransferState::Paused {
+            reporter.set(TransferState::Running);
+        }
 
         let Some(session) = shared.session(&peer) else {
             let _ = shared.store.mark_queue_retry_or_wait(&item.id, 0, 0, None);
@@ -1159,6 +1164,10 @@ async fn send_until_done(
                 }
             }
             give_up_at = Instant::now() + RETRY_FOR;
+        }
+        // Resumed: as in the queue's loop above.
+        if reporter.transfer.state == TransferState::Paused {
+            reporter.set(TransferState::Running);
         }
         let Some(session) = reporter.shared.session(&peer) else {
             if Instant::now() >= give_up_at {
