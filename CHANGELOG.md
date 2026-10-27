@@ -113,6 +113,11 @@ has a Stop button. Choosing another
 
 ### Changed
 
+- **Pause for banking apps uses less battery.** While the screen is off,
+  the phone checks the app in front every 15 seconds instead of several
+  times a second, and checks again as soon as the screen turns on. By
+  [@alexfoxtm](https://github.com/alexfoxtm)
+  ([#61](https://github.com/thtbee/nectarlink/pull/61)).
 - **The phone app starts about twice as fast right after an update.**
   Android compiles an app installed outside the Play Store only during
   idle maintenance, often days later. With Elevated set up, NectarLink
@@ -136,6 +141,19 @@ has a Stop button. Choosing another
 
 ### Fixed
 
+- **Find my phone could ring too quietly to hear** when the alarm volume
+  was low. It now rings at full alarm volume and puts your volume back
+  afterwards, even if the app is closed mid-ring. Do Not Disturb still
+  decides whether it sounds. By [@alexfoxtm](https://github.com/alexfoxtm)
+  ([#56](https://github.com/thtbee/nectarlink/issues/56),
+  [#58](https://github.com/thtbee/nectarlink/pull/58)).
+- **Call controls on the PC went to the wrong call** when a second call
+  came in during one: hanging up or holding from the PC acted on the
+  waiting call. They now stay on the call in progress. By
+  [@alexfoxtm](https://github.com/alexfoxtm)
+  ([#59](https://github.com/thtbee/nectarlink/pull/59)).
+- **A resumed transfer showed as paused** on the sending side until the
+  other device answered.
 - **Wake when PC is nearby** never found the PC: the Windows app didn't
   start its Bluetooth beacon, and the phone looked for the wrong bytes in
   it. Both are fixed, and the Linux app broadcasts the beacon too
