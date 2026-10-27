@@ -13,7 +13,10 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.Icon
+import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaMetadata
+import android.media.VolumeProvider
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Handler
@@ -32,11 +35,16 @@ import app.nectarlink.core.MediaPlayer
  * stands for the PC's player, and its notification. What the user presses
  * goes to the PC through [send]; the PC's new state comes back as an update.
  *
+ * While a PC player plays and [volumeKeys] is on, the session's volume is
+ * the PC's: Android then sends the phone's volume buttons to it (unless
+ * the phone plays something itself), and [setPcAudio] passes them on.
+ *
  * Everything runs on the main thread.
  */
 class PcMedia(
     context: Context,
     private val onSeedColorChanged: () -> Unit = {},
+    private val setPcAudio: (pc: String, volume: Int?, muted: Boolean?) -> Unit = { _, _, _ -> },
     private val send: (pc: String, player: String, action: MediaAction, position: ULong?) -> Unit,
 ) {
     private val context = context.applicationContext
@@ -101,6 +109,15 @@ class PcMedia(
 
     private var session: MediaSession? = null
     private var shown: Pair<String, MediaPlayer>? = null
+
+    /** Each PC's master volume, for the PCs whose volume this phone may set. */
+    private var levels: Map<String, PcLevel> = emptyMap()
+    private var volumeKeys = true
+    /** The PC the session's volume stands for, while it does. */
+    private var remote: PcVolume? = null
+
+    /** A PC's master volume (`0..=100`) and mute. */
+    data class PcLevel(val volume: Int, val muted: Boolean)
     private val stalePauseTimeout = Runnable { hide() }
 
     private val callback = object : MediaSession.Callback() {
@@ -142,6 +159,20 @@ class PcMedia(
             }.toMap()
             render()
         }
+    }
+
+    /** The volume of each PC this phone may set (from its deck state). */
+    fun levels(levels: Map<String, PcLevel>) = main.post {
+        if (levels == this.levels) return@post
+        this.levels = levels
+        session?.let { route(it) }
+    }
+
+    /** Whether the volume buttons may set a playing PC's volume (Settings). */
+    fun volumeKeys(enabled: Boolean) = main.post {
+        if (enabled == volumeKeys) return@post
+        volumeKeys = enabled
+        session?.let { route(it) }
     }
 
     /** Asks the PC [pc]'s [player] to [action] (Play on phone's controls). */
@@ -238,6 +269,7 @@ class PcMedia(
                 )
                 .build(),
         )
+        route(session)
         session.isActive = true
         post(notification(session, player, cleanTitle, subtitleLine, picture))
         if (!player.playing) {
@@ -248,9 +280,71 @@ class PcMedia(
         }
     }
 
+    /**
+     * Gives the session the shown PC's volume while that PC plays and its
+     * volume is known, and the phone's media volume otherwise.
+     */
+    private fun route(session: MediaSession) {
+        val (pc, player) = shown ?: return
+        val level = levels[pc]?.takeIf { volumeKeys && player.playing }
+        if (level == null) {
+            if (remote != null) {
+                remote = null
+                session.setPlaybackToLocal(
+                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build(),
+                )
+            }
+            return
+        }
+        val current = remote
+        if (current != null && current.pc == pc) {
+            current.show(level)
+            return
+        }
+        remote = PcVolume(pc, level).also(session::setPlaybackToRemote)
+    }
+
+    /** The PC [pc]'s master volume as Android's volume controls see it, in [VOLUME_STEPS]. */
+    private inner class PcVolume(val pc: String, private var level: PcLevel) :
+        VolumeProvider(VOLUME_CONTROL_ABSOLUTE, VOLUME_STEPS, toSteps(level.volume)) {
+
+        fun show(level: PcLevel) {
+            this.level = level
+            currentVolume = toSteps(level.volume)
+        }
+
+        override fun onSetVolumeTo(volume: Int) {
+            main.post { set(volume.coerceIn(0, VOLUME_STEPS), null) }
+        }
+
+        override fun onAdjustVolume(direction: Int) {
+            main.post {
+                when (direction) {
+                    AudioManager.ADJUST_TOGGLE_MUTE -> set(null, !level.muted)
+                    AudioManager.ADJUST_MUTE -> set(null, true)
+                    AudioManager.ADJUST_UNMUTE -> set(null, false)
+                    AudioManager.ADJUST_SAME -> {}
+                    // Turning it up unmutes it, as the PC's own keys do.
+                    else -> set(
+                        (currentVolume + direction.coerceIn(-1, 1)).coerceIn(0, VOLUME_STEPS),
+                        if (direction > 0 && level.muted) false else null,
+                    )
+                }
+            }
+        }
+
+        private fun set(steps: Int?, muted: Boolean?) {
+            if (remote !== this) return
+            val volume = steps?.let { it * 100 / VOLUME_STEPS }
+            show(PcLevel(volume ?: level.volume, muted ?: level.muted))
+            setPcAudio(pc, volume, muted)
+        }
+    }
+
     private fun hide() {
         main.removeCallbacks(stalePauseTimeout)
         shown = null
+        remote = null
         val hadSummary = currentSummary != null
         currentSummary = null
         if (activeSeedColor != null) {
@@ -342,6 +436,12 @@ class PcMedia(
         private const val NOTIFICATION_TAG = "pc_media"
         private const val NOTIFICATION_ID = 1
         const val EXTRA_ACTION = "action"
+
+        /** Steps of the PC's volume on the phone: each button press moves it 4%. */
+        internal const val VOLUME_STEPS = 25
+
+        /** A PC volume (`0..=100`) as the nearest step. */
+        internal fun toSteps(volume: Int): Int = ((volume.coerceIn(0, 100) * VOLUME_STEPS + 50) / 100)
 
         private fun isOpaqueHexOrAumid(s: String): Boolean {
             val trimmed = s.trim()

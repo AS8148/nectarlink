@@ -114,6 +114,8 @@ fun SettingsScreen(
     onClearClipboardHistory: () -> Unit = {},
     suggestClipboardActions: Boolean = true,
     onSetSuggestClipboardActions: (Boolean) -> Unit = {},
+    volumeKeysControlPc: Boolean = true,
+    onSetVolumeKeysControlPc: (Boolean) -> Unit = {},
     backgroundServiceEnabled: Boolean = true,
     onToggleBackgroundService: (Boolean) -> Unit = {},
     onSetTimelineRetentionDays: (UInt) -> Unit = {},
@@ -758,6 +760,24 @@ fun SettingsScreen(
                         valueRange = 0.5f..2.5f,
                         modifier = Modifier.semantics { contentDescription = sensitivityTitle },
                     )
+                    SettingRowDivider()
+                    val volumeKeysTitle = stringResource(R.string.settings_volume_keys_control_pc)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(volumeKeysTitle, style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                stringResource(R.string.settings_volume_keys_control_pc_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = volumeKeysControlPc,
+                            onCheckedChange = onSetVolumeKeysControlPc,
+                            colors = app.nectarlink.android.ui.theme.nectarSwitchColors(),
+                            modifier = Modifier.semantics { contentDescription = volumeKeysTitle },
+                        )
+                    }
                 }
             }
 

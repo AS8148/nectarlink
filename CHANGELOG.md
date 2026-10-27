@@ -106,6 +106,10 @@ has a Stop button. Choosing another
   Home (**Stop reconnecting** while it isn't connected) keeps a phone or PC
   disconnected, even after a restart, until you tap **Reconnect**
   ([#48](https://github.com/thtbee/nectarlink/issues/48)).
+- **The phone's volume buttons control your PC** while it plays music or
+  video, in 4% steps, as with KDE Connect. When the phone plays something
+  itself, or the PC is paused, they work on the phone as usual. Turn it off
+  in the phone's **Settings › Control your PC**.
 
 ### Changed
 

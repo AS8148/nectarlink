@@ -24,6 +24,9 @@ class Preferences(context: Context) {
     private val _suggestClipboardActions = MutableStateFlow(prefs.getBoolean(SUGGEST_CLIPBOARD_ACTIONS, true))
     val suggestClipboardActions: StateFlow<Boolean> = _suggestClipboardActions.asStateFlow()
 
+    private val _volumeKeysControlPc = MutableStateFlow(prefs.getBoolean(VOLUME_KEYS_CONTROL_PC, true))
+    val volumeKeysControlPc: StateFlow<Boolean> = _volumeKeysControlPc.asStateFlow()
+
     private val _backgroundServiceEnabled = MutableStateFlow(prefs.getBoolean(BACKGROUND_SERVICE_ENABLED, true))
     val backgroundServiceEnabled: StateFlow<Boolean> = _backgroundServiceEnabled.asStateFlow()
 
@@ -107,6 +110,12 @@ class Preferences(context: Context) {
         }
     }
 
+    fun updateVolumeKeysControlPc(enabled: Boolean) {
+        prefs.edit { putBoolean(VOLUME_KEYS_CONTROL_PC, enabled) }
+        _volumeKeysControlPc.value = enabled
+        (appContext as app.nectarlink.android.NectarlinkApplication).core.pcMedia.volumeKeys(enabled)
+    }
+
     fun updateBackgroundServiceEnabled(enabled: Boolean) {
         prefs.edit { putBoolean(BACKGROUND_SERVICE_ENABLED, enabled) }
         _backgroundServiceEnabled.value = enabled
@@ -138,6 +147,7 @@ class Preferences(context: Context) {
         private const val HIVE_INVITE_ANSWERED = "hive_invite_answered_version"
         private const val TOUCHPAD_SENSITIVITY = "touchpad_sensitivity"
         private const val SUGGEST_CLIPBOARD_ACTIONS = "suggest_clipboard_actions"
+        private const val VOLUME_KEYS_CONTROL_PC = "volume_keys_control_pc"
         internal const val BACKGROUND_SERVICE_ENABLED = "background_service_enabled"
         private const val AWAY_MODE = "away_mode"
         private const val WALKTHROUGH_COMPLETED = "walkthrough_completed"
@@ -183,6 +193,11 @@ class Preferences(context: Context) {
             context.applicationContext
                 .getSharedPreferences("appearance", Context.MODE_PRIVATE)
                 .getBoolean(SUGGEST_CLIPBOARD_ACTIONS, true)
+
+        fun isVolumeKeysControlPcEnabled(context: Context): Boolean =
+            context.applicationContext
+                .getSharedPreferences("appearance", Context.MODE_PRIVATE)
+                .getBoolean(VOLUME_KEYS_CONTROL_PC, true)
 
         fun isAwayModeEnabled(context: Context): Boolean =
             context.applicationContext

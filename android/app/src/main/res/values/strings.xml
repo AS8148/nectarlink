@@ -324,6 +324,8 @@
     <string name="action_remote_pc">Control PC</string>
     <string name="action_back">Back</string>
     <string name="settings_remote">Control your PC</string>
+    <string name="settings_volume_keys_control_pc">Volume buttons control your PC</string>
+    <string name="settings_volume_keys_control_pc_hint">While your PC plays music or video, your phone\'s volume buttons change the PC\'s volume.</string>
     <string name="settings_touchpad_sensitivity">Touchpad speed</string>
     <string name="settings_touchpad_sensitivity_value">%1$.1f×</string>
     <string name="remote_mode_touchpad">Touchpad</string>

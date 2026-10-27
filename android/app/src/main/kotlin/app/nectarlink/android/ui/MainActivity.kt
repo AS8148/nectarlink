@@ -783,6 +783,7 @@ private fun App(
                     val recorderSession by recorderFlow.collectAsStateWithLifecycle(recorderInitial)
                     val touchpadSensitivity by preferences.touchpadSensitivity.collectAsStateWithLifecycle()
                     val suggestClipboardActions by preferences.suggestClipboardActions.collectAsStateWithLifecycle()
+                    val volumeKeysControlPc by preferences.volumeKeysControlPc.collectAsStateWithLifecycle()
                     val backgroundServiceEnabled by preferences.backgroundServiceEnabled.collectAsStateWithLifecycle()
                     val hiveInviteShown by preferences.hiveInviteShown.collectAsStateWithLifecycle()
                     val saveableStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
@@ -951,6 +952,8 @@ private fun App(
                                     onClearClipboardHistory = core::clearClipboardHistory,
                                     suggestClipboardActions = suggestClipboardActions,
                                     onSetSuggestClipboardActions = preferences::updateSuggestClipboardActions,
+                                    volumeKeysControlPc = volumeKeysControlPc,
+                                    onSetVolumeKeysControlPc = preferences::updateVolumeKeysControlPc,
                                     backgroundServiceEnabled = backgroundServiceEnabled,
                                     onToggleBackgroundService = { enabled ->
                                         preferences.updateBackgroundServiceEnabled(enabled)

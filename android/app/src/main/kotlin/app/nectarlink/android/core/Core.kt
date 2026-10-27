@@ -199,9 +199,10 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
     val pcMedia = PcMedia(
         context = this.context,
         onSeedColorChanged = { syncActiveMediaColor() },
+        setPcAudio = { pc, volume, muted -> setPcAudio(pc, volume, muted) },
     ) { pc, player, action, position ->
         command { it.mediaCommand(pc, player, action, position) }
-    }
+    }.also { it.volumeKeys(app.nectarlink.android.ui.Preferences.isVolumeKeysControlPcEnabled(this.context)) }
 
     private fun syncActiveMediaColor() {
         val nextColor = phoneMedia.activeSeedColor ?: pcMedia.activeSeedColor
@@ -476,6 +477,18 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                         app.nectarlink.android.clipboard.DirectShareTargets.sync(context, s.devices)
                         app.nectarlink.android.widget.PcWidgetProvider.refreshAll(context, s)
                     }
+            }
+            currentRunScope.launch(Dispatchers.Default) {
+                // The volume buttons reach a PC whose volume this phone may set.
+                _state
+                    .map { s ->
+                        s.devices
+                            .filter { it.online && it.has("media.pc_audio") }
+                            .mapNotNull { d -> d.deckState?.let { d.id to PcMedia.PcLevel(it.volume.toInt(), it.muted) } }
+                            .toMap()
+                    }
+                    .distinctUntilChanged()
+                    .collect { pcMedia.levels(it) }
             }
             currentRunScope.launch(Dispatchers.IO) {
                 var first = true
