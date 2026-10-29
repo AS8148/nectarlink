@@ -682,14 +682,17 @@ impl Store {
     }
 
     /// Updates the stored description of a device (e.g. after a rename).
+    ///
+    /// Never its install ID: that is recorded only when the user pairs the
+    /// device, so a paired device can't later claim to be another one and
+    /// take over its pairing and history.
     pub fn update_info(&self, id: &DeviceId, info: &DeviceInfo) -> Result<()> {
         let screen = encode_screen(info.screen.as_ref());
         self.with(|c| {
             c.execute(
                 "UPDATE peers SET name = ?2, kind = ?3, os = ?4, os_ver = ?5, model = ?6,
                     accent = COALESCE(?7, accent),
-                    screen = CASE WHEN ?8 = '' THEN screen ELSE ?8 END,
-                    install_id = COALESCE(?9, install_id)
+                    screen = CASE WHEN ?8 = '' THEN screen ELSE ?8 END
                  WHERE id = ?1",
                 params![
                     id.as_bytes().as_slice(),
@@ -700,13 +703,8 @@ impl Store {
                     info.model,
                     info.accent.map(i64::from),
                     screen,
-                    valid_install_id(info)
                 ],
             )?;
-            if valid_install_id(info).is_some() {
-                cleanup_peers(c, Some(id))?;
-                self.toggle_cache().clear();
-            }
             c.execute(
                 "UPDATE timeline SET device_name = ?2 WHERE device_id = ?1",
                 params![id.as_bytes().as_slice(), info.name],
@@ -3309,6 +3307,32 @@ mod tests {
         store.upsert_peer(&DeviceId([0x03; 32]), &bad, 300).unwrap();
         store.upsert_peer(&DeviceId([0x04; 32]), &bad, 400).unwrap();
         assert_eq!(store.list_peers().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_paired_device_cannot_claim_another_ones_install_id_later() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let (phone, other) = (DeviceId([0x01; 32]), DeviceId([0x02; 32]));
+        let mut mine = info("My Phone");
+        mine.install_id = Some("0123456789abcdef0123456789abcdef".into());
+        let mut theirs = info("Their Phone");
+        theirs.install_id = Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into());
+        store.upsert_peer(&phone, &mine, 100).unwrap();
+        store.upsert_peer(&other, &theirs, 200).unwrap();
+
+        // On a later connection the other device reports this phone's install ID.
+        let mut claimed = theirs.clone();
+        claimed.install_id = mine.install_id.clone();
+        store.update_info(&other, &claimed).unwrap();
+        // Nor at the next start, when duplicates are merged.
+        drop(store);
+        let store = Store::open(dir.path()).unwrap();
+
+        let mut peers = store.list_peers().unwrap();
+        peers.sort_by_key(|p| p.id.0);
+        assert_eq!(peers.iter().map(|p| p.id).collect::<Vec<_>>(), vec![phone, other], "both stay paired");
+        assert_eq!(peers[1].info.install_id, theirs.install_id, "its own install ID is kept");
     }
 
     #[test]

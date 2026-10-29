@@ -6325,3 +6325,52 @@ async fn bench_file_throughput() {
     pc.node.shutdown().await;
     phone.node.shutdown().await;
 }
+
+/// A phone whose app reports `install_id` (the same on this phone after a reinstall).
+async fn phone_with_install_id(name: &'static str, install_id: &str) -> TestDevice {
+    init_logging();
+    let dir = tempfile::tempdir().unwrap();
+    let mut phone_info = info(name, DeviceKind::Phone);
+    phone_info.install_id = Some(install_id.into());
+    let mut config = NodeConfig::new(dir.path(), phone_info, "0.0.1-test");
+    config.lan_discovery = false;
+    config.away_mode = false;
+    config.key_protector = Some(Arc::new(PlainKeyProtector));
+    config.capabilities = vec!["media.control".into()];
+    let platform = Arc::new(RecordingPlatform::default());
+    let node = Node::start(config, platform.clone()).await.expect("node starts");
+    let events = node.events();
+    TestDevice { node, events, platform, dir, name }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reinstalled_phone_replaces_its_old_pairing() {
+    const INSTALL: &str = "0123456789abcdef0123456789abcdef";
+    let mut pc = device("pc", DeviceKind::Desktop).await;
+    let mut old = phone_with_install_id("phone", INSTALL).await;
+    pair_qr(&mut pc, &mut old).await;
+    let old_id = old.node.device_id();
+    old.node.shutdown().await;
+    wait_for(&mut pc, "old phone offline", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == old_id => Some(()),
+        _ => None,
+    })
+    .await;
+
+    // Reinstalled: a new identity, the same install ID. Pairing it replaces the old entry.
+    let mut new = phone_with_install_id("phone", INSTALL).await;
+    let mut pc_events = pc.node.events();
+    pair_qr(&mut pc, &mut new).await;
+    let new_id = new.node.device_id();
+    let mut removed = false;
+    while let Ok(event) = pc_events.try_recv() {
+        removed |= matches!(event, NodeEvent::DeviceRemoved(device) if device == old_id);
+    }
+    assert!(removed, "the old entry is announced as removed");
+    let ids: Vec<nectarlink_core::DeviceId> =
+        pc.node.paired_devices().unwrap().into_iter().map(|d| d.id).collect();
+    assert_eq!(ids, vec![new_id]);
+
+    pc.node.shutdown().await;
+    new.node.shutdown().await;
+}

@@ -924,24 +924,33 @@ impl Shared {
         // The same physical device paired again (after a reinstall it has a new identity):
         // move its history and queue to the new pairing and forget the old one. Only the
         // install ID decides; same-name devices (two family phones) stay separate.
-        if let Some(install_id) = info.install_id.as_deref()
-            && let Ok(existing_peers) = self.store.list_peers()
-        {
-            for old in existing_peers {
-                if old.id != peer
-                    && self.session(&old.id).is_none()
-                    && old.info.kind == info.kind
-                    && old.info.install_id.as_deref() == Some(install_id)
-                {
-                    let _ = self.store.reassign_timeline(&old.id, &peer);
-                    if self.store.reassign_send_queue_peer(&old.id, &peer).unwrap_or(0) > 0 {
-                        reassigned_queue = true;
-                    }
-                    let _ = self.forget_peer(&old.id).await;
-                }
-            }
-        }
+        let replaced: Vec<DeviceId> = match info.install_id.as_deref() {
+            Some(install_id) => self
+                .store
+                .list_peers()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|old| {
+                    old.id != peer
+                        && self.session(&old.id).is_none()
+                        && old.info.kind == info.kind
+                        && old.info.install_id.as_deref() == Some(install_id)
+                })
+                .map(|old| old.id)
+                .collect(),
+            None => Vec::new(),
+        };
+        // Store the new pairing first: if that fails, the old one is untouched.
+        // Storing it also moves the old entry's history and queue over.
         self.store.upsert_peer(&peer, &info, paired_at)?;
+        for old in replaced {
+            let _ = self.store.reassign_timeline(&old, &peer);
+            let _ = self.store.reassign_send_queue_peer(&old, &peer);
+            reassigned_queue = true;
+            let _ = self.forget_peer(&old).await;
+            // Its row is already gone, so forget_peer doesn't announce it.
+            self.emit(NodeEvent::DeviceRemoved(old));
+        }
         tracing::info!(peer = %peer.short(), "paired");
         let device = PairedDevice {
             id: peer,
