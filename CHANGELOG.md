@@ -13,6 +13,10 @@ change things that need a step from you, and its notes say so.
   debugging. It runs while the cable is in. The PC only starts NectarLink's
   own helper, on the phone that asked
   ([#70](https://github.com/thtbee/nectarlink/issues/70)).
+- **Mirroring wakes the phone's screen.** With Elevated, starting mirroring
+  from the PC turns the phone's screen on if it's off, so the phone can stay
+  in a pocket; a locked phone shows its lock screen in the window
+  ([#82](https://github.com/thtbee/nectarlink/issues/82)).
 - **The PC app on Linux**, for Ubuntu 24.04 or newer, Debian 13, Fedora 40
   or newer and other distributions from 2024 on, as a `.deb`, an `.rpm`,
   an AppImage or a tarball. It does what the Windows app does: notifications with

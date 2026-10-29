@@ -801,6 +801,18 @@ object Elevated {
         return send(writer, "B ${b64(text)} ${html?.let(b64).orEmpty()}")
     }
 
+    /**
+     * Wakes the screen when it's off, as the power key would (the lock screen
+     * shows if the phone is locked). Mirroring otherwise waits for someone to
+     * turn the screen on by hand (#82).
+     */
+    fun wakeScreen(): Boolean {
+        val writer = input ?: return false
+        val power = context.getSystemService(android.os.PowerManager::class.java)
+        if (power?.isInteractive != false) return true
+        return send(writer, "K ${KeyEvent.KEYCODE_WAKEUP}")
+    }
+
     /** Turns the physical screen panel off or back on while mirroring. */
     fun setScreenOff(off: Boolean): Boolean {
         screenOffRequested = off

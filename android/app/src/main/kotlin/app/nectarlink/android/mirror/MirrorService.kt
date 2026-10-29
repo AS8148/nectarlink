@@ -158,6 +158,8 @@ class MirrorService : Service() {
         // The helper's socket: off the main thread, where Android refuses
         // network calls (and the phone then asked for screen-capture consent).
         val (initW, initH, initDpi) = ScreenEncoder.computeScreenSize(this@MirrorService, request.maxSize)
+        // With the screen off (phone in a pocket) there's nothing to show yet.
+        app.nectarlink.android.elevated.Elevated.wakeScreen()
         val codec = ScreenEncoder.selectCodec("h264")
         val socket = app.nectarlink.android.elevated.Elevated.openScreen(
             initW,
