@@ -272,7 +272,7 @@ impl QueuePayload {
                     files
                         .first()
                         .and_then(|f| f.folder.as_deref())
-                        .and_then(|f| f.split('/').next())
+                        .and_then(|f| f.split('/').find(|s| !s.is_empty()))
                         .unwrap_or("Folder")
                         .to_owned()
                 } else {
@@ -2133,8 +2133,17 @@ fn lookup_peer_name_conn(c: &Connection, peer: &DeviceId) -> String {
 pub type DecodedQueueRow = (QueueItem, QueuePayload, Option<Vec<u8>>, i64);
 
 fn decode_queue_row(c: &Connection, raw: RawQueueRow, include_blob: bool) -> Option<DecodedQueueRow> {
-    let peer = raw.peer_str.parse::<DeviceId>().ok()?;
-    let payload = serde_json::from_str::<QueuePayload>(&raw.payload_json).ok()?;
+    // A row this version can't read is left out of the queue; say so, so it
+    // doesn't just vanish.
+    let decoded = raw
+        .peer_str
+        .parse::<DeviceId>()
+        .ok()
+        .zip(serde_json::from_str::<QueuePayload>(&raw.payload_json).ok());
+    let Some((peer, payload)) = decoded else {
+        tracing::warn!(id = %raw.id, "can't read a queued send; leaving it out of the queue");
+        return None;
+    };
     let kind = QueueKind::from_str_opt(&raw.kind_str).unwrap_or_else(|| payload.kind());
     let status = match raw.status_str.as_str() {
         "sending" => QueueStatus::Sending,
