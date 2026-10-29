@@ -224,6 +224,8 @@ struct IncomingFileSpec {
     safe_name: String,
     folder: Option<String>,
     size: u64,
+    /// The sender's SHA-256 of the file, when it gave a well-formed one.
+    sha256: Option<String>,
     part_path: PathBuf,
     uploaded: bool,
 }
@@ -949,6 +951,10 @@ async fn handle_prepare_upload(
             safe_name,
             folder,
             size: dto.size,
+            sha256: dto
+                .sha256
+                .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+                .map(|h| h.to_ascii_lowercase()),
             part_path: staging_dir.join(format!("{idx}.part")),
             uploaded: false,
         });
@@ -1039,7 +1045,7 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
     enum UploadLookup {
         NotFound,
         Forbidden,
-        Found(usize, PathBuf, u64, CancellationToken, String),
+        Found(usize, PathBuf, u64, Option<String>, CancellationToken, String),
     }
 
     let lookup = {
@@ -1051,13 +1057,14 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
                 idx,
                 spec.part_path.clone(),
                 spec.size,
+                spec.sha256.clone(),
                 guard.cancel.clone(),
                 guard.transfer.id.clone(),
             ),
         }
     };
 
-    let (spec_idx, part_path, expected_size, cancel, transfer_id) = match lookup {
+    let (spec_idx, part_path, expected_size, expected_sha256, cancel, transfer_id) = match lookup {
         UploadLookup::NotFound => {
             let _ = write_http_response(stream, 404, "Not Found", None, &[]).await;
             return;
@@ -1066,7 +1073,7 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
             let _ = write_http_response(stream, 403, "Forbidden", None, &[]).await;
             return;
         }
-        UploadLookup::Found(idx, p, sz, c, tid) => (idx, p, sz, c, tid),
+        UploadLookup::Found(idx, p, sz, sha, c, tid) => (idx, p, sz, sha, c, tid),
     };
 
     let Ok(mut out) = tokio::fs::File::create(&part_path).await else {
@@ -1086,6 +1093,19 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
 
     let _ = out.flush().await;
     drop(out);
+
+    let stream_res = match (stream_res, expected_sha256) {
+        (Ok(()), Some(expected)) => {
+            let path = part_path.clone();
+            let actual = tokio::task::spawn_blocking(move || sha256_file_hex(&path)).await;
+            if matches!(actual, Ok(Ok(ref h)) if *h == expected) {
+                Ok(())
+            } else {
+                Err(TransferState::Failed(TransferFailure::Integrity))
+            }
+        }
+        (res, _) => res,
+    };
 
     if let Err(err_state) = stream_res {
         shared.localsend.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(&session_id);
@@ -1737,6 +1757,26 @@ async fn read_chunked_vec<S: AsyncRead + Unpin>(
     Ok(out)
 }
 
+fn upload_failed(reason: &str) -> TransferState {
+    TransferState::Failed(TransferFailure::Other(reason.into()))
+}
+
+/// The lowercase hex SHA-256 of a file.
+fn sha256_file_hex(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(data_encoding::HEXLOWER.encode(&hasher.finalize()))
+}
+
 async fn stream_body_to_file<S, F>(
     stream: &mut S,
     head: &HttpHead,
@@ -1749,8 +1789,11 @@ where
     S: AsyncRead + Unpin,
     F: FnMut(u64),
 {
+    // The body must be exactly the size the sender offered and the user
+    // accepted: more could fill the disk, less is a broken file.
     if head.chunked {
         let mut buf = head.prefetched_body.clone();
+        let mut written: u64 = 0;
         loop {
             while find_crlf(&buf).is_none() {
                 let mut tmp = [0u8; 8192];
@@ -1764,12 +1807,12 @@ where
                     }
                 };
                 if n == 0 {
-                    return Ok(());
+                    return Err(upload_failed("upload stream ended early"));
                 }
                 buf.extend_from_slice(&tmp[..n]);
             }
             let Some(line_end) = find_crlf(&buf) else {
-                return Ok(());
+                return Err(upload_failed("upload stream ended early"));
             };
             let size_line = String::from_utf8_lossy(&buf[..line_end]).into_owned();
             let hex_part = size_line.split(';').next().unwrap_or("").trim();
@@ -1778,8 +1821,16 @@ where
             };
             buf.drain(..line_end + 2);
             if chunk_size == 0 {
-                return Ok(());
+                return if written == expected_size {
+                    Ok(())
+                } else {
+                    Err(upload_failed("upload is shorter than offered"))
+                };
             }
+            if written.saturating_add(chunk_size as u64) > expected_size {
+                return Err(upload_failed("upload is larger than offered"));
+            }
+            written += chunk_size as u64;
             let mut left_in_chunk = chunk_size;
             while left_in_chunk > 0 {
                 if !buf.is_empty() {
@@ -1826,8 +1877,10 @@ where
             buf.drain(..drain_crlf);
         }
     } else {
-        let total = head.content_length.unwrap_or(expected_size);
-        let mut remaining = total;
+        if head.content_length.is_some_and(|len| len != expected_size) {
+            return Err(upload_failed("upload size doesn't match the offer"));
+        }
+        let mut remaining = expected_size;
         if !head.prefetched_body.is_empty() {
             let take = (head.prefetched_body.len() as u64).min(remaining) as usize;
             out.write_all(&head.prefetched_body[..take])
@@ -2299,5 +2352,82 @@ mod tests {
             let _ = guess_mime(&file_name);
             let _ = peer_device_id(&s, "192.168.1.42", 53317);
         }
+    }
+
+    fn upload_head(content_length: Option<u64>, chunked: bool) -> HttpHead {
+        HttpHead {
+            method: "POST".into(),
+            target: "/api/localsend/v2/upload".into(),
+            content_length,
+            chunked,
+            prefetched_body: Vec::new(),
+        }
+    }
+
+    /// Streams `body` for an offer of `offered` bytes; returns the result and what was saved.
+    async fn stream_upload(
+        head: HttpHead,
+        body: &[u8],
+        offered: u64,
+    ) -> (Result<(), TransferState>, Vec<u8>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("0.part");
+        let mut out = tokio::fs::File::create(&path).await.unwrap();
+        let mut stream = body;
+        let res =
+            stream_body_to_file(&mut stream, &head, &mut out, offered, &CancellationToken::new(), |_| {})
+                .await;
+        out.flush().await.unwrap();
+        drop(out);
+        (res, std::fs::read(&path).unwrap())
+    }
+
+    #[tokio::test]
+    async fn upload_must_match_the_offered_size() {
+        let (res, saved) = stream_upload(upload_head(Some(5), false), b"hello", 5).await;
+        assert!(res.is_ok());
+        assert_eq!(saved, b"hello");
+
+        // A Content-Length above (or below) what the user accepted is refused before anything is written.
+        let (res, saved) = stream_upload(upload_head(Some(1 << 30), false), b"hello", 5).await;
+        assert!(res.is_err());
+        assert!(saved.is_empty());
+        let (res, _) = stream_upload(upload_head(Some(3), false), b"hel", 5).await;
+        assert!(res.is_err());
+
+        // A body that ends early fails.
+        let (res, _) = stream_upload(upload_head(None, false), b"hel", 5).await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn chunked_upload_must_match_the_offered_size() {
+        let (res, saved) =
+            stream_upload(upload_head(None, true), b"3\r\nhel\r\n2\r\nlo\r\n0\r\n\r\n", 5).await;
+        assert!(res.is_ok());
+        assert_eq!(saved, b"hello");
+
+        // More than offered: refused at the chunk that goes over, before writing it.
+        let (res, saved) =
+            stream_upload(upload_head(None, true), b"5\r\nhello\r\n4\r\nmore\r\n0\r\n\r\n", 5).await;
+        assert!(res.is_err());
+        assert_eq!(saved, b"hello");
+
+        // Less than offered, or no final chunk: a broken file, not a finished one.
+        let (res, _) = stream_upload(upload_head(None, true), b"3\r\nhel\r\n0\r\n\r\n", 5).await;
+        assert!(res.is_err());
+        let (res, _) = stream_upload(upload_head(None, true), b"3\r\nhel\r\n", 5).await;
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn sha256_file_hex_matches_a_known_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        std::fs::write(&path, b"abc").unwrap();
+        assert_eq!(
+            sha256_file_hex(&path).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }
