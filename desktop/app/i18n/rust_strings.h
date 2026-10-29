@@ -39,9 +39,6 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Battery", "%1 is fully charged"), // desktop/app/src/battery.rs
     QT_TRANSLATE_NOOP("Battery", "You can unplug it."), // desktop/app/src/battery.rs
     QT_TRANSLATE_NOOP("Battery", "Your phone"), // desktop/app/src/battery.rs
-    QT_TRANSLATE_NOOP("BtHfp", "Bluetooth connected (%1)."), // desktop/app/src/win/bt_hfp.rs
-    QT_TRANSLATE_NOOP("BtHfp", "Bluetooth paired with %1 (not currently connected)."), // desktop/app/src/win/bt_hfp.rs
-    QT_TRANSLATE_NOOP("BtHfp", "No paired Bluetooth phone endpoint found in Windows."), // desktop/app/src/win/bt_hfp.rs
     QT_TRANSLATE_NOOP("Calls", "Calling %1"), // desktop/app/src/calls.rs
     QT_TRANSLATE_NOOP("Calls", "Missed call from %1"), // desktop/app/src/calls.rs
     QT_TRANSLATE_NOOP("Calls", "On a call with %1"), // desktop/app/src/calls.rs
