@@ -129,6 +129,7 @@ Item {
         target: Messages
         function onComposeToChanged() { page.applyComposeTarget() }
         function onThreadChanged() {
+            page.switchDraft()
             if (Messages.thread.length > 0) {
                 page.composing = false
                 Qt.callLater(() => composer.focusText())
@@ -178,7 +179,25 @@ Item {
         toField.text = ""
         toField.forceActiveFocus()
     }
-    onDeviceIdChanged: { composing = false; load() }
+    onDeviceIdChanged: { composing = false; switchDraft(); load() }
+
+    // What was typed in each conversation, so text written for one is never
+    // sent to another and comes back when you return to it.
+    property var drafts: ({})
+    property string draftKey: ""
+    function switchDraft() {
+        const key = deviceId + "|" + Messages.thread
+        if (key === draftKey)
+            return
+        if (draftKey.length > 0) {
+            if (input.text.length > 0)
+                drafts[draftKey] = input.text
+            else
+                delete drafts[draftKey]
+        }
+        draftKey = key
+        input.text = drafts[key] || ""
+    }
 
     // "14:05", "Yesterday", "Tue", or a date.
     function shortTime(ms) {
@@ -837,6 +856,7 @@ Item {
                 else
                     Messages.send(input.text)
                 input.text = ""
+                delete page.drafts[page.draftKey]
                 page.composing = false
                 toField.text = ""
             }
