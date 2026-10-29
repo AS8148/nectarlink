@@ -52,6 +52,11 @@ type RuleBaselineMap = HashMap<String, HashMap<String, (u64, i64)>>;
 
 static LAST_SYNCED: OnceLock<Mutex<RuleBaselineMap>> = OnceLock::new();
 
+/// Drops what a removed rule last synced.
+pub fn forget_rule(rule_id: &str) {
+    baselines().lock().unwrap_or_else(|e| e.into_inner()).remove(rule_id);
+}
+
 fn baselines() -> &'static Mutex<RuleBaselineMap> {
     LAST_SYNCED.get_or_init(|| Mutex::new(HashMap::new()))
 }
