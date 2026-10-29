@@ -1825,8 +1825,13 @@ impl Store {
     /// Transitions a queue item from `'waiting'` to `'sending'`.
     pub fn mark_queue_sending(&self, id: &str) -> Result<bool> {
         self.with(|c| {
-            c.execute("UPDATE send_queue SET status = 'sending', error_msg = NULL WHERE id = ?1", [id])
-                .map(|n| n > 0)
+            // Only a live item: one that just expired or failed stays that way.
+            c.execute(
+                "UPDATE send_queue SET status = 'sending', error_msg = NULL
+                 WHERE id = ?1 AND status IN ('waiting', 'sending')",
+                [id],
+            )
+            .map(|n| n > 0)
         })
     }
 
@@ -1868,7 +1873,7 @@ impl Store {
             c.execute(
                 "UPDATE send_queue
                  SET status = 'waiting', attempts = ?2, next_retry_ms = ?3, error_msg = ?4
-                 WHERE id = ?1",
+                 WHERE id = ?1 AND status IN ('waiting', 'sending')",
                 params![id, i64::from(attempts), next_retry_ms, last_error],
             )
             .map(|n| n > 0)
@@ -3707,6 +3712,22 @@ mod tests {
         assert!(!dir.path().join("queue_staging").join("q-unpair").exists());
         assert!(store.list_send_queue(Some(&peer)).unwrap().is_empty());
         assert!(store.get_peer(&peer).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_finished_queue_item_isnt_moved_back_to_sending_or_waiting() {
+        let store = Store::in_memory().unwrap();
+        let peer = DeviceId([0x56; 32]);
+        store.upsert_peer(&peer, &info("Pixel 9"), 100).unwrap();
+        let id = "q-guard";
+        let link = QueuePayload::Link { url: "https://example.com".into(), title: None };
+        store.enqueue_send_item(id, &peer, &link, None, 1_000).unwrap();
+        store.mark_queue_failed(id, "Denied").unwrap();
+        assert!(!store.mark_queue_sending(id).unwrap(), "a failed item stays failed");
+        assert!(!store.mark_queue_retry_or_wait(id, 1, 0, None).unwrap());
+        assert!(store.retry_queue_item(id, 2_000).unwrap(), "Retry is the way back");
+        assert!(store.mark_queue_sending(id).unwrap());
+        assert!(store.mark_queue_retry_or_wait(id, 1, 0, None).unwrap());
     }
 
     #[test]
