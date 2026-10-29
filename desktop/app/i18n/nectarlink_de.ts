@@ -894,6 +894,11 @@
         <translation>Kopiertes Bild</translation>
     </message>
     <message>
+        <location filename="rust_strings.h" line="72"/>
+        <source>Copied number</source>
+        <translation>Kopierte Nummer</translation>
+    </message>
+    <message>
         <location filename="rust_strings.h" line="73"/>
         <source>Copy: %1</source>
         <translation>Kopieren: %1</translation>

@@ -894,6 +894,11 @@
         <translation>已复制的图片</translation>
     </message>
     <message>
+        <location filename="rust_strings.h" line="72"/>
+        <source>Copied number</source>
+        <translation>已复制的号码</translation>
+    </message>
+    <message>
         <location filename="rust_strings.h" line="73"/>
         <source>Copy: %1</source>
         <translation>复制：%1</translation>

@@ -17,6 +17,10 @@ change things that need a step from you, and its notes say so.
   from the PC turns the phone's screen on if it's off, so the phone can stay
   in a pocket; a locked phone shows its lock screen in the window
   ([#82](https://github.com/thtbee/nectarlink/issues/82)).
+- **Call or text a copied number from the command palette.** Copy a phone
+  number anywhere, open the palette with its shortcut, and Call and Text
+  for that number are at the top
+  ([#83](https://github.com/thtbee/nectarlink/issues/83)).
 - **The PC app on Linux**, for Ubuntu 24.04 or newer, Debian 13, Fedora 40
   or newer and other distributions from 2024 on, as a `.deb`, an `.rpm`,
   an AppImage or a tarball. It does what the Windows app does: notifications with
