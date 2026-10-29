@@ -352,10 +352,12 @@ fun WebcamScreen(
                                 WebcamService.setCamera(next, context)
                             },
                         ) {
-                            val currentLabel = stringResource(
-                                if (session.camera == "front") R.string.webcam_camera_front else R.string.webcam_camera_back,
+                            // Says what tapping does (#68), not which camera is on.
+                            Text(
+                                stringResource(
+                                    if (session.camera == "front") R.string.webcam_switch_to_back else R.string.webcam_switch_to_front,
+                                ),
                             )
-                            Text(stringResource(R.string.webcam_switch_camera_current, currentLabel))
                         }
 
                         if (session.hasFlash) {
@@ -365,7 +367,7 @@ fun WebcamScreen(
                             ) {
                                 Text(
                                     stringResource(
-                                        if (session.torchOn) R.string.webcam_torch_on else R.string.webcam_torch_off,
+                                        if (session.torchOn) R.string.webcam_turn_torch_off else R.string.webcam_turn_torch_on,
                                     ),
                                 )
                             }
