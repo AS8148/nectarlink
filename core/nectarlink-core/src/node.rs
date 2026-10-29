@@ -624,25 +624,27 @@ impl Shared {
         if self.away_mode() || self.is_usb_connection(conn) {
             return true;
         }
-        let paths = conn.paths();
-        let selected = paths.iter().find(|p| p.is_selected()).or_else(|| paths.iter().next());
-        match selected {
-            Some(p) if p.is_relay() => false,
-            Some(p) => match p.remote_addr() {
-                iroh::TransportAddr::Ip(addr) => self.is_usb_addr(addr) || self.is_allowed_peer_ip(addr.ip()),
-                _ => false,
-            },
-            None => false,
-        }
+        // Any direct LAN (or USB) path will do: a connection often reports its
+        // relay path first while the direct one comes up.
+        conn.paths().iter().any(|p| {
+            !p.is_relay()
+                && match p.remote_addr() {
+                    iroh::TransportAddr::Ip(addr) => {
+                        self.is_usb_addr(addr) || self.is_allowed_peer_ip(addr.ip())
+                    }
+                    _ => false,
+                }
+        })
     }
 
     pub(crate) async fn wait_connection_allowed(&self, conn: &Connection) -> bool {
         if self.away_mode() || self.is_usb_connection(conn) {
             return true;
         }
+        // Up to 200 ms for a direct path, not just for the first path of any kind.
         for _ in 0..20 {
-            if !conn.paths().is_empty() {
-                return self.is_connection_allowed(conn);
+            if self.is_connection_allowed(conn) {
+                return true;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -1110,8 +1112,8 @@ impl Shared {
         if let Err(e) = self.store.update_info(&peer, &remote_device) {
             tracing::warn!(error = %e, "failed to update peer info");
         }
-        let effective_device =
-            self.store.get_peer(&peer).ok().flatten().map(|p| p.info).unwrap_or(remote_device);
+        // What the apps show is what's stored, so the event carries that.
+        let effective_device = self.store.get_peer(&peer).ok().flatten().map(|p| p.info);
         let caps = features::sanitize_capabilities(remote.caps);
         if let Err(e) = self.store.update_capabilities(&peer, Some(&caps), Some(remote.power.effective())) {
             tracing::warn!(error = %e, "failed to update peer capabilities");
@@ -1158,7 +1160,9 @@ impl Shared {
             tracing::warn!(error = %e, "failed to record peer addresses");
         }
         self.remember_addrs(&peer, &persisted_addrs);
-        self.emit(NodeEvent::PeerInfoChanged { device: peer, info: effective_device });
+        if let Some(info) = effective_device {
+            self.emit(NodeEvent::PeerInfoChanged { device: peer, info });
+        }
         self.emit(NodeEvent::PeerPowerChanged { device: peer, power: remote.power.effective() });
         self.refresh_capabilities(&peer);
         self.publish_online(&session);
@@ -1320,6 +1324,10 @@ async fn maintain(shared: Weak<Shared>, peer: DeviceId, wake: Arc<Notify>, cance
             backoff = BACKOFF_MIN;
             waited_for_usb = false;
             continue;
+        }
+        // Unplugged before the PC dialled: the next plug-in gets its grace again.
+        if !node.usb_tunnel_inbound(&peer) {
+            waited_for_usb = false;
         }
         if node.session(&peer).is_none() && node.usb_tunnel_inbound(&peer) && !waited_for_usb {
             // Plugged in: the PC dials through the cable. Dial only if it hasn't by then.
@@ -1620,22 +1628,9 @@ impl Node {
         tokio::task::spawn_blocking(move || transfer::clean_incoming(&incoming));
 
         for peer in shared.store.list_peers()? {
-            if !config.away_mode {
-                let lan_only: Vec<SocketAddr> = peer
-                    .last_addrs
-                    .iter()
-                    .copied()
-                    .filter(|a| !a.ip().to_canonical().is_loopback() && crate::session::is_lan_ip(a.ip()))
-                    .collect();
-                if lan_only.len() != peer.last_addrs.len()
-                    && let Some(seen) = peer.last_seen
-                {
-                    let _ = shared.store.record_seen(&peer.id, seen, &lan_only);
-                }
-                shared.remember_addrs(&peer.id, &lan_only);
-            } else {
-                shared.remember_addrs(&peer.id, &peer.last_addrs);
-            }
+            // remember_addrs keeps only LAN addresses while away mode is off.
+            // The stored list keeps the rest, for when it's turned on again.
+            shared.remember_addrs(&peer.id, &peer.last_addrs);
             shared.start_supervisor(peer.id);
         }
         run_queue_coordinator(Arc::downgrade(&shared), shared.cancel.child_token());
@@ -1658,20 +1653,11 @@ impl Node {
                     session.close(CLOSE_NORMAL, b"away mode disabled");
                 }
             }
+            // Only what's dialled changes (remember_addrs keeps LAN addresses
+            // now); the stored list keeps the others for turning it back on.
             if let Ok(peers) = self.shared.store.list_peers() {
                 for peer in peers {
-                    let lan_only: Vec<SocketAddr> = peer
-                        .last_addrs
-                        .iter()
-                        .copied()
-                        .filter(|a| !a.ip().to_canonical().is_loopback() && crate::session::is_lan_ip(a.ip()))
-                        .collect();
-                    if lan_only.len() != peer.last_addrs.len()
-                        && let Some(seen) = peer.last_seen
-                    {
-                        let _ = self.shared.store.record_seen(&peer.id, seen, &lan_only);
-                    }
-                    self.shared.remember_addrs(&peer.id, &lan_only);
+                    self.shared.remember_addrs(&peer.id, &peer.last_addrs);
                 }
             }
         } else {
@@ -1866,12 +1852,15 @@ impl Node {
     /// on the new one, so requests must be idempotent.
     async fn request(&self, peer: DeviceId, env: Envelope) -> Result<Envelope> {
         let first = self.connected(&peer)?;
-        match first.request(env.clone(), REQUEST_TIMEOUT).await {
-            Err(Error::Offline) => match self.shared.session(&peer) {
+        match first.request_tracked(env.clone(), REQUEST_TIMEOUT).await {
+            // The connection was replaced before the request went out: send it
+            // on the new one. Once it went out it may have run (a reply to a
+            // chat, a notification's action), so it isn't sent twice.
+            (Err(Error::Offline), false) => match self.shared.session(&peer) {
                 Some(next) if !Arc::ptr_eq(&next, &first) => next.request(env, REQUEST_TIMEOUT).await,
                 _ => Err(Error::Offline),
             },
-            other => other,
+            (other, _) => other,
         }
     }
 

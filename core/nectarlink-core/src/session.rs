@@ -318,11 +318,20 @@ impl Session {
 
     /// Sends a request and waits for the reply with the matching `re`.
     pub async fn request(&self, env: Envelope, timeout: Duration) -> Result<Envelope> {
+        self.request_tracked(env, timeout).await.0
+    }
+
+    /// Like [`request`](Self::request), and also says whether the request was
+    /// sent. A request that went out may have run on the peer even if no
+    /// reply came back, so only an unsent one is safe to send again.
+    pub async fn request_tracked(&self, env: Envelope, timeout: Duration) -> (Result<Envelope>, bool) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
+        let mut sent = false;
         let result = match tokio::time::timeout(timeout, async {
             self.send(env.with_id(id)).await?;
+            sent = true;
             rx.await.map_err(|_| Error::Offline)
         })
         .await
@@ -331,7 +340,7 @@ impl Session {
             Err(_) => Err(Error::Timeout),
         };
         self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
-        result
+        (result, sent)
     }
 
     /// Closes the connection with an application code.
