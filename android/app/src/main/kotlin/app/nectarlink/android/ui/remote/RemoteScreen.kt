@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -449,7 +450,9 @@ private fun TouchpadView(
     }
 
     Column(
-        modifier = modifier.fillMaxWidth(),
+        // Above the keyboard while it's open: apps are drawn edge to edge
+        // (Android 15 and later), so the keyboard would cover the typing field.
+        modifier = modifier.fillMaxWidth().imePadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // Big touchpad surface
