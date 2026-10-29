@@ -31,6 +31,11 @@ function Check($what, [bool]$ok) {
     Write-Host "ok: $what"
 }
 function FirewallRule { (netsh advfirewall firewall show rule name=Nectarlink) -match 'Nectarlink' }
+function UpdateTask {
+    $scheduler = New-Object -ComObject Schedule.Service
+    $scheduler.Connect()
+    try { $scheduler.GetFolder('\').GetTask('Nectarlink Update') } catch { $null }
+}
 
 Write-Host "Installing $Setup"
 Start-Process $Setup -ArgumentList '/S' -Wait
@@ -40,6 +45,16 @@ Check "it's in Apps (uninstall entry)" (Test-Path $uninstallKey)
 Check "it's in the Start menu" (Test-Path $shortcut)
 Check "the firewall lets phones in" ([bool](FirewallRule))
 Check "license notices are included" ((Get-Item (Join-Path $dir 'THIRD-PARTY-NOTICES.txt')).Length -gt 100KB)
+$task = UpdateTask
+Check "the update task is registered" ($null -ne $task)
+Check "the update task runs the installed app as SYSTEM" (
+    $task.Definition.Principal.UserId -match '^(SYSTEM|S-1-5-18|NT AUTHORITY\\SYSTEM)$' -and
+    $task.Definition.Actions.Item(1).Path.Trim('"') -eq $exe -and
+    $task.Definition.Actions.Item(1).Arguments -eq '--update-service')
+# 4: the DACL. Signed-in users may read and run it, not change it.
+$dacl = $task.GetSecurityDescriptor(4)
+Check "signed-in users may only read and start the update task" (
+    $dacl -match '\(A;;GRGX;;;AU\)' -and $dacl -match '\(A;;FA;;;SY\)' -and $dacl -match '\(A;;FA;;;BA\)')
 
 # The installed copy starts on its own files and quits when asked.
 $app = Start-Process $exe -ArgumentList '--minimized', '--data-dir', $data -PassThru
@@ -58,6 +73,7 @@ Check "the app folder is gone" (-not (Test-Path $dir))
 Check "the uninstall entry is gone" (-not (Test-Path $uninstallKey))
 Check "the Start menu shortcut is gone" (-not (Test-Path $shortcut))
 Check "the firewall rule is gone" (-not (FirewallRule))
+Check "the update task is gone" ($null -eq (UpdateTask))
 Write-Host "Installer smoke test passed."
 # netsh reports "no rules match" with a failing exit code; that was the point.
 exit 0
