@@ -119,6 +119,11 @@ struct Supervisor {
 pub(crate) type MirrorStop = (DeviceId, u32, &'static str);
 
 /// State shared by the node, its sessions and background tasks.
+/// Notifications kept for listing and search as they arrive, at most: the
+/// oldest goes first. (A full snapshot is what the phone shows, which Android
+/// itself limits.)
+const NOTIFICATION_HISTORY_MAX: usize = 1000;
+
 pub(crate) struct Shared {
     pub id: DeviceId,
     pub endpoint: Endpoint,
@@ -3139,6 +3144,12 @@ impl Node {
             let mut hist = lock(&self.shared.notification_history);
             hist.retain(|n| n.key != clean.key);
             hist.push(clean);
+            // Kept in memory with icons and pictures: drop the oldest past the cap.
+            if hist.len() > NOTIFICATION_HISTORY_MAX
+                && let Some(oldest) = hist.iter().enumerate().min_by_key(|(_, n)| n.when).map(|(i, _)| i)
+            {
+                hist.remove(oldest);
+            }
         }
         self.shared.notification_posted(notification).await;
     }

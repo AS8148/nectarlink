@@ -6413,3 +6413,32 @@ async fn one_time_screen_consent_ends_with_the_pairing() {
     pc.node.shutdown().await;
     phone.node.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn notification_history_keeps_the_newest_thousand() {
+    let phone = device("phone", DeviceKind::Phone).await;
+    for i in 0..1005i64 {
+        phone
+            .node
+            .notification_posted(Notification {
+                key: format!("app|{i:04}"),
+                app: "org.example.chat".into(),
+                app_name: "Chat".into(),
+                title: Some(format!("Message {i}")),
+                text: None,
+                sub: None,
+                when: 1_760_000_000_000 + i * 1000,
+                silent: false,
+                actions: Vec::new(),
+                icon: None,
+                image: None,
+                live: None,
+                conversation: None,
+            })
+            .await;
+    }
+    let history = phone.node.notification_history(None, 5000);
+    assert_eq!(history.len(), 1000);
+    assert!(history.iter().all(|n| n.key.as_str() >= "app|0005"), "the oldest five are gone");
+    phone.node.shutdown().await;
+}
