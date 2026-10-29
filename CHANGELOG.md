@@ -8,6 +8,9 @@ change things that need a step from you, and its notes say so.
 
 ### New
 
+- **Sharing your PC's screen with the phone uses H.265** when both sides
+  can, and H.264 otherwise. Thanks to [@AS8148](https://github.com/AS8148)
+  ([#66](https://github.com/thtbee/nectarlink/pull/66)).
 - **Elevated over USB.** Plug the phone into the PC with USB debugging
   allowed and Elevated starts by itself, without setting up Wireless
   debugging. It runs while the cable is in. The PC only starts NectarLink's
