@@ -223,8 +223,9 @@ fn items(entries: &[FileEntry]) -> Vec<String> {
 }
 
 /// A name Windows can store: no reserved device names (`CON`, `COM1`…),
-/// characters it rejects, or trailing dots and spaces.
-pub(crate) fn storable_name(name: &str) -> String {
+/// characters it rejects (including `:`, which would make the name a drive
+/// prefix or an alternate data stream), or trailing dots and spaces.
+pub fn storable_name(name: &str) -> String {
     let mut clean: String = name
         .chars()
         .map(|c| if matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') { '_' } else { c })

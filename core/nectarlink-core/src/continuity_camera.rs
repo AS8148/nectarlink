@@ -308,7 +308,8 @@ async fn take_result(
         CameraCaptureMode::Scan => format!("Scan.{default_ext}"),
     };
     let raw_name = if meta.file_name.trim().is_empty() { &fallback_name } else { &meta.file_name };
-    let safe_name = crate::transfer::safe_file_name(raw_name);
+    // Safe to save on any system: `C:x.jpg` must not become a path on drive C.
+    let safe_name = crate::transfer::storable_name(&crate::transfer::safe_file_name(raw_name));
 
     let saved_path = match tokio::fs::create_dir_all(&shared.downloads_dir).await {
         Ok(()) => {

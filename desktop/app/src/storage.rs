@@ -1047,6 +1047,11 @@ mod imp {
 
         let mut missing: Vec<StorageEntry> = Vec::new();
         for entry in entries {
+            // Windows can't show a name it can't store (`:`, `CON`, a trailing
+            // dot), and `C:x` would even join to a path outside the folder.
+            if nectarlink_core::storable_name(&entry.name) != entry.name {
+                continue;
+            }
             let child_path = local_dir.join(&entry.name);
             if !child_path.exists() {
                 missing.push(entry);

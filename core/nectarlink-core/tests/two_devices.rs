@@ -4180,7 +4180,8 @@ async fn continuity_camera_photo_and_scan_flow() {
     let scan_meta = CameraCaptureResultMeta {
         request_id: "req-scan-2".into(),
         mode: CameraCaptureMode::Scan,
-        file_name: "Scan_20260409.jpg".into(),
+        // A drive-prefixed name must still land in the downloads folder.
+        file_name: "C:Scan_20260409.jpg".into(),
         mime: "image/jpeg".into(),
         size: fake_scan.len() as u64,
         width: 1654,
@@ -4221,11 +4222,14 @@ async fn continuity_camera_photo_and_scan_flow() {
         .await;
     assert_eq!(got_scan_id, "req-scan-2");
     assert_eq!(got_scan_mode, CameraCaptureMode::Scan);
-    assert_eq!(got_scan_name, "Scan_20260409.jpg");
+    assert_eq!(got_scan_name, "C_Scan_20260409.jpg");
     assert_eq!(got_w, 1654);
     assert_eq!(got_h, 2339);
     assert_eq!(got_scan_data, fake_scan);
-    assert!(got_scan_path.unwrap().exists());
+    let got_scan_path = got_scan_path.unwrap();
+    assert!(got_scan_path.exists());
+    assert_eq!(got_scan_path.parent(), path.parent());
+    assert_eq!(got_scan_path.file_name().unwrap(), "C_Scan_20260409.jpg");
 
     pc.node.shutdown().await;
     phone.node.shutdown().await;

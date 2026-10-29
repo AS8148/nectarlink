@@ -161,7 +161,7 @@ pub use timeline::{
 };
 pub use transfer::{
     Direction, FileSource, OutgoingFile, RECORDER, RecordingMarker, Transfer, TransferFailure, TransferState,
-    outgoing_paths, safe_file_name,
+    outgoing_paths, safe_file_name, storable_name,
 };
 pub use usb::{DEFAULT_ADB_ADDR, DEFAULT_USB_PORT, USB_PORT_COUNT};
 pub use webcam::{TOGGLE as WEBCAM_TOGGLE, WebcamSink};
