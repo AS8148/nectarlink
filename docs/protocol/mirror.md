@@ -96,16 +96,8 @@ Packets are at most 8 MiB. Video is BT.709, limited range.
 
 The PC can also send its screen to the phone using the same packet format.
 It uses H.265 when the phone advertises `mirror.decode.hevc` and the PC's
-HEVC encoder starts successfully; otherwise it uses H.264. Windows uses Media
-Foundation; Linux retains its OpenH264 encoder. Encoder failures advance to the
-next candidate. After the HEVC candidates are exhausted, the PC switches to
-H.264 and sends a new config packet.
-
-Windows checks each adapter's decoder profile and configures screen encoders
-enumerated for that adapter's LUID. If decoding fails, the receiver tries another
-adapter before software and requests a keyframe before resuming. Screen mirroring
-and the webcam share this decoder selection; webcam textures retain their
-producer's adapter LUID when passed to the virtual camera.
+HEVC encoder starts successfully; otherwise it uses H.264. If the codec changes
+during a stream, the sender sends a new config packet.
 
 ## 4. Input
 

@@ -22,7 +22,7 @@ mod imp {
     use nectarlink_core::{MirrorConfig, MirrorSend, PacketKind};
     #[cfg(windows)]
     use windows::Win32::{
-        Foundation::{E_INVALIDARG, ERROR_TIMEOUT, POINT, RECT},
+        Foundation::{E_INVALIDARG, E_NOTIMPL, ERROR_TIMEOUT, POINT, RECT},
         Graphics::Gdi::{
             BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC, DESKTOPHORZRES,
             DESKTOPVERTRES, DeleteDC, DeleteObject, GetDC, GetDIBits, GetDeviceCaps, HALFTONE, ReleaseDC,
@@ -30,10 +30,10 @@ mod imp {
         },
         Media::MediaFoundation::{
             CODECAPI_AVEncCommonMeanBitRate, CODECAPI_AVEncMPVGOPSize, CODECAPI_AVEncVideoForceKeyFrame,
-            CODECAPI_AVLowLatencyMode, ICodecAPI, IMFActivate, IMFAttributes, IMFMediaBuffer,
-            IMFMediaEventGenerator, IMFMediaType, IMFSample, IMFTransform, MEError, METransformHaveOutput,
-            METransformNeedInput, MF_E_NO_EVENTS_AVAILABLE, MF_E_NOTACCEPTING, MF_E_OPERATION_CANCELLED,
-            MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE, MF_EVENT_FLAG_NO_WAIT,
+            CODECAPI_AVLowLatencyMode, ICodecAPI, IMFActivate, IMFAsyncCallback, IMFAsyncCallback_Impl,
+            IMFAsyncResult, IMFAttributes, IMFMediaBuffer, IMFMediaEventGenerator, IMFMediaType, IMFSample,
+            IMFTransform, MEError, METransformHaveOutput, METransformNeedInput, MF_E_NOTACCEPTING,
+            MF_E_OPERATION_CANCELLED, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE,
             MF_LOW_LATENCY, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
             MF_MT_MAJOR_TYPE, MF_MT_MPEG_SEQUENCE_HEADER, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
             MF_TRANSFORM_ASYNC, MF_TRANSFORM_ASYNC_UNLOCK, MFCreateAttributes, MFCreateMediaType,
@@ -442,10 +442,108 @@ mod imp {
     }
 
     #[cfg(windows)]
+    #[windows::core::implement(IMFAsyncCallback)]
+    struct EncoderEventCallback {
+        cookie: u32,
+        sender: std::sync::mpsc::Sender<windows::core::Result<u32>>,
+    }
+
+    #[cfg(windows)]
+    impl IMFAsyncCallback_Impl for EncoderEventCallback_Impl {
+        fn GetParameters(&self, _: *mut u32, _: *mut u32) -> windows::core::Result<()> {
+            Err(E_NOTIMPL.into())
+        }
+
+        fn Invoke(&self, result: windows::core::Ref<IMFAsyncResult>) -> windows::core::Result<()> {
+            // SAFETY: the global interface table marshals the generator into this callback's apartment.
+            let event = unsafe {
+                global_interface_table().and_then(|table| {
+                    let mut raw = std::ptr::null_mut();
+                    table.GetInterfaceFromGlobal(
+                        self.cookie,
+                        &<IMFMediaEventGenerator as windows::core::Interface>::IID,
+                        &mut raw,
+                    )?;
+                    let generator = <IMFMediaEventGenerator as windows::core::Interface>::from_raw(raw);
+                    result.ok().and_then(|result| generator.EndGetEvent(result)).and_then(|event| {
+                        let kind = event.GetType()?;
+                        if kind == MEError.0 as u32 {
+                            event.GetStatus()?.ok()?;
+                        }
+                        Ok(kind)
+                    })
+                })
+            };
+            let _ = self.sender.send(event);
+            Ok(())
+        }
+    }
+
+    #[cfg(windows)]
+    unsafe fn global_interface_table()
+    -> windows::core::Result<windows::Win32::System::Com::IGlobalInterfaceTable> {
+        use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
+        const CLSID_STD_GLOBAL_INTERFACE_TABLE: windows::core::GUID =
+            windows::core::GUID::from_u128(0x00000323_0000_0000_c000_000000000046);
+        unsafe { CoCreateInstance(&CLSID_STD_GLOBAL_INTERFACE_TABLE, None, CLSCTX_INPROC_SERVER) }
+    }
+
+    #[cfg(windows)]
+    struct EncoderEvents {
+        generator: IMFMediaEventGenerator,
+        table: windows::Win32::System::Com::IGlobalInterfaceTable,
+        cookie: u32,
+        callback: IMFAsyncCallback,
+        receiver: std::sync::mpsc::Receiver<windows::core::Result<u32>>,
+        pending: bool,
+    }
+
+    #[cfg(windows)]
+    impl EncoderEvents {
+        fn new(generator: IMFMediaEventGenerator) -> windows::core::Result<Self> {
+            // SAFETY: registers the interface so the callback can retrieve it in its own apartment.
+            let table = unsafe { global_interface_table()? };
+            let cookie = unsafe {
+                table.RegisterInterfaceInGlobal(
+                    &generator,
+                    &<IMFMediaEventGenerator as windows::core::Interface>::IID,
+                )?
+            };
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let callback = EncoderEventCallback { cookie, sender }.into();
+            Ok(Self { generator, table, cookie, callback, receiver, pending: false })
+        }
+
+        fn receive(&mut self, timeout: Duration) -> windows::core::Result<Option<u32>> {
+            if !self.pending {
+                // SAFETY: only one event request is pending at a time.
+                unsafe { self.generator.BeginGetEvent(&self.callback, None)? };
+                self.pending = true;
+            }
+            match self.receiver.recv_timeout(timeout) {
+                Ok(event) => {
+                    self.pending = false;
+                    event.map(Some)
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(E_INVALIDARG.into()),
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for EncoderEvents {
+        fn drop(&mut self) {
+            // SAFETY: this cookie is owned by this registration and is revoked once.
+            let _ = unsafe { self.table.RevokeInterfaceFromGlobal(self.cookie) };
+        }
+    }
+
+    #[cfg(windows)]
     pub(crate) struct ScreenEncoder {
         codec: String,
         transform: IMFTransform,
-        async_events: Option<IMFMediaEventGenerator>,
+        async_events: Option<EncoderEvents>,
         pending_input: u32,
         pending_output: u32,
         /// The encoder's settings interface, when it has one: keyframes on demand and live
@@ -567,8 +665,11 @@ mod imp {
 
                 // Periodic keyframes allow recovery after packet loss without restarting the encoder.
                 let codec_api: Option<ICodecAPI> = windows::core::Interface::cast(&transform).ok();
-                let async_events =
-                    if is_async { Some(windows::core::Interface::cast(&transform)?) } else { None };
+                let async_events = if is_async {
+                    Some(EncoderEvents::new(windows::core::Interface::cast(&transform)?)?)
+                } else {
+                    None
+                };
                 if let Some(api) = codec_api.as_ref() {
                     let _ = api.SetValue(&CODECAPI_AVLowLatencyMode, &VARIANT::from(true));
                     let _ = api.SetValue(&CODECAPI_AVEncMPVGOPSize, &VARIANT::from(fps.max(1) * 2));
@@ -663,7 +764,7 @@ mod imp {
         }
 
         fn wait_for_async_event(&mut self, expected: u32, stop: &AtomicBool) -> windows::core::Result<()> {
-            let Some(events) = self.async_events.as_ref() else {
+            let Some(events) = self.async_events.as_mut() else {
                 return Ok(());
             };
             let deadline = Instant::now() + Duration::from_secs(2);
@@ -683,22 +784,10 @@ mod imp {
                 if Instant::now() >= deadline {
                     return Err(windows::core::Error::from(ERROR_TIMEOUT.to_hresult()));
                 }
-                // Poll so a stalled driver cannot prevent the capture thread from stopping.
-                // SAFETY: the active MFT owns this event queue; NO_WAIT never blocks.
-                let event = match unsafe { events.GetEvent(MF_EVENT_FLAG_NO_WAIT) } {
-                    Ok(event) => event,
-                    Err(error) if error.code() == MF_E_NO_EVENTS_AVAILABLE => {
-                        std::thread::sleep(Duration::from_millis(1));
-                        continue;
-                    }
-                    Err(error) => return Err(error),
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let Some(kind) = events.receive(remaining.min(Duration::from_millis(20)))? else {
+                    continue;
                 };
-                // SAFETY: event properties are read before the event is released.
-                let kind = unsafe { event.GetType()? };
-                if kind == MEError.0 as u32 {
-                    // SAFETY: GetStatus returns the event's HRESULT.
-                    unsafe { event.GetStatus()?.ok()? };
-                }
                 if kind == METransformNeedInput.0 as u32 {
                     self.pending_input += 1;
                 } else if kind == METransformHaveOutput.0 as u32 {
