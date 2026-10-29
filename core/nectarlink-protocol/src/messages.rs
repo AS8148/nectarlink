@@ -93,6 +93,8 @@ pub mod types {
     pub const STORAGE_RENAME: &str = "storage.rename";
     pub const STORAGE_DELETE: &str = "storage.delete";
     pub const STORAGE_CHANGED: &str = "storage.changed";
+    pub const ELEVATED_USB_START: &str = "elevated.usb.start";
+    pub const ELEVATED_USB_READY: &str = "elevated.usb.ready";
     pub const MIC_START: &str = "mic.start";
     pub const MIC_STOP: &str = "mic.stop";
     pub const WEBCAM_START: &str = "webcam.start";
@@ -344,8 +346,29 @@ pub struct DeviceInfo {
     pub install_id: Option<String>,
 }
 
+/// A device's name or model, at most, in characters.
+pub const MAX_DEVICE_NAME_CHARS: usize = 64;
+/// A device's OS name or version, at most, in characters.
+pub const MAX_DEVICE_OS_CHARS: usize = 32;
+
+/// `text` without control characters or the invisible marks that reorder
+/// text (a name could otherwise show reversed or disguised), cut to
+/// `max_chars` and trimmed.
+fn clean_device_text(text: &str, max_chars: usize) -> String {
+    let is_direction_mark = |c: char| matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+    let clean: String =
+        text.chars().filter(|c| !c.is_control() && !is_direction_mark(*c)).take(max_chars).collect();
+    clean.trim().to_owned()
+}
+
 impl DeviceInfo {
+    /// What another device says about itself, made safe to store and show.
     pub fn sanitized(mut self) -> Self {
+        self.name = clean_device_text(&self.name, MAX_DEVICE_NAME_CHARS);
+        self.os = clean_device_text(&self.os, MAX_DEVICE_OS_CHARS);
+        self.os_ver = clean_device_text(&self.os_ver, MAX_DEVICE_OS_CHARS);
+        self.model =
+            self.model.map(|m| clean_device_text(&m, MAX_DEVICE_NAME_CHARS)).filter(|m| !m.is_empty());
         self.screen = self.screen.and_then(ScreenShape::sanitized);
         self.install_id = self.install_id.filter(|id| is_valid_install_id(id));
         self
@@ -1621,6 +1644,83 @@ impl MirrorAudioConfig {
 // ---- Phone as webcam (docs/protocol/webcam.md) ----
 
 /// Phone as microphone (`docs/protocol/mic.md`).
+/// Elevated over USB (`docs/protocol/elevated-usb.md`): a phone without
+/// wireless debugging asks the PC it's plugged into to start its Elevated
+/// helper over USB debugging.
+pub mod elevated {
+    /// Offered by PCs that can start a USB-connected phone's helper.
+    pub const USB: &str = "elevated.usb";
+    /// The only package the PC runs anything for.
+    pub const PACKAGE: &str = "app.nectarlink";
+    /// The helper the PC starts, with `app_process`.
+    pub const HELPER_CLASS: &str = "app.nectarlink.android.elevated.InputServer";
+    /// Grants a request may carry, at most.
+    pub const MAX_GRANTS: usize = 8;
+}
+
+/// Body of `elevated.usb.start`: start the helper from `apk` with `token`,
+/// after running `grants` (each one of the phone's own, see [`is_valid_grant`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ElevatedUsbStart {
+    pub apk: String,
+    pub token: String,
+    #[serde(default)]
+    pub grants: Vec<String>,
+}
+
+impl ElevatedUsbStart {
+    pub fn is_valid(&self) -> bool {
+        is_valid_app_apk(&self.apk)
+            && (32..=64).contains(&self.token.len())
+            && self.token.bytes().all(|b| b.is_ascii_hexdigit())
+            && self.grants.len() <= elevated::MAX_GRANTS
+            && self.grants.iter().all(|g| is_valid_grant(g))
+    }
+}
+
+/// Body of `elevated.usb.ready`: the helper listens on this loopback port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ElevatedUsbReady {
+    pub port: u16,
+}
+
+/// Characters a path or command the PC passes to the phone's shell may use:
+/// nothing the shell would read as more than a word.
+fn is_shell_word(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._/=~+-:".contains(&b))
+}
+
+/// The app's own installed APK (`pm path` gives `/data/app/<...>/base.apk`).
+pub fn is_valid_app_apk(apk: &str) -> bool {
+    apk.len() <= 512
+        && apk.starts_with("/data/app/")
+        && apk.ends_with("/base.apk")
+        && !apk.contains("..")
+        && apk.contains(elevated::PACKAGE)
+        && is_shell_word(apk)
+}
+
+/// A grant the phone may ask for itself, and nothing else: a permission or
+/// app op for NectarLink's own package, or its own notification listener.
+pub fn is_valid_grant(grant: &str) -> bool {
+    let words: Vec<&str> = grant.split(' ').collect();
+    if !words.iter().all(|w| is_shell_word(w)) {
+        return false;
+    }
+    let pkg = elevated::PACKAGE;
+    match words.as_slice() {
+        ["pm", "grant", p, perm] => *p == pkg && perm.starts_with("android.permission."),
+        ["appops", "set", p, op, "allow"] => {
+            *p == pkg && op.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
+        }
+        ["cmd", "notification", "allow_dnd", p] => *p == pkg,
+        ["cmd", "notification", "allow_listener", component] => {
+            component.strip_prefix(pkg).is_some_and(|rest| rest.starts_with('/'))
+        }
+        _ => false,
+    }
+}
+
 pub mod mic {
     /// Offered by phones that stream their microphone.
     pub const STREAM: &str = "mic.stream";
@@ -4160,6 +4260,68 @@ mod tests {
             screen: None,
             install_id: None,
         }
+    }
+
+    #[test]
+    fn elevated_usb_only_runs_the_apps_own_helper_and_grants() {
+        let apk = "/data/app/~~kG3x_Q==/app.nectarlink-Ab1-cD2==/base.apk";
+        let start = ElevatedUsbStart {
+            apk: apk.into(),
+            token: "0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            grants: vec![
+                "pm grant app.nectarlink android.permission.WRITE_SECURE_SETTINGS".into(),
+                "appops set app.nectarlink RECEIVE_SENSITIVE_NOTIFICATIONS allow".into(),
+                "cmd notification allow_dnd app.nectarlink".into(),
+                "cmd notification allow_listener app.nectarlink/app.nectarlink.android.notifications.NotificationListener"
+                    .into(),
+            ],
+        };
+        assert!(start.is_valid());
+
+        for apk in [
+            "/data/app/other.app-1/base.apk",
+            "/sdcard/app.nectarlink/base.apk",
+            "/data/app/app.nectarlink-1/../../evil/base.apk",
+            "/data/app/app.nectarlink-1/base.apk; reboot",
+            "/data/app/app.nectarlink-1/base.apk$(id)",
+        ] {
+            assert!(!ElevatedUsbStart { apk: apk.into(), ..start.clone() }.is_valid(), "{apk}");
+        }
+        for grant in [
+            "pm grant com.other android.permission.WRITE_SECURE_SETTINGS",
+            "pm grant app.nectarlink android.permission.X; rm -rf /sdcard",
+            "pm grant app.nectarlink android.permission.X && reboot",
+            "appops set app.nectarlink.evil SYSTEM_ALERT_WINDOW allow",
+            "cmd notification allow_listener com.other/x.Listener",
+            "cmd notification allow_dnd com.other",
+            "settings put global adb_enabled 1",
+            "reboot",
+        ] {
+            assert!(!ElevatedUsbStart { grants: vec![grant.into()], ..start.clone() }.is_valid(), "{grant}");
+        }
+        assert!(
+            !ElevatedUsbStart { token: "not-hex-token-not-hex-token-not-hex".into(), ..start.clone() }
+                .is_valid()
+        );
+        assert!(!ElevatedUsbStart { grants: vec![start.grants[0].clone(); 9], ..start }.is_valid());
+    }
+
+    #[test]
+    fn device_names_are_cleaned_and_capped() {
+        assert_eq!(info().sanitized(), info(), "ordinary info is unchanged");
+
+        let mut dev = info();
+        // A right-to-left override would show "Pixel\u{202E}gnp.exe" as "Pixelexe.png".
+        dev.name = " Pixel\u{202E}gnp.exe\u{0007}\n ".into();
+        dev.os_ver = "1".repeat(100);
+        dev.model = Some("\u{2066}\u{2069}".into());
+        let clean = dev.sanitized();
+        assert_eq!(clean.name, "Pixelgnp.exe");
+        assert_eq!(clean.os_ver.chars().count(), MAX_DEVICE_OS_CHARS);
+        assert_eq!(clean.model, None);
+
+        let long = DeviceInfo { name: "é".repeat(200), ..info() }.sanitized();
+        assert_eq!(long.name.chars().count(), MAX_DEVICE_NAME_CHARS);
     }
 
     #[test]

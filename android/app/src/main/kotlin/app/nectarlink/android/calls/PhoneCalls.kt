@@ -23,6 +23,7 @@ import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import app.nectarlink.android.contacts.PhoneContacts
 import app.nectarlink.core.Call
 import app.nectarlink.core.CallCommand
@@ -454,7 +455,19 @@ internal class PhoneCalls(
         return telecom()?.endCall() == true
     }
 
-    private var mutedRinger = false
+    /**
+     * Whether the ring stream is muted to silence a call. Kept on disk: if the
+     * app is stopped before the call ends, the next start unmutes it instead
+     * of leaving the phone silent for every call after.
+     */
+    private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private var mutedRinger: Boolean
+        get() = prefs.getBoolean(MUTED_RINGER, false)
+        set(value) = prefs.edit { putBoolean(MUTED_RINGER, value) }
+
+    init {
+        restoreRinger()
+    }
 
     @SuppressLint("MissingPermission")
     private fun silence(telecom: TelecomManager) {
@@ -478,6 +491,8 @@ internal class PhoneCalls(
     }
 
     companion object {
+        private const val PREFS = "phone_calls"
+        private const val MUTED_RINGER = "muted_ringer"
         private const val TAG = "PhoneCalls"
 
         @Volatile private var instance: PhoneCalls? = null

@@ -223,8 +223,9 @@ fn items(entries: &[FileEntry]) -> Vec<String> {
 }
 
 /// A name Windows can store: no reserved device names (`CON`, `COM1`…),
-/// characters it rejects, or trailing dots and spaces.
-pub(crate) fn storable_name(name: &str) -> String {
+/// characters it rejects (including `:`, which would make the name a drive
+/// prefix or an alternate data stream), or trailing dots and spaces.
+pub fn storable_name(name: &str) -> String {
     let mut clean: String = name
         .chars()
         .map(|c| if matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') { '_' } else { c })
@@ -844,6 +845,7 @@ pub(crate) async fn deliver_queued_files(
     let mut attempts = item.attempts;
     const RETRY_BACKOFF_MS: [i64; 5] = [1_000, 2_000, 4_000, 8_000, 15_000];
 
+    let mut store_errors = 0u32;
     let state = loop {
         if cancel.is_cancelled() {
             break TransferState::Cancelled;
@@ -851,9 +853,24 @@ pub(crate) async fn deliver_queued_files(
         if shutdown.is_cancelled() {
             break TransferState::Failed(TransferFailure::Interrupted);
         }
-        let Ok(Some((current, _, _, _))) = shared.store.get_queue_item(&item.id) else {
-            break TransferState::Cancelled;
+        let current = match shared.store.get_queue_item(&item.id) {
+            Ok(Some((current, _, _, _))) => current,
+            // Removed from the queue: the user cancelled it.
+            Ok(None) => break TransferState::Cancelled,
+            // The database was busy for a moment; that's not a cancel.
+            Err(e) if store_errors < 20 => {
+                store_errors += 1;
+                tracing::debug!(error = %e, "can't read the queue item yet");
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+            Err(e) => {
+                break TransferState::Failed(TransferFailure::Other(format!(
+                    "can't read the send queue: {e}"
+                )));
+            }
         };
+        store_errors = 0;
         if let crate::QueueStatus::Failed { error } | crate::QueueStatus::Expired { error } = current.status {
             break TransferState::Failed(TransferFailure::Other(error));
         }

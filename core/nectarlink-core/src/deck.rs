@@ -696,6 +696,14 @@ async fn run_pc_audio_set(shared: &Arc<Shared>, peer: &DeviceId, req: PcAudioSet
     }
     let is_phone_speaker_toggle =
         req.volume.is_some_and(|v| v == PHONE_SPEAKER_OFF || v == PHONE_SPEAKER_ON) && req.muted.is_none();
+    // Playing this PC's sound on a phone shares what the PC plays, so it
+    // needs that phone's media permission. Stopping is always allowed.
+    if is_phone_speaker_toggle
+        && req.volume == Some(PHONE_SPEAKER_ON)
+        && !shared.toggle_on(peer, crate::media::TOGGLE)
+    {
+        return Envelope::error(ErrorCode::Denied, "media is turned off for this device");
+    }
     if !is_phone_speaker_toggle
         && !shared.toggle_on(peer, crate::actions::POWER_TOGGLE)
         && !shared.toggle_on(peer, INPUT_TOGGLE)

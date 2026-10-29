@@ -3575,6 +3575,26 @@ async fn pc_audio_volume_mute_output_devices_and_smart_clipboard_context_chips_f
         .await
         .unwrap();
 
+    // Phone as speaker needs the phone's `media` permission to start; stopping is always allowed.
+    pc.node.set_device_toggle(phone_id, "media", false).unwrap();
+    assert!(matches!(
+        phone.node.set_pc_audio(pc_id, Some(nectarlink_core::deck::PHONE_SPEAKER_ON), None).await,
+        Err(Error::Denied)
+    ));
+    with_timeout(
+        "phone speaker off while media is off",
+        phone.node.set_pc_audio(pc_id, Some(nectarlink_core::deck::PHONE_SPEAKER_OFF), None),
+    )
+    .await
+    .unwrap();
+    pc.node.set_device_toggle(phone_id, "media", true).unwrap();
+    with_timeout(
+        "phone speaker on",
+        phone.node.set_pc_audio(pc_id, Some(nectarlink_core::deck::PHONE_SPEAKER_ON), None),
+    )
+    .await
+    .unwrap();
+
     // Smart clipboard context chips: phone sends different text clips to PC,
     // and PC classifies each into at most 1 context chip (and None for OTP).
     let cases = [
@@ -4199,7 +4219,8 @@ async fn continuity_camera_photo_and_scan_flow() {
     let scan_meta = CameraCaptureResultMeta {
         request_id: "req-scan-2".into(),
         mode: CameraCaptureMode::Scan,
-        file_name: "Scan_20260409.jpg".into(),
+        // A drive-prefixed name must still land in the downloads folder.
+        file_name: "C:Scan_20260409.jpg".into(),
         mime: "image/jpeg".into(),
         size: fake_scan.len() as u64,
         width: 1654,
@@ -4240,11 +4261,14 @@ async fn continuity_camera_photo_and_scan_flow() {
         .await;
     assert_eq!(got_scan_id, "req-scan-2");
     assert_eq!(got_scan_mode, CameraCaptureMode::Scan);
-    assert_eq!(got_scan_name, "Scan_20260409.jpg");
+    assert_eq!(got_scan_name, "C_Scan_20260409.jpg");
     assert_eq!(got_w, 1654);
     assert_eq!(got_h, 2339);
     assert_eq!(got_scan_data, fake_scan);
-    assert!(got_scan_path.unwrap().exists());
+    let got_scan_path = got_scan_path.unwrap();
+    assert!(got_scan_path.exists());
+    assert_eq!(got_scan_path.parent(), path.parent());
+    assert_eq!(got_scan_path.file_name().unwrap(), "C_Scan_20260409.jpg");
 
     pc.node.shutdown().await;
     phone.node.shutdown().await;
@@ -6317,6 +6341,143 @@ async fn bench_file_throughput() {
         first_byte.as_secs_f64(),
         mb as f64 / moving.as_secs_f64()
     );
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+/// A phone whose app reports `install_id` (the same on this phone after a reinstall).
+async fn phone_with_install_id(name: &'static str, install_id: &str) -> TestDevice {
+    init_logging();
+    let dir = tempfile::tempdir().unwrap();
+    let mut phone_info = info(name, DeviceKind::Phone);
+    phone_info.install_id = Some(install_id.into());
+    let mut config = NodeConfig::new(dir.path(), phone_info, "0.0.1-test");
+    config.lan_discovery = false;
+    config.away_mode = false;
+    config.key_protector = Some(Arc::new(PlainKeyProtector));
+    config.capabilities = vec!["media.control".into()];
+    let platform = Arc::new(RecordingPlatform::default());
+    let node = Node::start(config, platform.clone()).await.expect("node starts");
+    let events = node.events();
+    TestDevice { node, events, platform, dir, name }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reinstalled_phone_replaces_its_old_pairing() {
+    const INSTALL: &str = "0123456789abcdef0123456789abcdef";
+    let mut pc = device("pc", DeviceKind::Desktop).await;
+    let mut old = phone_with_install_id("phone", INSTALL).await;
+    pair_qr(&mut pc, &mut old).await;
+    let old_id = old.node.device_id();
+    old.node.shutdown().await;
+    wait_for(&mut pc, "old phone offline", |e| match e {
+        NodeEvent::LinkChanged { device, link: LinkState::Offline { .. } } if *device == old_id => Some(()),
+        _ => None,
+    })
+    .await;
+
+    // Reinstalled: a new identity, the same install ID. Pairing it replaces the old entry.
+    let mut new = phone_with_install_id("phone", INSTALL).await;
+    let mut pc_events = pc.node.events();
+    pair_qr(&mut pc, &mut new).await;
+    let new_id = new.node.device_id();
+    let mut removed = false;
+    while let Ok(event) = pc_events.try_recv() {
+        removed |= matches!(event, NodeEvent::DeviceRemoved(device) if device == old_id);
+    }
+    assert!(removed, "the old entry is announced as removed");
+    let ids: Vec<nectarlink_core::DeviceId> =
+        pc.node.paired_devices().unwrap().into_iter().map(|d| d.id).collect();
+    assert_eq!(ids, vec![new_id]);
+
+    pc.node.shutdown().await;
+    new.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_time_screen_consent_ends_with_the_pairing() {
+    use nectarlink_core::{MIRROR_CAPTURE, MIRROR_INPUT, MIRROR_SCREEN, MirrorStart};
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[MIRROR_CAPTURE, MIRROR_INPUT]).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &[nectarlink_core::MIRROR_VIEW]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+    let options = MirrorStart {
+        max_size: 1280,
+        fps: 30,
+        bitrate: 4_000_000,
+        audio: false,
+        session: MIRROR_SCREEN,
+        app: None,
+        stay_awake: false,
+        screen_off: false,
+        watch: None,
+    };
+
+    // "Allow once" lets the phone view the PC's screen during this connection
+    // (granted here before the phone starts, so nothing else clears it).
+    pc.node.set_pc_mirror_session_allowed(phone_id, true);
+
+    // After unpairing and pairing again, the phone has to be allowed again.
+    with_timeout("unpair", pc.node.unpair(phone_id)).await.unwrap();
+    wait_for(&mut phone, "phone forgets the PC", |e| match e {
+        NodeEvent::DeviceRemoved(device) if *device == pc_id => Some(()),
+        _ => None,
+    })
+    .await;
+    pair_qr(&mut pc, &mut phone).await;
+    let again = phone.node.mirror_start(pc_id, options).await;
+    assert!(matches!(again, Err(Error::Denied)), "expected Denied after re-pairing, got {again:?}");
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn notification_history_keeps_the_newest_thousand() {
+    let phone = device("phone", DeviceKind::Phone).await;
+    for i in 0..1005i64 {
+        phone
+            .node
+            .notification_posted(Notification {
+                key: format!("app|{i:04}"),
+                app: "org.example.chat".into(),
+                app_name: "Chat".into(),
+                title: Some(format!("Message {i}")),
+                text: None,
+                sub: None,
+                when: 1_760_000_000_000 + i * 1000,
+                silent: false,
+                actions: Vec::new(),
+                icon: None,
+                image: None,
+                live: None,
+                conversation: None,
+            })
+            .await;
+    }
+    let history = phone.node.notification_history(None, 5000);
+    assert_eq!(history.len(), 1000);
+    assert!(history.iter().all(|n| n.key.as_str() >= "app|0005"), "the oldest five are gone");
+    phone.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn elevated_over_usb_is_refused_without_a_usb_connection() {
+    let mut pc = device("pc", DeviceKind::Desktop).await;
+    let mut phone = device("phone", DeviceKind::Phone).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let pc_id = pc.node.device_id();
+    let apk = "/data/app/~~a==/app.nectarlink-b==/base.apk".to_owned();
+    let token = "0123456789abcdef0123456789abcdef".to_owned();
+
+    // This PC doesn't watch adb, so it can't start anything over USB.
+    let refused = phone.node.elevated_usb_start(pc_id, apk.clone(), token.clone(), Vec::new()).await;
+    assert!(matches!(refused, Err(Error::Unsupported)), "{refused:?}");
+    // A request for anything but the app's own helper never leaves the phone.
+    let bad = phone.node.elevated_usb_start(pc_id, apk, token, vec!["reboot".into()]).await;
+    assert!(matches!(bad, Err(Error::Protocol(_))), "{bad:?}");
+
     pc.node.shutdown().await;
     phone.node.shutdown().await;
 }

@@ -859,6 +859,8 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
                 } else if (event.link is Link.Online) {
                     wakeTimers.remove(event.id)?.cancel()
                     retryWaitingRecordings(event.id)
+                    // Plugged into a PC with USB debugging allowed: it can start Elevated.
+                    if (!Elevated.running) scope.launch(Dispatchers.IO) { Elevated.startOverUsb() }
                     scope.launch(Dispatchers.Default) {
                         accent.syncNow()
                     }
@@ -1064,6 +1066,21 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
         startJob?.join()
         val node = checkNotNull(node) { "the core isn't running" }
         return node.mirrorOpenAudio(pcId)
+    }
+
+    /**
+     * Elevated over USB (`docs/protocol/elevated-usb.md`): asks each connected
+     * PC to start this phone's helper; only one it's plugged into with USB
+     * debugging allowed can. Returns the helper's port, or `null`.
+     */
+    suspend fun elevatedUsbStart(apk: String, token: String, grants: List<String>): Int? {
+        startJob?.join()
+        val node = node ?: return null
+        for (pc in _state.value.devices.filter { it.online }) {
+            val port = runCatching { node.elevatedUsbStart(pc.id, apk, token, grants) }.getOrNull()
+            if (port != null) return port.toInt()
+        }
+        return null
     }
 
     /** Accepted codecs from the connected PC; an unknown receiver gets H.264. */

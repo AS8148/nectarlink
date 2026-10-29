@@ -878,7 +878,7 @@ impl qobject::Preferences {
             return;
         }
         let mut rules = crate::settings::folder_sync_rules();
-        let next_id = format!("sync-{}", rules.len() + 1);
+        let next_id = new_rule_id("sync", rules.iter().map(|r| r.id.as_str()));
         rules.push(crate::folder_sync::FolderSyncRule {
             id: next_id,
             phone_id: String::from(device_id).trim().to_owned(),
@@ -897,6 +897,7 @@ impl qobject::Preferences {
         let id = String::from(rule_id);
         let mut rules = crate::settings::folder_sync_rules();
         rules.retain(|r| r.id != id);
+        crate::folder_sync::forget_rule(&id);
         let json = serde_json::to_string(&rules).unwrap_or_else(|_| "[]".into());
         crate::settings::set_folder_sync_rules(rules);
         self.as_mut().set_folder_sync_rules_json(QString::from(&json));
@@ -932,7 +933,7 @@ impl qobject::Preferences {
             return;
         }
         let mut rules = crate::settings::automation_rules();
-        let next_id = format!("auto-{}", rules.len() + 1);
+        let next_id = new_rule_id("auto", rules.iter().map(|r| r.id.as_str()));
         rules.push(crate::automations::AutomationRule {
             id: next_id,
             name: format!("{trig} → {act}"),
@@ -1074,5 +1075,37 @@ fn save_in_background(settings: Settings) {
     };
     if let Err(e) = std::thread::Builder::new().name("save-preferences".into()).spawn(save) {
         tracing::warn!(error = %e, "can't save preferences");
+    }
+}
+
+/// An ID for a new folder sync or automation rule that no existing rule
+/// has. Counting rules gave a new rule a deleted one's number while another
+/// rule still had it, so removing either removed both.
+fn new_rule_id<'a>(prefix: &str, taken: impl Iterator<Item = &'a str>) -> String {
+    let taken: std::collections::HashSet<&str> = taken.collect();
+    let mut n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    loop {
+        let id = format!("{prefix}-{n}");
+        if !taken.contains(id.as_str()) {
+            return id;
+        }
+        n = n.wrapping_add(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::new_rule_id;
+
+    #[test]
+    fn a_new_rule_never_gets_an_id_in_use() {
+        // The old scheme: rules 1 and 2, rule 1 deleted, the next one became 2 again.
+        let first = new_rule_id("sync", ["sync-2"].into_iter());
+        assert!(first.starts_with("sync-") && first != "sync-2");
+        let second = new_rule_id("sync", ["sync-2", first.as_str()].into_iter());
+        assert_ne!(second, first);
+        assert!(new_rule_id("auto", std::iter::empty()).starts_with("auto-"));
     }
 }

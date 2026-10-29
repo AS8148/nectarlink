@@ -54,6 +54,11 @@ Window {
         const cleanText = text ? String(text) : ""
         if (cleanUrls.length === 0 && cleanText.trim().length === 0)
             return
+        if (!shelfData.hasDevice) {
+            // Nothing to send to: the app says no phone is paired yet.
+            AppController.dropToShelf(cleanUrls, cleanText)
+            return
+        }
         if (undoPending) {
             commitPendingSend()
         }
@@ -367,7 +372,9 @@ Window {
                             text: shelfDropArea.containsDrag
                                 ? qsTr("Release to send to %1").arg(shelfWin.targetPhoneName)
                                 : (shelfWin.justDropped
-                                    ? qsTr("Sent to %1").arg(shelfWin.targetPhoneName)
+                                    ? (shelfWin.shelfData.online
+                                        ? qsTr("Sent to %1").arg(shelfWin.targetPhoneName)
+                                        : qsTr("Queued for %1").arg(shelfWin.targetPhoneName))
                                     : (shelfWin.undoCancelled
                                         ? qsTr("Send cancelled")
                                         : qsTr("Drop or flick items here to send")))
@@ -474,9 +481,9 @@ Window {
                                     readonly property bool hasItem: itemData !== null && itemData !== undefined
                                     readonly property string thumbSource: hasItem ? (itemData.thumbUrl || itemData.thumbnailDataUrl || "") : ""
                                     readonly property string targetRef: hasItem ? (itemData.localPath || itemData.id || "") : ""
-                                    readonly property string sendUrl: hasItem
-                                        ? ((itemData.localPath && itemData.localPath.length > 0) ? itemData.localPath : thumbSource)
-                                        : ""
+                                    // Only a file on this PC can be sent: a photo still on the phone
+                                    // has just a thumbnail here, which isn't the picture.
+                                    readonly property string sendUrl: hasItem && itemData.localPath ? itemData.localPath : ""
 
                                     property real flickOffsetX: 0
                                     property real flickOffsetY: 0

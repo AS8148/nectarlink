@@ -172,6 +172,9 @@ for qm in "${SELF_DIR}"/nectarlink_*.qm; do
     [[ -f "${qm}" ]] && install -m 0644 "${qm}" "${PREFIX}/$(basename "${qm}")"
 done
 if [[ -d "${PREFIX}/lib" ]]; then
+    # An earlier install may have left a symlink here; writing through it
+    # would overwrite the real binary with this wrapper.
+    rm -f "${BIN_LINK}"
     cat > "${BIN_LINK}" <<WRAPEOF
 #!/usr/bin/env sh
 export LD_LIBRARY_PATH="${PREFIX}/lib\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"

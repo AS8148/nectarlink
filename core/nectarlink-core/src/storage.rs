@@ -1124,6 +1124,12 @@ impl FolderStorage {
     pub fn rename(&self, from: &str, to: &str) -> std::result::Result<(), StorageError> {
         let src = self.resolve_existing(from, false)?;
         let dst = self.resolve_target(to)?;
+        // Renaming never replaces another file (a case-only rename on a
+        // case-insensitive disk finds itself, which is fine).
+        if std::fs::symlink_metadata(&dst).is_ok() && std::fs::canonicalize(&dst).ok().as_ref() != Some(&src)
+        {
+            return Err(StorageError::Failed("a file or folder with that name already exists".into()));
+        }
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent).map_err(|e| StorageError::Failed(e.to_string()))?;
             let canon_root = self.canonical_root()?;
@@ -1145,7 +1151,8 @@ impl FolderStorage {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "trashed".into());
-            let dest = trash_dir.join(name);
+            // Never over an earlier trashed file of the same name.
+            let dest = crate::transfer::unique_path(trash_dir, &name);
             if std::fs::rename(&target, &dest).is_err() {
                 std::fs::copy(&target, &dest).map_err(|e| StorageError::Failed(e.to_string()))?;
                 std::fs::remove_file(&target).map_err(|e| StorageError::Failed(e.to_string()))?;
@@ -1194,6 +1201,33 @@ fn system_time_ms(t: Option<SystemTime>) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renames_never_replace_a_file_and_trash_keeps_both() {
+        let root = tempfile::tempdir().unwrap();
+        let trash = tempfile::tempdir().unwrap();
+        let storage = FolderStorage::new(root.path()).with_trash_dir(trash.path());
+        std::fs::write(root.path().join("a.txt"), "a").unwrap();
+        std::fs::write(root.path().join("b.txt"), "b").unwrap();
+
+        assert!(storage.rename("a.txt", "b.txt").is_err());
+        assert_eq!(std::fs::read_to_string(root.path().join("b.txt")).unwrap(), "b");
+        storage.rename("a.txt", "A.txt").unwrap();
+        storage.rename("A.txt", "c.txt").unwrap();
+
+        // Two photos of the same name trashed one after the other: both kept.
+        std::fs::create_dir(root.path().join("x")).unwrap();
+        std::fs::write(root.path().join("photo.jpg"), "1").unwrap();
+        std::fs::write(root.path().join("x/photo.jpg"), "2").unwrap();
+        storage.delete("photo.jpg", false).unwrap();
+        storage.delete("x/photo.jpg", false).unwrap();
+        let mut kept: Vec<String> = std::fs::read_dir(trash.path())
+            .unwrap()
+            .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+            .collect();
+        kept.sort();
+        assert_eq!(kept, ["1", "2"]);
+    }
 
     #[test]
     fn folder_storage_rejects_traversal_and_symlinks_outside_root() {

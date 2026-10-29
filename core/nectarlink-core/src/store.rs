@@ -682,14 +682,17 @@ impl Store {
     }
 
     /// Updates the stored description of a device (e.g. after a rename).
+    ///
+    /// Never its install ID: that is recorded only when the user pairs the
+    /// device, so a paired device can't later claim to be another one and
+    /// take over its pairing and history.
     pub fn update_info(&self, id: &DeviceId, info: &DeviceInfo) -> Result<()> {
         let screen = encode_screen(info.screen.as_ref());
         self.with(|c| {
             c.execute(
                 "UPDATE peers SET name = ?2, kind = ?3, os = ?4, os_ver = ?5, model = ?6,
                     accent = COALESCE(?7, accent),
-                    screen = CASE WHEN ?8 = '' THEN screen ELSE ?8 END,
-                    install_id = COALESCE(?9, install_id)
+                    screen = CASE WHEN ?8 = '' THEN screen ELSE ?8 END
                  WHERE id = ?1",
                 params![
                     id.as_bytes().as_slice(),
@@ -700,13 +703,8 @@ impl Store {
                     info.model,
                     info.accent.map(i64::from),
                     screen,
-                    valid_install_id(info)
                 ],
             )?;
-            if valid_install_id(info).is_some() {
-                cleanup_peers(c, Some(id))?;
-                self.toggle_cache().clear();
-            }
             c.execute(
                 "UPDATE timeline SET device_name = ?2 WHERE device_id = ?1",
                 params![id.as_bytes().as_slice(), info.name],
@@ -2175,6 +2173,10 @@ fn prune_chat_conn(c: &Connection, peer_str: &str, thread_id: &str) -> rusqlite:
         .flatten();
     if let Some(latest_ms) = max_updated {
         let retention_ms = CHAT_RETENTION_SECS * 1000;
+        // Never later than now: one message stamped in the future (a phone
+        // whose clock is wrong) would otherwise age out every other thread.
+        let now_ms = crate::now_unix().saturating_mul(1000);
+        let latest_ms = latest_ms.min(now_ms);
         if latest_ms > retention_ms {
             let cutoff_ms = latest_ms - retention_ms;
             c.execute(
@@ -3309,6 +3311,72 @@ mod tests {
         store.upsert_peer(&DeviceId([0x03; 32]), &bad, 300).unwrap();
         store.upsert_peer(&DeviceId([0x04; 32]), &bad, 400).unwrap();
         assert_eq!(store.list_peers().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_chat_stamped_in_the_future_does_not_age_out_the_others() {
+        use nectarlink_protocol::messages::{NotificationChatMessage, NotificationConversation};
+        let store = Store::in_memory().unwrap();
+        let peer = DeviceId([7u8; 32]);
+        let now_ms = crate::now_unix() * 1000;
+        let chat = |title: &str, time: i64| Notification {
+            key: format!("chat|{title}"),
+            app: "com.whatsapp".into(),
+            app_name: "WhatsApp".into(),
+            title: Some(title.into()),
+            text: Some("hi".into()),
+            sub: None,
+            when: time,
+            actions: Vec::new(),
+            silent: false,
+            icon: None,
+            image: None,
+            live: None,
+            conversation: Some(NotificationConversation {
+                v: 1,
+                title: title.into(),
+                group: false,
+                avatar: None,
+                messages: vec![NotificationChatMessage {
+                    sender: Some(title.into()),
+                    text: "hi".into(),
+                    time,
+                    self_sent: false,
+                    avatar: None,
+                }],
+            }),
+        };
+        store.upsert_chat_notification(&peer, &chat("Maya", now_ms - 86_400_000), None, false).unwrap();
+        // A phone with its clock a year ahead.
+        store.upsert_chat_notification(&peer, &chat("Sam", now_ms + 365 * 86_400_000), None, false).unwrap();
+        let titles: Vec<String> = store.chat_threads(&peer).unwrap().into_iter().map(|t| t.title).collect();
+        assert!(titles.contains(&"Maya".to_owned()), "{titles:?}");
+    }
+
+    #[test]
+    fn a_paired_device_cannot_claim_another_ones_install_id_later() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let (phone, other) = (DeviceId([0x01; 32]), DeviceId([0x02; 32]));
+        let mut mine = info("My Phone");
+        mine.install_id = Some("0123456789abcdef0123456789abcdef".into());
+        let mut theirs = info("Their Phone");
+        theirs.install_id = Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into());
+        store.upsert_peer(&phone, &mine, 100).unwrap();
+        store.upsert_peer(&other, &theirs, 200).unwrap();
+
+        // On a later connection the other device reports this phone's install ID.
+        let mut claimed = theirs.clone();
+        claimed.install_id = mine.install_id.clone();
+        store.update_info(&other, &claimed).unwrap();
+        // Nor at the next start, when duplicates are merged.
+        drop(store);
+        let store = Store::open(dir.path()).unwrap();
+
+        let mut peers = store.list_peers().unwrap();
+        peers.sort_by_key(|p| p.id.0);
+        assert_eq!(peers.iter().map(|p| p.id).collect::<Vec<_>>(), vec![phone, other], "both stay paired");
+        assert_eq!(peers[1].info.install_id, theirs.install_id, "its own install ID is kept");
     }
 
     #[test]

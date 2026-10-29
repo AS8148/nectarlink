@@ -8,6 +8,19 @@ change things that need a step from you, and its notes say so.
 
 ### New
 
+- **Elevated over USB.** Plug the phone into the PC with USB debugging
+  allowed and Elevated starts by itself, without setting up Wireless
+  debugging. It runs while the cable is in. The PC only starts NectarLink's
+  own helper, on the phone that asked
+  ([#70](https://github.com/thtbee/nectarlink/issues/70)).
+- **Mirroring wakes the phone's screen.** With Elevated, starting mirroring
+  from the PC turns the phone's screen on if it's off, so the phone can stay
+  in a pocket; a locked phone shows its lock screen in the window
+  ([#82](https://github.com/thtbee/nectarlink/issues/82)).
+- **Call or text a copied number from the command palette.** Copy a phone
+  number anywhere, open the palette with its shortcut, and Call and Text
+  for that number are at the top
+  ([#83](https://github.com/thtbee/nectarlink/issues/83)).
 - **The PC app on Linux**, for Ubuntu 24.04 or newer, Debian 13, Fedora 40
   or newer and other distributions from 2024 on, as a `.deb`, an `.rpm`,
   an AppImage or a tarball. It does what the Windows app does: notifications with
@@ -213,6 +226,45 @@ has a Stop button. Choosing another
 - The "sharing your screen" bar had no background.
 - The PC's log filled with network adapter warnings and kept only a few
   hours.
+- From an audit by [@kunal4060](https://github.com/kunal4060)
+  ([#72](https://github.com/thtbee/nectarlink/pull/72) to
+  [#79](https://github.com/thtbee/nectarlink/pull/79)):
+  - **Text typed in one conversation could be sent in another**: the
+    message box kept it when you switched. Each conversation now keeps its
+    own draft.
+  - LocalSend uploads now have to be the size you accepted, and a peer's
+    certificate has to match its fingerprint.
+  - On Windows, a phone file named like `C:notes.txt` could be saved
+    outside its folder by folder sync or Continuity Camera.
+  - Phone as speaker now needs the phone's Media permission, and the PC's
+    sound waits for the phone that asked instead of moving to another one.
+  - A paired device can no longer take over another device's pairing by
+    reporting its install ID.
+  - Deleting a folder sync or automation rule could delete another rule
+    too.
+  - Two phones with the same name shared one folder in File Explorer;
+    turning one off deleted the other's. A phone's name with letters like
+    "İ" could crash the app there.
+  - Renaming a file on the phone or PC from the other device no longer
+    replaces a file that already has that name, and the trash keeps both
+    files of the same name.
+  - Silencing a call from the PC could leave the phone's ringer muted if
+    the app was stopped mid-call. Keypad tones sent from the PC were too
+    short to register.
+  - Elevated could start again after the background connection was
+    turned off.
+  - Reinstalling from the Linux tarball could overwrite the app with its
+    launcher script, and Linux updates now only use the same kind of
+    package as the one installed.
+  - Updates are only downloaded from this project's GitHub releases.
+  - Settings and the local API token are readable only by you on Linux and
+    macOS.
+  - Smaller fixes: device names are cleaned and capped, SVGs are no longer
+    opened on arrival, notification history and phone artwork are capped,
+    chat history isn't cleared by a message stamped in the future, a busy
+    database no longer cancels a queued send, the Shelf says when a send
+    is only queued, and Find my phone on the PC shows ringing for the
+    whole minute.
 
 ## 0.1.4 (2026-10-17)
 

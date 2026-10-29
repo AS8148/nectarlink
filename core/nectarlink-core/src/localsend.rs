@@ -224,6 +224,8 @@ struct IncomingFileSpec {
     safe_name: String,
     folder: Option<String>,
     size: u64,
+    /// The sender's SHA-256 of the file, when it gave a well-formed one.
+    sha256: Option<String>,
     part_path: PathBuf,
     uploaded: bool,
 }
@@ -623,22 +625,29 @@ async fn handle_udp_packet(shared: &Arc<Shared>, data: &[u8], src: SocketAddr) {
         port,
         protocol: protocol.clone(),
     };
+    let fingerprint = peer.fingerprint.clone();
     shared.localsend.upsert_peer(shared, peer);
 
     let is_announce = dto.announce.or(dto.announcement).unwrap_or(false);
     if is_announce && shared.localsend.receiving() {
         let shared = shared.clone();
         tokio::spawn(async move {
-            let _ = send_register_callback(&shared, &ip, port, &protocol).await;
+            let _ = send_register_callback(&shared, &ip, port, &protocol, &fingerprint).await;
         });
     }
 }
 
-async fn send_register_callback(shared: &Arc<Shared>, ip: &str, port: u16, protocol: &str) -> Result<()> {
+async fn send_register_callback(
+    shared: &Arc<Shared>,
+    ip: &str,
+    port: u16,
+    protocol: &str,
+    fingerprint: &str,
+) -> Result<()> {
     let our_port = shared.localsend.bound_port();
     let dto = build_our_multicast_dto(shared, our_port, false);
     let body = serde_json::to_vec(&dto).map_err(|e| Error::Internal(e.to_string()))?;
-    let mut stream = connect_peer_stream(shared, ip, port, protocol == "https").await?;
+    let mut stream = connect_peer_stream(shared, ip, port, protocol == "https", Some(fingerprint)).await?;
     write_http_request(
         &mut stream,
         "POST",
@@ -652,6 +661,7 @@ async fn send_register_callback(shared: &Arc<Shared>, ip: &str, port: u16, proto
     if (200..300).contains(&resp.status)
         && let Ok(info) = serde_json::from_slice::<InfoDto>(&resp.body)
         && info.fingerprint != shared.localsend.identity.fingerprint
+        && info.fingerprint.eq_ignore_ascii_case(fingerprint)
         && !info.alias.trim().is_empty()
     {
         let peer_port = info.port.unwrap_or(port);
@@ -681,7 +691,7 @@ async fn send_register_callback(shared: &Arc<Shared>, ip: &str, port: u16, proto
 pub(crate) async fn probe_peer(shared: &Arc<Shared>, host: &str, port: u16) -> Result<LocalSendPeer> {
     for use_tls in [true, false] {
         let protocol = if use_tls { "https" } else { "http" };
-        let Ok(mut stream) = connect_peer_stream(shared, host, port, use_tls).await else {
+        let Ok(mut stream) = connect_peer_stream(shared, host, port, use_tls, None).await else {
             continue;
         };
         let req_res = if shared.localsend.receiving() {
@@ -721,6 +731,11 @@ pub(crate) async fn probe_peer(shared: &Arc<Shared>, host: &str, port: u16) -> R
         };
         if info.fingerprint == shared.localsend.identity.fingerprint || info.alias.trim().is_empty() {
             return Err(Error::NotFound);
+        }
+        // Over HTTPS the fingerprint it claims must be its certificate's.
+        if use_tls && !stream.has_fingerprint(&info.fingerprint) {
+            tracing::warn!(%host, port, "LocalSend peer's certificate doesn't match its fingerprint");
+            continue;
         }
         let peer_port = info.port.unwrap_or(port);
         let peer_proto = info
@@ -949,6 +964,10 @@ async fn handle_prepare_upload(
             safe_name,
             folder,
             size: dto.size,
+            sha256: dto
+                .sha256
+                .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+                .map(|h| h.to_ascii_lowercase()),
             part_path: staging_dir.join(format!("{idx}.part")),
             uploaded: false,
         });
@@ -1039,7 +1058,7 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
     enum UploadLookup {
         NotFound,
         Forbidden,
-        Found(usize, PathBuf, u64, CancellationToken, String),
+        Found(usize, PathBuf, u64, Option<String>, CancellationToken, String),
     }
 
     let lookup = {
@@ -1051,13 +1070,14 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
                 idx,
                 spec.part_path.clone(),
                 spec.size,
+                spec.sha256.clone(),
                 guard.cancel.clone(),
                 guard.transfer.id.clone(),
             ),
         }
     };
 
-    let (spec_idx, part_path, expected_size, cancel, transfer_id) = match lookup {
+    let (spec_idx, part_path, expected_size, expected_sha256, cancel, transfer_id) = match lookup {
         UploadLookup::NotFound => {
             let _ = write_http_response(stream, 404, "Not Found", None, &[]).await;
             return;
@@ -1066,7 +1086,7 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
             let _ = write_http_response(stream, 403, "Forbidden", None, &[]).await;
             return;
         }
-        UploadLookup::Found(idx, p, sz, c, tid) => (idx, p, sz, c, tid),
+        UploadLookup::Found(idx, p, sz, sha, c, tid) => (idx, p, sz, sha, c, tid),
     };
 
     let Ok(mut out) = tokio::fs::File::create(&part_path).await else {
@@ -1086,6 +1106,19 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
 
     let _ = out.flush().await;
     drop(out);
+
+    let stream_res = match (stream_res, expected_sha256) {
+        (Ok(()), Some(expected)) => {
+            let path = part_path.clone();
+            let actual = tokio::task::spawn_blocking(move || sha256_file_hex(&path)).await;
+            if matches!(actual, Ok(Ok(ref h)) if *h == expected) {
+                Ok(())
+            } else {
+                Err(TransferState::Failed(TransferFailure::Integrity))
+            }
+        }
+        (res, _) => res,
+    };
 
     if let Err(err_state) = stream_res {
         shared.localsend.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(&session_id);
@@ -1385,7 +1418,7 @@ async fn run_outgoing_transfer(
 
     let mut prep_stream = tokio::select! {
         _ = cancel.cancelled() => return Err(TransferState::Cancelled),
-        res = connect_peer_stream(shared, &peer.ip, peer.port, use_tls) => {
+        res = connect_peer_stream(shared, &peer.ip, peer.port, use_tls, Some(&peer.fingerprint)) => {
             res.map_err(|_| TransferState::Failed(TransferFailure::Unreachable))?
         }
     };
@@ -1447,7 +1480,7 @@ async fn run_outgoing_transfer(
                 let _ = send_cancel_request(shared, peer, use_tls, &prep.session_id).await;
                 return Err(TransferState::Cancelled);
             }
-            res = connect_peer_stream(shared, &peer.ip, peer.port, use_tls) => {
+            res = connect_peer_stream(shared, &peer.ip, peer.port, use_tls, Some(&peer.fingerprint)) => {
                 res.map_err(|_| TransferState::Failed(TransferFailure::Unreachable))?
             }
         };
@@ -1524,7 +1557,9 @@ async fn run_outgoing_transfer(
 }
 
 async fn send_cancel_request(shared: &Arc<Shared>, peer: &LocalSendPeer, use_tls: bool, session_id: &str) {
-    let Ok(mut stream) = connect_peer_stream(shared, &peer.ip, peer.port, use_tls).await else {
+    let Ok(mut stream) =
+        connect_peer_stream(shared, &peer.ip, peer.port, use_tls, Some(&peer.fingerprint)).await
+    else {
         return;
     };
     let path = format!("/api/localsend/v2/cancel?sessionId={}", crate::percent_encode(session_id));
@@ -1535,6 +1570,28 @@ async fn send_cancel_request(shared: &Arc<Shared>, peer: &LocalSendPeer, use_tls
 enum ClientStream {
     Plain(TcpStream),
     Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
+}
+
+impl ClientStream {
+    /// Whether the peer's TLS certificate has this LocalSend fingerprint.
+    fn has_fingerprint(&self, expected: &str) -> bool {
+        self.peer_fingerprint().is_some_and(|fp| fp.eq_ignore_ascii_case(expected.trim()))
+    }
+
+    /// The hex SHA-256 of the peer's TLS certificate (its LocalSend fingerprint).
+    fn peer_fingerprint(&self) -> Option<String> {
+        match self {
+            ClientStream::Plain(_) => None,
+            ClientStream::Tls(s) => {
+                s.get_ref().1.peer_certificates()?.first().map(|cert| cert_fingerprint(cert.as_ref()))
+            }
+        }
+    }
+}
+
+/// A LocalSend fingerprint: the lowercase hex SHA-256 of a certificate's DER bytes.
+fn cert_fingerprint(der: &[u8]) -> String {
+    data_encoding::HEXLOWER.encode(&Sha256::digest(der))
 }
 
 impl AsyncRead for ClientStream {
@@ -1583,7 +1640,16 @@ impl AsyncWrite for ClientStream {
     }
 }
 
-async fn connect_peer_stream(shared: &Shared, host: &str, port: u16, use_tls: bool) -> Result<ClientStream> {
+/// Connects to a LocalSend peer. Over HTTPS, with `expected_fingerprint`, the
+/// peer's certificate must have that fingerprint: anyone on the network can
+/// announce a known device's fingerprint with their own address.
+async fn connect_peer_stream(
+    shared: &Shared,
+    host: &str,
+    port: u16,
+    use_tls: bool,
+    expected_fingerprint: Option<&str>,
+) -> Result<ClientStream> {
     let addr = format!("{host}:{port}");
     let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addr))
         .await
@@ -1598,7 +1664,14 @@ async fn connect_peer_stream(shared: &Shared, host: &str, port: u16, use_tls: bo
             .await
             .map_err(|_| Error::Offline)?
             .map_err(|_| Error::Offline)?;
-        Ok(ClientStream::Tls(Box::new(tls)))
+        let stream = ClientStream::Tls(Box::new(tls));
+        if let Some(expected) = expected_fingerprint
+            && !stream.has_fingerprint(expected)
+        {
+            tracing::warn!(%host, port, "LocalSend peer's certificate doesn't match its fingerprint");
+            return Err(Error::Offline);
+        }
+        Ok(stream)
     } else {
         Ok(ClientStream::Plain(tcp))
     }
@@ -1737,6 +1810,26 @@ async fn read_chunked_vec<S: AsyncRead + Unpin>(
     Ok(out)
 }
 
+fn upload_failed(reason: &str) -> TransferState {
+    TransferState::Failed(TransferFailure::Other(reason.into()))
+}
+
+/// The lowercase hex SHA-256 of a file.
+fn sha256_file_hex(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(data_encoding::HEXLOWER.encode(&hasher.finalize()))
+}
+
 async fn stream_body_to_file<S, F>(
     stream: &mut S,
     head: &HttpHead,
@@ -1749,8 +1842,11 @@ where
     S: AsyncRead + Unpin,
     F: FnMut(u64),
 {
+    // The body must be exactly the size the sender offered and the user
+    // accepted: more could fill the disk, less is a broken file.
     if head.chunked {
         let mut buf = head.prefetched_body.clone();
+        let mut written: u64 = 0;
         loop {
             while find_crlf(&buf).is_none() {
                 let mut tmp = [0u8; 8192];
@@ -1764,12 +1860,12 @@ where
                     }
                 };
                 if n == 0 {
-                    return Ok(());
+                    return Err(upload_failed("upload stream ended early"));
                 }
                 buf.extend_from_slice(&tmp[..n]);
             }
             let Some(line_end) = find_crlf(&buf) else {
-                return Ok(());
+                return Err(upload_failed("upload stream ended early"));
             };
             let size_line = String::from_utf8_lossy(&buf[..line_end]).into_owned();
             let hex_part = size_line.split(';').next().unwrap_or("").trim();
@@ -1778,8 +1874,16 @@ where
             };
             buf.drain(..line_end + 2);
             if chunk_size == 0 {
-                return Ok(());
+                return if written == expected_size {
+                    Ok(())
+                } else {
+                    Err(upload_failed("upload is shorter than offered"))
+                };
             }
+            if written.saturating_add(chunk_size as u64) > expected_size {
+                return Err(upload_failed("upload is larger than offered"));
+            }
+            written += chunk_size as u64;
             let mut left_in_chunk = chunk_size;
             while left_in_chunk > 0 {
                 if !buf.is_empty() {
@@ -1826,8 +1930,10 @@ where
             buf.drain(..drain_crlf);
         }
     } else {
-        let total = head.content_length.unwrap_or(expected_size);
-        let mut remaining = total;
+        if head.content_length.is_some_and(|len| len != expected_size) {
+            return Err(upload_failed("upload size doesn't match the offer"));
+        }
+        let mut remaining = expected_size;
         if !head.prefetched_body.is_empty() {
             let take = (head.prefetched_body.len() as u64).min(remaining) as usize;
             out.write_all(&head.prefetched_body[..take])
@@ -2003,7 +2109,7 @@ fn decode_stored_identity(stored: &StoredLocalSendState) -> Option<LocalSendIden
     if cert_der.is_empty() || key_pkcs8.is_empty() {
         return None;
     }
-    let fingerprint = data_encoding::HEXLOWER.encode(&Sha256::digest(&cert_der));
+    let fingerprint = cert_fingerprint(&cert_der);
     let id = LocalSendIdentity { cert_der, key_pkcs8, fingerprint };
     // Verify the stored key/cert builds a valid rustls ServerConfig.
     build_server_tls_config(&id).ok()?;
@@ -2063,7 +2169,7 @@ pub(crate) fn generate_self_signed_identity() -> Result<LocalSendIdentity> {
     let signature =
         key_pair.sign(&rng, &tbs).map_err(|_| Error::Internal("can't sign LocalSend certificate".into()))?;
     let cert_der = der_seq(&[tbs, sig_alg, der_bit_string(signature.as_ref())]);
-    let fingerprint = data_encoding::HEXLOWER.encode(&Sha256::digest(&cert_der));
+    let fingerprint = cert_fingerprint(&cert_der);
 
     Ok(LocalSendIdentity { cert_der, key_pkcs8, fingerprint })
 }
@@ -2196,10 +2302,13 @@ mod tests {
         let tcp = TcpStream::connect(addr).await.unwrap();
         let connector = TlsConnector::from(client_cfg);
         let domain = ServerName::try_from("localsend.org").unwrap();
-        let mut client_tls = connector.connect(domain, tcp).await.unwrap();
-        let peer_certs = client_tls.get_ref().1.peer_certificates().unwrap();
-        let peer_fp = data_encoding::HEXLOWER.encode(&Sha256::digest(peer_certs[0].as_ref()));
-        assert_eq!(peer_fp, id.fingerprint);
+        let client_tls = connector.connect(domain, tcp).await.unwrap();
+        let mut client_tls = ClientStream::Tls(Box::new(client_tls));
+        assert_eq!(client_tls.peer_fingerprint().as_deref(), Some(id.fingerprint.as_str()));
+        assert!(client_tls.has_fingerprint(&id.fingerprint.to_ascii_uppercase()));
+        // Another device's fingerprint, announced from this address, doesn't match.
+        assert!(!client_tls.has_fingerprint(&"ab".repeat(32)));
+        assert!(!client_tls.has_fingerprint(""));
 
         client_tls.write_all(b"ping").await.unwrap();
         let mut reply = [0u8; 4];
@@ -2299,5 +2408,82 @@ mod tests {
             let _ = guess_mime(&file_name);
             let _ = peer_device_id(&s, "192.168.1.42", 53317);
         }
+    }
+
+    fn upload_head(content_length: Option<u64>, chunked: bool) -> HttpHead {
+        HttpHead {
+            method: "POST".into(),
+            target: "/api/localsend/v2/upload".into(),
+            content_length,
+            chunked,
+            prefetched_body: Vec::new(),
+        }
+    }
+
+    /// Streams `body` for an offer of `offered` bytes; returns the result and what was saved.
+    async fn stream_upload(
+        head: HttpHead,
+        body: &[u8],
+        offered: u64,
+    ) -> (Result<(), TransferState>, Vec<u8>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("0.part");
+        let mut out = tokio::fs::File::create(&path).await.unwrap();
+        let mut stream = body;
+        let res =
+            stream_body_to_file(&mut stream, &head, &mut out, offered, &CancellationToken::new(), |_| {})
+                .await;
+        out.flush().await.unwrap();
+        drop(out);
+        (res, std::fs::read(&path).unwrap())
+    }
+
+    #[tokio::test]
+    async fn upload_must_match_the_offered_size() {
+        let (res, saved) = stream_upload(upload_head(Some(5), false), b"hello", 5).await;
+        assert!(res.is_ok());
+        assert_eq!(saved, b"hello");
+
+        // A Content-Length above (or below) what the user accepted is refused before anything is written.
+        let (res, saved) = stream_upload(upload_head(Some(1 << 30), false), b"hello", 5).await;
+        assert!(res.is_err());
+        assert!(saved.is_empty());
+        let (res, _) = stream_upload(upload_head(Some(3), false), b"hel", 5).await;
+        assert!(res.is_err());
+
+        // A body that ends early fails.
+        let (res, _) = stream_upload(upload_head(None, false), b"hel", 5).await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn chunked_upload_must_match_the_offered_size() {
+        let (res, saved) =
+            stream_upload(upload_head(None, true), b"3\r\nhel\r\n2\r\nlo\r\n0\r\n\r\n", 5).await;
+        assert!(res.is_ok());
+        assert_eq!(saved, b"hello");
+
+        // More than offered: refused at the chunk that goes over, before writing it.
+        let (res, saved) =
+            stream_upload(upload_head(None, true), b"5\r\nhello\r\n4\r\nmore\r\n0\r\n\r\n", 5).await;
+        assert!(res.is_err());
+        assert_eq!(saved, b"hello");
+
+        // Less than offered, or no final chunk: a broken file, not a finished one.
+        let (res, _) = stream_upload(upload_head(None, true), b"3\r\nhel\r\n0\r\n\r\n", 5).await;
+        assert!(res.is_err());
+        let (res, _) = stream_upload(upload_head(None, true), b"3\r\nhel\r\n", 5).await;
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn sha256_file_hex_matches_a_known_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        std::fs::write(&path, b"abc").unwrap();
+        assert_eq!(
+            sha256_file_hex(&path).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

@@ -85,6 +85,8 @@ pub(crate) struct LocalState {
     pub power: PowerLevel,
     pub extra_capabilities: Vec<String>,
     pub battery: Option<Battery>,
+    /// Watching adb for USB phones: can start a phone's Elevated helper over USB.
+    pub adb: bool,
 }
 
 impl LocalState {
@@ -98,6 +100,9 @@ impl LocalState {
                 caps.push(cap.clone());
             }
         }
+        if self.adb {
+            caps.push(nectarlink_protocol::messages::elevated::USB.to_owned());
+        }
         caps
     }
 
@@ -107,6 +112,7 @@ impl LocalState {
             || (cap == nectarlink_protocol::messages::continuity_camera::RECEIVE
                 && !matches!(self.device.kind, DeviceKind::Phone | DeviceKind::Tablet))
             || self.extra_capabilities.iter().any(|c| c == cap)
+            || (self.adb && cap == nectarlink_protocol::messages::elevated::USB)
     }
 }
 
@@ -119,6 +125,11 @@ struct Supervisor {
 pub(crate) type MirrorStop = (DeviceId, u32, &'static str);
 
 /// State shared by the node, its sessions and background tasks.
+/// Notifications kept for listing and search as they arrive, at most: the
+/// oldest goes first. (A full snapshot is what the phone shows, which Android
+/// itself limits.)
+const NOTIFICATION_HISTORY_MAX: usize = 1000;
+
 pub(crate) struct Shared {
     pub id: DeviceId,
     pub endpoint: Endpoint,
@@ -182,6 +193,10 @@ pub(crate) struct Shared {
     pub(crate) usb_bridge_ports: Arc<Mutex<std::collections::HashSet<u16>>>,
     /// Active USB tunnel peers mapped to their local UDP bridge address and cancellation token.
     pub(crate) usb_peers: Arc<Mutex<HashMap<DeviceId, (SocketAddr, CancellationToken)>>>,
+    /// The adb serial (and adb server) each USB-tunnelled phone is on.
+    pub(crate) usb_serials: Mutex<HashMap<DeviceId, (String, SocketAddr)>>,
+    /// Elevated helpers started over USB, by phone: they run until dropped.
+    pub(crate) usb_helpers: Mutex<HashMap<DeviceId, tokio::task::JoinHandle<()>>>,
     /// Peers whose USB tunnel this device accepted (a phone plugged into that PC).
     pub(crate) usb_inbound: Mutex<std::collections::HashSet<DeviceId>>,
     /// USB peers that are only paired by hand (Android emulators).
@@ -924,24 +939,33 @@ impl Shared {
         // The same physical device paired again (after a reinstall it has a new identity):
         // move its history and queue to the new pairing and forget the old one. Only the
         // install ID decides; same-name devices (two family phones) stay separate.
-        if let Some(install_id) = info.install_id.as_deref()
-            && let Ok(existing_peers) = self.store.list_peers()
-        {
-            for old in existing_peers {
-                if old.id != peer
-                    && self.session(&old.id).is_none()
-                    && old.info.kind == info.kind
-                    && old.info.install_id.as_deref() == Some(install_id)
-                {
-                    let _ = self.store.reassign_timeline(&old.id, &peer);
-                    if self.store.reassign_send_queue_peer(&old.id, &peer).unwrap_or(0) > 0 {
-                        reassigned_queue = true;
-                    }
-                    let _ = self.forget_peer(&old.id).await;
-                }
-            }
-        }
+        let replaced: Vec<DeviceId> = match info.install_id.as_deref() {
+            Some(install_id) => self
+                .store
+                .list_peers()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|old| {
+                    old.id != peer
+                        && self.session(&old.id).is_none()
+                        && old.info.kind == info.kind
+                        && old.info.install_id.as_deref() == Some(install_id)
+                })
+                .map(|old| old.id)
+                .collect(),
+            None => Vec::new(),
+        };
+        // Store the new pairing first: if that fails, the old one is untouched.
+        // Storing it also moves the old entry's history and queue over.
         self.store.upsert_peer(&peer, &info, paired_at)?;
+        for old in replaced {
+            let _ = self.store.reassign_timeline(&old, &peer);
+            let _ = self.store.reassign_send_queue_peer(&old, &peer);
+            reassigned_queue = true;
+            let _ = self.forget_peer(&old).await;
+            // Its row is already gone, so forget_peer doesn't announce it.
+            self.emit(NodeEvent::DeviceRemoved(old));
+        }
         tracing::info!(peer = %peer.short(), "paired");
         let device = PairedDevice {
             id: peer,
@@ -1012,6 +1036,12 @@ impl Shared {
         self.toggles.remove_peer(peer);
         self.deck.remove_peer(peer);
         self.stop_webcam(peer);
+        // The session was removed above, so `on_session_end` won't clear these:
+        // a one-time "show my screen" must not outlive the pairing.
+        lock(&self.pc_mirror_sessions).remove(peer);
+        lock(&self.watch_offers).remove(peer);
+        self.stop_mic(peer);
+        self.stop_showing_all(peer);
         if !dropped_queue.is_empty() {
             self.emit(NodeEvent::QueueChanged);
             if dropped_count > 0 {
@@ -1041,6 +1071,12 @@ impl Shared {
         if !self.is_connection_allowed(&conn) {
             tracing::debug!(peer = %peer.short(), "refusing session on non-LAN path while away_mode is off");
             conn.close(VarInt::from_u32(CLOSE_NORMAL), b"away mode disabled");
+            return None;
+        }
+        // Unpaired while the handshake ran (both sides check before it).
+        if !self.store.is_paired(&peer).unwrap_or(false) {
+            tracing::debug!(peer = %peer.short(), "refusing session: no longer paired");
+            conn.close(VarInt::from_u32(ErrorCode::Unpaired.close_code()), b"unpaired");
             return None;
         }
         // Either side may have dialed: while the user has reconnecting off,
@@ -1503,6 +1539,7 @@ impl Node {
                 power: config.power,
                 extra_capabilities: config.capabilities.clone(),
                 battery: None,
+                adb: config.adb_server.is_some(),
             }),
             pairing: PairingState::default(),
             cancel: CancellationToken::new(),
@@ -1537,6 +1574,8 @@ impl Node {
             usb_listener_port: std::sync::atomic::AtomicU16::new(0),
             usb_bridge_ports: Arc::new(Mutex::new(std::collections::HashSet::new())),
             usb_peers: Arc::new(Mutex::new(HashMap::new())),
+            usb_serials: Mutex::new(HashMap::new()),
+            usb_helpers: Mutex::new(HashMap::new()),
             usb_inbound: Mutex::new(std::collections::HashSet::new()),
             usb_manual_pair: Mutex::new(std::collections::HashSet::new()),
             usb_poke: Notify::new(),
@@ -1640,6 +1679,7 @@ impl Node {
     /// Stops all sessions and networking.
     pub async fn shutdown(&self) {
         self.shared.cancel.cancel();
+        crate::elevated_usb::stop_all(&self.shared);
         self.shared.localsend.stop(&self.shared);
         let sessions: Vec<_> = lock(&self.shared.sessions).drain().map(|(_, s)| s).collect();
         for session in sessions {
@@ -2687,6 +2727,24 @@ impl Node {
 
     /// Asks a paired phone to stream its microphone; the phone asks its
     /// user. Sound then arrives through [`Platform::mic_sink`](crate::Platform::mic_sink).
+    /// Asks `pc`, which this phone is plugged into over USB, to start this
+    /// phone's Elevated helper from `apk` with `token` after running `grants`
+    /// (`docs/protocol/elevated-usb.md`). Returns the helper's loopback port.
+    pub async fn elevated_usb_start(
+        &self,
+        pc: DeviceId,
+        apk: String,
+        token: String,
+        grants: Vec<String>,
+    ) -> Result<u16> {
+        let session = self.connected(&pc)?;
+        crate::elevated_usb::start(
+            &session,
+            nectarlink_protocol::messages::ElevatedUsbStart { apk, token, grants },
+        )
+        .await
+    }
+
     pub async fn mic_start(&self, peer: DeviceId) -> Result<()> {
         let session = self.connected(&peer)?;
         crate::mic::start(&self.shared, &session).await
@@ -3131,6 +3189,12 @@ impl Node {
             let mut hist = lock(&self.shared.notification_history);
             hist.retain(|n| n.key != clean.key);
             hist.push(clean);
+            // Kept in memory with icons and pictures: drop the oldest past the cap.
+            if hist.len() > NOTIFICATION_HISTORY_MAX
+                && let Some(oldest) = hist.iter().enumerate().min_by_key(|(_, n)| n.when).map(|(i, _)| i)
+            {
+                hist.remove(oldest);
+            }
         }
         self.shared.notification_posted(notification).await;
     }
