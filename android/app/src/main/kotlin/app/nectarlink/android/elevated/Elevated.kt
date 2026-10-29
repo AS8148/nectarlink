@@ -26,6 +26,7 @@ import io.github.muntashirakon.adb.AbsAdbConnectionManager
 import io.github.muntashirakon.adb.AdbPairingRequiredException
 import io.github.muntashirakon.adb.AdbStream
 import io.github.muntashirakon.adb.android.AdbMdns
+import kotlin.concurrent.thread
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -254,14 +255,22 @@ object Elevated {
     suspend fun pair(code: String): Boolean = withContext(Dispatchers.IO) {
         lock.withLock {
             _state.value = State.Starting
-            val port = discover(AdbMdns.SERVICE_TYPE_TLS_PAIRING)
-            if (port == null) {
+            val paired = if (LoopbackAdb.preferred()) {
+                pairOverLoopback(code.trim())
+            } else {
+                val port = discover(AdbMdns.SERVICE_TYPE_TLS_PAIRING)
+                if (port == null) {
+                    null
+                } else {
+                    runCatching { connection().pair("127.0.0.1", port, code.trim()) }.getOrElse {
+                        Log.w(TAG, "pairing failed", it)
+                        false
+                    }
+                }
+            }
+            if (paired == null) {
                 _state.value = State.Failed(Reason.NoPairingDialog)
                 return@withContext false
-            }
-            val paired = runCatching { connection().pair("127.0.0.1", port, code.trim()) }.getOrElse {
-                Log.w(TAG, "pairing failed", it)
-                false
             }
             if (!paired) {
                 _state.value = State.Failed(Reason.WrongCode)
@@ -270,6 +279,54 @@ object Elevated {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(PAIRED, true) }
         }
         start()
+    }
+
+    /**
+     * Connects to wireless debugging found on 127.0.0.1 (Android 17 and later,
+     * see [LoopbackAdb]), waiting a moment for it to start listening.
+     */
+    private suspend fun connectOverLoopback(adb: Connection): Boolean {
+        val deadline = System.currentTimeMillis() + CONNECT_MS
+        while (true) {
+            val port = LoopbackAdb.connectPort(LoopbackAdb.openPorts())
+            if (port != null) return adb.connect(LoopbackAdb.HOST, port)
+            if (System.currentTimeMillis() >= deadline) return false
+            delay(LOOPBACK_RETRY_MS)
+        }
+    }
+
+    /**
+     * Pairs through the pairing port found on 127.0.0.1: any listening port
+     * that isn't adbd's connection port. `null` when there is none (the
+     * pairing dialog isn't open).
+     */
+    private suspend fun pairOverLoopback(code: String): Boolean? {
+        val deadline = System.currentTimeMillis() + DISCOVERY_MS
+        while (true) {
+            val open = LoopbackAdb.openPorts()
+            val connectPort = LoopbackAdb.connectPort(open)
+            val candidates = open.filter { it != connectPort }
+            for (port in candidates) {
+                if (pairOnPort(port, code)) return true
+            }
+            if (candidates.isNotEmpty()) return false
+            if (System.currentTimeMillis() >= deadline) return null
+            delay(LOOPBACK_RETRY_MS)
+        }
+    }
+
+    /** One pairing attempt, given up after [PAIR_MS] (a port that isn't adb's may never answer). */
+    private suspend fun pairOnPort(port: Int, code: String): Boolean {
+        val result = CompletableDeferred<Boolean>()
+        thread(isDaemon = true, name = "adb-pair") {
+            result.complete(
+                runCatching { connection().pair(LoopbackAdb.HOST, port, code) }.getOrElse {
+                    Log.i(TAG, "no pairing on port $port", it)
+                    false
+                },
+            )
+        }
+        return withTimeoutOrNull(PAIR_MS) { result.await() } ?: false
     }
 
     /** The port a wireless debugging service is announced on, if it shows up soon. */
@@ -314,7 +371,7 @@ object Elevated {
             discardConnection()
             val adb = connection()
             val connected = try {
-                adb.connectTls(context, CONNECT_MS)
+                if (LoopbackAdb.preferred()) connectOverLoopback(adb) else adb.connectTls(context, CONNECT_MS)
             } catch (e: AdbPairingRequiredException) {
                 // adbd forgot us (the user revoked the authorizations).
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(PAIRED, false) }
@@ -830,6 +887,8 @@ object Elevated {
 
     private const val ADB_WIFI = "adb_wifi_enabled"
     private const val DISCOVERY_MS = 10_000L
+    private const val LOOPBACK_RETRY_MS = 700L
+    private const val PAIR_MS = 4_000L
     private const val CONNECT_MS = 10_000L
     /** How long a `su` command may take; the first one waits for the root manager's prompt. */
     private const val SU_WAIT_S = 30L
