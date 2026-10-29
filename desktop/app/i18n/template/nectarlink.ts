@@ -7791,174 +7791,185 @@ What it needs
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="50"/>
+        <location filename="../../qml/ShelfWindow.qml" line="53"/>
         <source>phone</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="141"/>
+        <location filename="../../qml/ShelfWindow.qml" line="158"/>
         <source>%1 B</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="143"/>
+        <location filename="../../qml/ShelfWindow.qml" line="160"/>
         <source>%1 KB</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="145"/>
+        <location filename="../../qml/ShelfWindow.qml" line="162"/>
         <source>%1 MB</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="146"/>
+        <location filename="../../qml/ShelfWindow.qml" line="163"/>
         <source>%1 GB</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="292"/>
+        <location filename="../../qml/ShelfWindow.qml" line="309"/>
         <source>Shelf</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="301"/>
+        <location filename="../../qml/ShelfWindow.qml" line="318"/>
         <source>No phone connected</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="313"/>
+        <location filename="../../qml/ShelfWindow.qml" line="330"/>
         <source>Refresh Shelf</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="319"/>
+        <location filename="../../qml/ShelfWindow.qml" line="336"/>
         <source>Close Shelf</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="373"/>
+        <location filename="../../qml/ShelfWindow.qml" line="390"/>
         <source>Release to send to %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="376"/>
+        <location filename="../../qml/ShelfWindow.qml" line="393"/>
         <source>Sent to %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="377"/>
+        <location filename="../../qml/ShelfWindow.qml" line="394"/>
         <source>Queued for %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="379"/>
+        <location filename="../../qml/ShelfWindow.qml" line="396"/>
         <source>Send cancelled</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="380"/>
+        <location filename="../../qml/ShelfWindow.qml" line="397"/>
         <source>Drop or flick items here to send</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="414"/>
+        <location filename="../../qml/ShelfWindow.qml" line="432"/>
+        <source>Sending %1 to %2…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../qml/ShelfWindow.qml" line="433"/>
         <source>Sending to %1…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="424"/>
+        <location filename="../../qml/ShelfWindow.qml" line="443"/>
         <source>Undo</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="464"/>
+        <location filename="../../qml/ShelfWindow.qml" line="483"/>
         <source>Latest photo</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="465"/>
+        <location filename="../../qml/ShelfWindow.qml" line="484"/>
         <source>No recent photo</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="471"/>
+        <location filename="../../qml/ShelfWindow.qml" line="490"/>
         <source>Latest screenshot</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="472"/>
+        <location filename="../../qml/ShelfWindow.qml" line="491"/>
         <source>No recent screenshot</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="713"/>
+        <location filename="../../qml/ShelfWindow.qml" line="732"/>
         <source>Copy</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="725"/>
+        <location filename="../../qml/ShelfWindow.qml" line="744"/>
         <source>Open</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="821"/>
+        <location filename="../../qml/ShelfWindow.qml" line="840"/>
         <source>Current clip</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="836"/>
+        <location filename="../../qml/ShelfWindow.qml" line="857"/>
         <source>Send clip to phone</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="839"/>
-        <location filename="../../qml/ShelfWindow.qml" line="955"/>
-        <source>Clip</source>
+        <location filename="../../qml/ShelfWindow.qml" line="861"/>
+        <location filename="../../qml/ShelfWindow.qml" line="980"/>
+        <source>the copied image</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="847"/>
+        <location filename="../../qml/ShelfWindow.qml" line="863"/>
+        <location filename="../../qml/ShelfWindow.qml" line="983"/>
+        <source>the copied text</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../qml/ShelfWindow.qml" line="871"/>
         <source>Copy clip</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="881"/>
-        <location filename="../../qml/ShelfWindow.qml" line="902"/>
+        <location filename="../../qml/ShelfWindow.qml" line="905"/>
+        <location filename="../../qml/ShelfWindow.qml" line="926"/>
         <source>Clipboard is empty</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="901"/>
+        <location filename="../../qml/ShelfWindow.qml" line="925"/>
         <source>Current clip: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="1014"/>
+        <location filename="../../qml/ShelfWindow.qml" line="1042"/>
         <source>Recent received files</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="1029"/>
+        <location filename="../../qml/ShelfWindow.qml" line="1057"/>
         <source>No received files yet</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="1213"/>
+        <location filename="../../qml/ShelfWindow.qml" line="1241"/>
         <source>Send to phone</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="1224"/>
+        <location filename="../../qml/ShelfWindow.qml" line="1252"/>
         <source>Open file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="1232"/>
+        <location filename="../../qml/ShelfWindow.qml" line="1260"/>
         <source>Show in folder</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../qml/ShelfWindow.qml" line="1247"/>
+        <location filename="../../qml/ShelfWindow.qml" line="1275"/>
         <source>Flick any card up to send to phone, drag out to use, or drop files in</source>
         <translation type="unfinished"></translation>
     </message>

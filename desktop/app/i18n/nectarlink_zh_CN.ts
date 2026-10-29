@@ -8056,174 +8056,189 @@ What it needs
         <translation>NectarLink 收纳架</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="50"/>
+        <location filename="../qml/ShelfWindow.qml" line="53"/>
         <source>phone</source>
         <translation>手机</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="141"/>
+        <location filename="../qml/ShelfWindow.qml" line="158"/>
         <source>%1 B</source>
         <translation>%1 B</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="143"/>
+        <location filename="../qml/ShelfWindow.qml" line="160"/>
         <source>%1 KB</source>
         <translation>%1 KB</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="145"/>
+        <location filename="../qml/ShelfWindow.qml" line="162"/>
         <source>%1 MB</source>
         <translation>%1 MB</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="146"/>
+        <location filename="../qml/ShelfWindow.qml" line="163"/>
         <source>%1 GB</source>
         <translation>%1 GB</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="292"/>
+        <location filename="../qml/ShelfWindow.qml" line="309"/>
         <source>Shelf</source>
         <translation>收纳架</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="301"/>
+        <location filename="../qml/ShelfWindow.qml" line="318"/>
         <source>No phone connected</source>
         <translation>未连接手机</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="313"/>
+        <location filename="../qml/ShelfWindow.qml" line="330"/>
         <source>Refresh Shelf</source>
         <translation>刷新收纳架</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="319"/>
+        <location filename="../qml/ShelfWindow.qml" line="336"/>
         <source>Close Shelf</source>
         <translation>关闭收纳架</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="373"/>
+        <location filename="../qml/ShelfWindow.qml" line="390"/>
         <source>Release to send to %1</source>
         <translation>松开以发送到 %1</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="376"/>
+        <location filename="../qml/ShelfWindow.qml" line="393"/>
         <source>Sent to %1</source>
         <translation>已发送到 %1</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="377"/>
+        <location filename="../qml/ShelfWindow.qml" line="394"/>
         <source>Queued for %1</source>
         <translation>已加入 %1 的发送队列</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="379"/>
+        <location filename="../qml/ShelfWindow.qml" line="396"/>
         <source>Send cancelled</source>
         <translation>已取消发送</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="380"/>
+        <location filename="../qml/ShelfWindow.qml" line="397"/>
         <source>Drop or flick items here to send</source>
         <translation>将项目拖放到此处或向上轻扫即可发送</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="414"/>
+        <location filename="../qml/ShelfWindow.qml" line="432"/>
+        <source>Sending %1 to %2…</source>
+        <translation>正在将%1发送到 %2…</translation>
+    </message>
+    <message>
+        <location filename="../qml/ShelfWindow.qml" line="433"/>
         <source>Sending to %1…</source>
         <translation>正在发送到 %1…</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="424"/>
+        <location filename="../qml/ShelfWindow.qml" line="443"/>
         <source>Undo</source>
         <translation>撤销</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="464"/>
+        <location filename="../qml/ShelfWindow.qml" line="483"/>
         <source>Latest photo</source>
         <translation>最新照片</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="465"/>
+        <location filename="../qml/ShelfWindow.qml" line="484"/>
         <source>No recent photo</source>
         <translation>暂无近期照片</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="471"/>
+        <location filename="../qml/ShelfWindow.qml" line="490"/>
         <source>Latest screenshot</source>
         <translation>最新截图</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="472"/>
+        <location filename="../qml/ShelfWindow.qml" line="491"/>
         <source>No recent screenshot</source>
         <translation>暂无近期截图</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="713"/>
+        <location filename="../qml/ShelfWindow.qml" line="732"/>
         <source>Copy</source>
         <translation>复制</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="725"/>
+        <location filename="../qml/ShelfWindow.qml" line="744"/>
         <source>Open</source>
         <translation>打开</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="821"/>
+        <location filename="../qml/ShelfWindow.qml" line="840"/>
         <source>Current clip</source>
         <translation>当前剪贴内容</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="836"/>
+        <location filename="../qml/ShelfWindow.qml" line="857"/>
         <source>Send clip to phone</source>
         <translation>发送剪贴内容到手机</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="839"/>
-        <location filename="../qml/ShelfWindow.qml" line="955"/>
-        <source>Clip</source>
-        <translation>剪贴内容</translation>
+        <location filename="../qml/ShelfWindow.qml" line="861"/>
+        <location filename="../qml/ShelfWindow.qml" line="980"/>
+        <source>the copied image</source>
+        <translation>复制的图片</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="847"/>
+        <location filename="../qml/ShelfWindow.qml" line="863"/>
+        <location filename="../qml/ShelfWindow.qml" line="983"/>
+        <source>the copied text</source>
+        <translation>复制的文本</translation>
+    </message>
+    <message>
+        <source>Clip</source>
+        <translation type="vanished">剪贴内容</translation>
+    </message>
+    <message>
+        <location filename="../qml/ShelfWindow.qml" line="871"/>
         <source>Copy clip</source>
         <translation>复制剪贴内容</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="881"/>
-        <location filename="../qml/ShelfWindow.qml" line="902"/>
+        <location filename="../qml/ShelfWindow.qml" line="905"/>
+        <location filename="../qml/ShelfWindow.qml" line="926"/>
         <source>Clipboard is empty</source>
         <translation>剪贴板为空</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="901"/>
+        <location filename="../qml/ShelfWindow.qml" line="925"/>
         <source>Current clip: %1</source>
         <translation>当前剪贴内容：%1</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="1014"/>
+        <location filename="../qml/ShelfWindow.qml" line="1042"/>
         <source>Recent received files</source>
         <translation>最近接收的文件</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="1029"/>
+        <location filename="../qml/ShelfWindow.qml" line="1057"/>
         <source>No received files yet</source>
         <translation>暂无接收的文件</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="1213"/>
+        <location filename="../qml/ShelfWindow.qml" line="1241"/>
         <source>Send to phone</source>
         <translation>发送到手机</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="1224"/>
+        <location filename="../qml/ShelfWindow.qml" line="1252"/>
         <source>Open file</source>
         <translation>打开文件</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="1232"/>
+        <location filename="../qml/ShelfWindow.qml" line="1260"/>
         <source>Show in folder</source>
         <translation>在文件夹中显示</translation>
     </message>
     <message>
-        <location filename="../qml/ShelfWindow.qml" line="1247"/>
+        <location filename="../qml/ShelfWindow.qml" line="1275"/>
         <source>Flick any card up to send to phone, drag out to use, or drop files in</source>
         <translation>向上轻扫任意卡片即可发送到手机，拖出即可使用，也可将文件拖入</translation>
     </message>
