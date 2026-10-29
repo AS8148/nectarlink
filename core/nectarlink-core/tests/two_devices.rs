@@ -135,7 +135,8 @@ impl Platform for RecordingPlatform {
         let sound = if options.audio { " with sound" } else { "" };
         let app = options.app.as_deref().map(|a| format!(" {a} as {}", options.session)).unwrap_or_default();
         let watch = options.watch.as_deref().map(|p| format!(" watching {p}")).unwrap_or_default();
-        self.mirror_asks.lock().unwrap().push(format!("start {}{sound}{app}{watch}", options.max_size));
+        let only = if options.sound_only { ", sound only" } else { "" };
+        self.mirror_asks.lock().unwrap().push(format!("start {}{sound}{only}{app}{watch}", options.max_size));
         Ok(())
     }
     fn watch_offered(
@@ -1785,6 +1786,104 @@ async fn folders_arrive_with_their_layout() {
     );
 }
 
+/// The phone's sound on its own (#94): the PC asks for the sound alone, the
+/// phone gets that request, and its sound stream plays without any video. A
+/// phone that doesn't offer it is never asked to share its screen instead.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_phone_sound_plays_on_the_pc_without_its_screen() {
+    use nectarlink_core::{MirrorSend, PacketKind};
+    let sound_only = nectarlink_core::MirrorStart {
+        max_size: 0,
+        fps: 0,
+        bitrate: 0,
+        audio: true,
+        session: 0,
+        app: None,
+        stay_awake: false,
+        screen_off: false,
+        watch: None,
+        sound_only: true,
+    };
+
+    // An older phone: no mirror.sound, so the request is refused, not
+    // turned into screen sharing.
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[nectarlink_core::MIRROR_LISTEN]).await;
+    let mut old_phone = device_with(
+        "Old phone",
+        DeviceKind::Phone,
+        &[nectarlink_core::MIRROR_CAPTURE, nectarlink_core::MIRROR_AUDIO_PLAYBACK],
+    )
+    .await;
+    pair_qr(&mut pc, &mut old_phone).await;
+    let refused = with_timeout(
+        "start on an old phone",
+        pc.node.mirror_start(old_phone.node.device_id(), sound_only.clone()),
+    )
+    .await;
+    assert!(matches!(refused, Err(Error::Unsupported)), "{refused:?}");
+    assert!(old_phone.platform.mirror_asks.lock().unwrap().is_empty(), "the old phone was never asked");
+
+    let mut phone = device_with(
+        "Pixel",
+        DeviceKind::Phone,
+        &[
+            nectarlink_core::MIRROR_CAPTURE,
+            nectarlink_core::MIRROR_AUDIO_PLAYBACK,
+            nectarlink_core::MIRROR_SOUND,
+        ],
+    )
+    .await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+    with_timeout("start", pc.node.mirror_start(phone_id, sound_only)).await.unwrap();
+    assert_eq!(*phone.platform.mirror_asks.lock().unwrap(), ["start 0 with sound, sound only"]);
+
+    // The phone sends only its sound.
+    let sound = Arc::new(with_timeout("open sound", phone.node.mirror_open_audio(pc_id)).await.unwrap());
+    let format = nectarlink_core::MirrorAudioConfig {
+        codec: nectarlink_core::MIRROR_PCM.into(),
+        rate: 48_000,
+        channels: 2,
+    };
+    let sender = sound.clone();
+    let sent = tokio::task::spawn_blocking(move || {
+        [
+            sender.send(PacketKind::Config, 0, format.to_cbor()),
+            sender.send(PacketKind::Frame, 10_000, vec![0; 1_920]),
+        ]
+    })
+    .await
+    .unwrap();
+    assert!(sent.iter().all(|s| *s == MirrorSend::Queued), "{sent:?}");
+    let screen = pc.platform.screen.clone();
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while screen.got.lock().unwrap().len() < 2 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        *screen.got.lock().unwrap(),
+        ["sound 48000 Hz x2", "sound 10000 1920"],
+        "sound, and no picture"
+    );
+
+    // Turning it off: the phone hears it, and the sound stream ends.
+    pc.node.mirror_stop(phone_id, 0).await;
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while !phone.platform.mirror_asks.lock().unwrap().iter().any(|a| a == "stop 0")
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(phone.platform.mirror_asks.lock().unwrap().iter().any(|a| a == "stop 0"));
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while !screen.got.lock().unwrap().iter().any(|g| g == "sound ended")
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(screen.got.lock().unwrap().iter().any(|g| g == "sound ended"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_phone_screen_streams_to_the_pc() {
     use nectarlink_core::{MirrorSend, PacketKind};
@@ -1817,6 +1916,7 @@ async fn the_phone_screen_streams_to_the_pc() {
         stay_awake: false,
         screen_off: false,
         watch: None,
+        sound_only: false,
     };
     with_timeout("start", pc.node.mirror_start(phone_id, options)).await.unwrap();
     assert_eq!(*phone.platform.mirror_asks.lock().unwrap(), ["start 1920 with sound"]);
@@ -1937,6 +2037,7 @@ async fn phone_apps_open_in_windows_of_their_own() {
         stay_awake: false,
         screen_off: false,
         watch: None,
+        sound_only: false,
     };
 
     // Not Elevated yet: no apps, no app windows.
@@ -5433,6 +5534,7 @@ async fn usb_transport_carries_features_when_wifi_unavailable() {
         stay_awake: false,
         screen_off: false,
         watch: None,
+        sound_only: false,
     };
     with_timeout("start mirror over USB", pc.node.mirror_start(phone_id, options)).await.unwrap();
     let stream = Arc::new(with_timeout("open mirror over USB", phone.node.mirror_open(pc_id)).await.unwrap());
@@ -5489,6 +5591,7 @@ async fn reverse_mirror_requires_pc_consent_and_remote_input_toggle() {
         stay_awake: false,
         screen_off: false,
         watch: None,
+        sound_only: false,
     };
 
     // (a) A paired phone calling `mirror_start` against a PC is denied by default
@@ -6127,6 +6230,7 @@ async fn play_on_phone_lets_the_phone_watch_only_what_the_pc_offered() {
         stay_awake: false,
         screen_off: false,
         watch: Some(player.into()),
+        sound_only: false,
     };
 
     // Not offered: the phone can't watch, and the PC isn't asked to share its screen.
@@ -6552,6 +6656,7 @@ async fn one_time_screen_consent_ends_with_the_pairing() {
         stay_awake: false,
         screen_off: false,
         watch: None,
+        sound_only: false,
     };
 
     // "Allow once" lets the phone view the PC's screen during this connection

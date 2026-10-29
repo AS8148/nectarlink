@@ -20,6 +20,7 @@ windows of their own (§6).
 | `mirror.input` | phone | Takes the PC's mouse and keyboard while mirrored (Assist: an accessibility service the user turns on; Elevated: injected input) |
 | `mirror.audio.playback` | phone | Shares the sound of apps that allow it while mirrored (Android 10+) |
 | `mirror.audio` | phone | Shares all its sound while mirrored (planned, Elevated) |
+| `mirror.sound` | phone | Shares its sound on its own, without the screen (`sound_only`, §5) |
 | `mirror.virtual_display` | phone | Runs apps on displays of their own, shown in windows on the PC (Elevated, Android 11+) |
 | `mirror.listen` | PC | Plays a mirrored phone's sound |
 
@@ -33,7 +34,8 @@ On the control stream.
 ```
 t = "mirror.start"     id = n   b = { max_size: uint, fps: uint, bitrate: uint, ? audio: bool,
                                      ? session: uint, ? app: text,
-                                     ? stay_awake: bool, ? screen_off: bool, ? watch: text }
+                                     ? stay_awake: bool, ? screen_off: bool, ? watch: text,
+                                     ? sound_only: bool }
 t = "mirror.stop"      id = n   b = { ? session: uint }
 t = "mirror.power"              b = { ? stay_awake: bool, ? screen_off: bool }
 t = "mirror.keyframe"           b = { ? session: uint }
@@ -57,6 +59,11 @@ means 0, so PCs and phones that predate sessions work as before.
   user agrees, and sound only if the phone can (it may share the screen
   without it). Errors: `DENIED` (mirroring is off for the PC),
   `UNSUPPORTED` (no `mirror.capture`).
+- `sound_only` (PC → phone, `session` 0 with `audio`, never with `app`,
+  `watch`, `stay_awake` or `screen_off`): only the phone's sound, no video
+  stream; the PC plays it without a window. Sent only to a phone that offers
+  `mirror.sound`; one that doesn't answers `UNSUPPORTED`, so an older phone
+  is never asked for its screen instead. `mirror.stop` (session 0) ends it.
 - `watch` (phone → PC, `session` 0 only, never with `app`): Play on phone.
   Show what this PC player plays instead of the PC's screen, after the PC
   offered it with `media.watch` ([media.md](media.md) §4).
@@ -161,6 +168,8 @@ When the PC asked for it, the phone opens a second stream with the header
 
 A PC that doesn't offer `mirror.listen` resets the stream. The stream ends
 with the video: when either side stops mirroring, or the connection drops.
+With `sound_only` there's no video: the sound stream is all there is, and
+it ends when either side stops or the connection drops.
 
 On Android, the sound is what apps play (media, games, and apps that don't
 say otherwise), captured with the screen share's consent and the

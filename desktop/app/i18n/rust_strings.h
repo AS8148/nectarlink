@@ -386,6 +386,10 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("PhoneMic", "Tap Start on %1 to use its microphone."), // desktop/app/src/phone_mic.rs
     QT_TRANSLATE_NOOP("PhoneMic", "The microphone is turned off for this PC on %1."), // desktop/app/src/phone_mic.rs
     QT_TRANSLATE_NOOP("PhoneMic", "Update NectarLink on %1 to use its microphone."), // desktop/app/src/phone_mic.rs
+    QT_TRANSLATE_NOOP("PhoneSound", "%1 couldn't ask to share its sound. Check that NectarLink can show notifications on the phone."), // desktop/app/src/phone_sound.rs
+    QT_TRANSLATE_NOOP("PhoneSound", "Mirroring is turned off for this phone."), // desktop/app/src/phone_sound.rs
+    QT_TRANSLATE_NOOP("PhoneSound", "The phone isn't connected."), // desktop/app/src/phone_sound.rs
+    QT_TRANSLATE_NOOP("PhoneSound", "Update NectarLink on %1 to play its sound here."), // desktop/app/src/phone_sound.rs
     QT_TRANSLATE_NOOP("PhotoBackup", "Can't write to the backup folder."), // desktop/app/src/photo_backup.rs
     QT_TRANSLATE_NOOP("PhotoBackup", "Copying, %1 left"), // desktop/app/src/bridge/photo_backup.rs
     QT_TRANSLATE_NOOP("PhotoBackup", "Looking for new photos…"), // desktop/app/src/bridge/photo_backup.rs

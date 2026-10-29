@@ -368,16 +368,21 @@ fun HomeScreen(
                     ?: stringResource(R.string.your_pc)
                 val controlReady = state.inputAccess || state.elevated
                 val subtitle = when {
+                    mirrorSession.soundOnly -> stringResource(R.string.mirror_banner_subtitle_sound)
                     controlReady -> stringResource(R.string.mirror_banner_subtitle_control_on)
                     mirrorSession.audio -> stringResource(R.string.mirror_banner_subtitle_audio)
                     else -> stringResource(R.string.mirror_banner_subtitle)
                 }
                 LiveStreamingBanner(
-                    title = stringResource(R.string.mirror_sharing, pcName),
+                    title = stringResource(
+                        if (mirrorSession.soundOnly) R.string.mirror_sharing_sound else R.string.mirror_sharing,
+                        pcName,
+                    ),
                     subtitle = subtitle,
                     primaryActionLabel = stringResource(R.string.action_stop),
                     onPrimaryAction = onStopMirror,
-                    secondaryActionLabel = if (!controlReady) {
+                    // Nothing to control without the screen.
+                    secondaryActionLabel = if (!controlReady && !mirrorSession.soundOnly) {
                         stringResource(R.string.mirror_allow_pc_control)
                     } else {
                         null

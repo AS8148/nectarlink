@@ -1332,6 +1332,9 @@ pub mod mirror {
     pub const AUDIO_PLAYBACK: &str = "mirror.audio.playback";
     /// Offered by PCs that play a mirrored phone's sound.
     pub const LISTEN: &str = "mirror.listen";
+    /// Offered by phones that share their sound on its own, without the
+    /// screen (`MirrorStart::sound_only`).
+    pub const SOUND: &str = "mirror.sound";
     pub const OP_AUDIO: &str = "audio";
     /// 16-bit little-endian PCM, channels interleaved.
     pub const PCM: &str = "pcm_s16le";
@@ -1388,11 +1391,24 @@ pub struct MirrorStart {
     /// that offered it with `media.watch`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watch: Option<String>,
+    /// Only the phone's sound, no picture (`session == SCREEN`, sent to a
+    /// phone that offers [`mirror::SOUND`]). The PC plays it without a window.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sound_only: bool,
 }
 
 impl MirrorStart {
     /// The screen without an app, or an app with a session of its own.
     pub fn is_valid(&self) -> bool {
+        if self.sound_only {
+            // The phone's own sound: no app, no player, nothing about the screen.
+            return self.session == mirror::SCREEN
+                && self.audio
+                && self.app.is_none()
+                && self.watch.is_none()
+                && !self.stay_awake
+                && !self.screen_off;
+        }
         let watch_ok = self
             .watch
             .as_ref()
@@ -4251,6 +4267,33 @@ impl StorageChanged {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn sound_only_is_the_phones_sound_and_nothing_else() {
+        let sound = MirrorStart {
+            max_size: 0,
+            fps: 0,
+            bitrate: 0,
+            audio: true,
+            session: mirror::SCREEN,
+            app: None,
+            stay_awake: false,
+            screen_off: false,
+            watch: None,
+            sound_only: true,
+        };
+        assert!(sound.is_valid());
+        assert!(!MirrorStart { audio: false, ..sound.clone() }.is_valid(), "the sound is the point");
+        assert!(!MirrorStart { session: 2, app: Some("com.example.app".into()), ..sound.clone() }.is_valid());
+        assert!(!MirrorStart { watch: Some("Chrome".into()), ..sound.clone() }.is_valid());
+        assert!(!MirrorStart { screen_off: true, ..sound.clone() }.is_valid(), "nothing about the screen");
+        // It survives the trip, and a request without it is the screen, as before.
+        let env = crate::Envelope::new(types::MIRROR_START, &sound).unwrap();
+        assert!(env.body::<MirrorStart>().unwrap().sound_only);
+        let screen =
+            crate::Envelope::new(types::MIRROR_START, &MirrorStart { sound_only: false, ..sound }).unwrap();
+        assert!(!screen.body::<MirrorStart>().unwrap().sound_only);
+    }
+
+    #[test]
     fn audit_73_validation_rules() {
         // A photo request with both `id` and `ids` asks for all of them, once.
         let get = PhotoGet { id: "a".into(), ids: vec!["b".into(), "a".into(), "c".into()] };
@@ -5358,6 +5401,7 @@ mod tests {
             stay_awake: false,
             screen_off: false,
             watch: Some("Chrome".into()),
+            sound_only: false,
         };
         assert!(screen.is_valid());
         // Watching is of the PC's screen session only, never with an app.

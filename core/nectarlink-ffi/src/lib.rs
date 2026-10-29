@@ -1180,6 +1180,8 @@ pub struct MirrorOptions {
     pub stay_awake: bool,
     /// Turn the phone's physical screen off while mirroring (`session == 0`, Elevated).
     pub screen_off: bool,
+    /// Only the sound, no picture: the PC plays it without a window.
+    pub sound_only: bool,
 }
 
 /// An app a PC can open in a window (docs/protocol/mirror.md).
@@ -2882,6 +2884,7 @@ impl core::Platform for PlatformAdapter {
             app: options.app.clone(),
             stay_awake: options.stay_awake,
             screen_off: options.screen_off,
+            sound_only: options.sound_only,
         };
         if self.0.mirror_requested(peer.to_string(), options) {
             Ok(())
@@ -4049,6 +4052,7 @@ impl NectarlinkNode {
             stay_awake: false,
             screen_off: false,
             watch,
+            sound_only: false,
         };
         self.run(async move { Ok(node.mirror_start(id, options).await?) }).await
     }

@@ -39,6 +39,8 @@ data class MirrorSession(
     val audio: Boolean = false,
     val stayAwake: Boolean = false,
     val screenOff: Boolean = false,
+    /** Only the sound is shared, no picture. */
+    val soundOnly: Boolean = false,
 )
 
 /**
@@ -59,6 +61,7 @@ class MirrorService : Service() {
     private var pcId: String? = null
     private var stayAwake: Boolean = false
     private var screenOff: Boolean = false
+    private var soundOnly: Boolean = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -83,6 +86,7 @@ class MirrorService : Service() {
         val audio = intent.getBooleanExtra(EXTRA_AUDIO, false)
         stayAwake = intent.getBooleanExtra(EXTRA_STAY_AWAKE, false)
         screenOff = intent.getBooleanExtra(EXTRA_SCREEN_OFF, false)
+        soundOnly = intent.getBooleanExtra(EXTRA_SOUND_ONLY, false)
 
         if (isElevated) {
             val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0
@@ -95,7 +99,12 @@ class MirrorService : Service() {
                 audio = audio,
                 stayAwake = stayAwake,
                 screenOff = screenOff,
+                soundOnly = soundOnly,
             )
+            if (soundOnly) {
+                scope.launch { startSound(core, pc) }
+                return START_NOT_STICKY
+            }
             val fallbackRequest = MirrorRequest(pc, maxSize, fps, bitrate, audio, stayAwake, screenOff)
             elevatedStarting = true
             startElevatedStream(core, pc, name, fallbackRequest)
@@ -123,11 +132,16 @@ class MirrorService : Service() {
             audio = audio,
             stayAwake = stayAwake,
             screenOff = screenOff,
+            soundOnly = soundOnly,
         )
         granted.registerCallback(object : MediaProjection.Callback() {
             // The user stopped it (from the status bar, or by locking).
             override fun onStop() = main.post { stopSharing() }.let {}
         }, main)
+        if (soundOnly) {
+            scope.launch { startSound(core, pc) }
+            return START_NOT_STICKY
+        }
         scope.launch {
             val stream = runCatching { core.mirrorOpen(pc) }.getOrElse {
                 Log.w(TAG, "can't stream to the PC", it)
@@ -307,18 +321,25 @@ class MirrorService : Service() {
 
     /** The sound, on a stream of its own; the screen goes on without it if it can't. */
     private suspend fun startSound(core: app.nectarlink.android.core.Core, pc: String) {
-        if (!SoundCapture.canCapture(this)) return
+        // Sharing only the sound, there's nothing left once it's gone.
+        val endSharing = { if (soundOnly) main.post { if (pcId == pc) stopSharing() } }
+        if (!SoundCapture.canCapture(this)) {
+            endSharing()
+            return
+        }
         val stream = runCatching { core.mirrorOpenAudio(pc) }.getOrElse {
             Log.w(TAG, "can't send the sound", it)
+            endSharing()
             return
         }
         main.post {
             val running = projection
             if ((running == null && !app.nectarlink.android.elevated.Elevated.running) || pcId != pc) {
                 stream.end()
+                endSharing()
                 return@post
             }
-            sound = SoundCapture(running, stream).also { it.start() }
+            sound = SoundCapture(running, stream) { endSharing() }.also { it.start() }
         }
     }
 
@@ -329,7 +350,12 @@ class MirrorService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(getString(R.string.mirror_sharing, pcName.ifEmpty { getString(R.string.your_pc) }))
+            .setContentTitle(
+                getString(
+                    if (soundOnly) R.string.mirror_sharing_sound else R.string.mirror_sharing,
+                    pcName.ifEmpty { getString(R.string.your_pc) },
+                ),
+            )
             .setOngoing(true)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
@@ -340,6 +366,7 @@ class MirrorService : Service() {
     private fun stopSharing() {
         stayAwake = false
         screenOff = false
+        soundOnly = false
         _session.value = MirrorSession()
         StreamPower.set(this, StreamPower.SCREEN, streaming = false)
         elevatedDisplayListener?.let {
@@ -381,6 +408,7 @@ class MirrorService : Service() {
         private const val EXTRA_AUDIO = "audio"
         private const val EXTRA_STAY_AWAKE = "stayAwake"
         private const val EXTRA_SCREEN_OFF = "screenOff"
+        private const val EXTRA_SOUND_ONLY = "soundOnly"
 
         /** The service sharing the screen now, if any. */
         @Volatile private var current: MirrorService? = null
@@ -406,6 +434,7 @@ class MirrorService : Service() {
                 .putExtra(EXTRA_AUDIO, request.audio)
                 .putExtra(EXTRA_STAY_AWAKE, request.stayAwake)
                 .putExtra(EXTRA_SCREEN_OFF, request.screenOff)
+                .putExtra(EXTRA_SOUND_ONLY, request.soundOnly)
             ContextCompat.startForegroundService(context, intent)
         }
 
@@ -424,6 +453,7 @@ class MirrorService : Service() {
                 .putExtra(EXTRA_AUDIO, request.audio)
                 .putExtra(EXTRA_STAY_AWAKE, request.stayAwake)
                 .putExtra(EXTRA_SCREEN_OFF, request.screenOff)
+                .putExtra(EXTRA_SOUND_ONLY, request.soundOnly)
             return runCatching {
                 ContextCompat.startForegroundService(context, intent)
                 true

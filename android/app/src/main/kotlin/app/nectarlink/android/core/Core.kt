@@ -1876,6 +1876,8 @@ class Core(context: Context, private val scope: CoroutineScope) : EventListener 
             (if (Elevated.running && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) listOf("mirror.virtual_display") else emptyList()) +
             // Asked for when a PC wants the sound, or streamed via Elevated helper.
             (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q || Elevated.running) listOf("mirror.audio.playback") else emptyList()) +
+            // The same sound on its own, without the screen.
+            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q || Elevated.running) listOf("mirror.sound") else emptyList()) +
             (if (app.nectarlink.android.mirror.ScreenEncoder.supportsHevcDecoder()) listOf("mirror.decode.hevc") else emptyList())
 
     /**

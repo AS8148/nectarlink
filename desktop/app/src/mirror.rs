@@ -50,6 +50,7 @@ const OPTIONS: MirrorStart = MirrorStart {
     stay_awake: false,
     screen_off: false,
     watch: None,
+    sound_only: false,
 };
 /// Packets waiting for the decoder, at most (about two seconds).
 const BACKLOG: usize = 120;
@@ -951,6 +952,9 @@ pub fn resize(window: Window, width: u32, height: u32) {
 }
 
 fn request(window: Window, options: MirrorStart) {
+    if window.session == MIRROR_SCREEN {
+        crate::phone_sound::stop_for_window(window.device);
+    }
     core_host::host().hub.changed(Changes::MIRROR);
     let Some(node) = core_host::node() else { return };
     let app = options.app.is_some();
@@ -1769,6 +1773,8 @@ pub fn sink(device: &DeviceId, session: u32) -> Option<Arc<dyn MirrorSink>> {
     let window = Window { device: *device, session };
     matches!(phase(&window), Some(Phase::Asking | Phase::Showing))
         .then(|| Arc::new(Sink::new(window)) as Arc<dyn MirrorSink>)
+        // No window: the phone's sound on its own, if it was asked for.
+        .or_else(|| if session == MIRROR_SCREEN { crate::phone_sound::sink(device) } else { None })
 }
 
 enum Item {

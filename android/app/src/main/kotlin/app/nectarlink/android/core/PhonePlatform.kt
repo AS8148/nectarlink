@@ -151,6 +151,7 @@ internal class PhonePlatform(
                 options.audio,
                 options.stayAwake,
                 options.screenOff,
+                options.soundOnly,
             )
             if (Elevated.running && MirrorService.startElevated(context, request)) {
                 true

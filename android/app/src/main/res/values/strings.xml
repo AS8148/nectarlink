@@ -118,8 +118,11 @@
     <string name="channel_mirroring">Screen sharing</string>
     <string name="channel_mirror_requests">Screen sharing requests</string>
     <string name="mirror_request_title">%1$s wants to see your screen</string>
+    <string name="mirror_request_title_sound">%1$s wants to play your phone\'s sound</string>
     <string name="mirror_request_text">Tap to share it. You can stop anytime.</string>
+    <string name="mirror_request_text_sound">Tap to share it. Android asks to share your screen; only the sound goes to the PC.</string>
     <string name="mirror_sharing">Sharing your screen with %1$s</string>
+    <string name="mirror_sharing_sound">Sharing your phone\'s sound with %1$s</string>
     <string name="action_stop">Stop</string>
     <plurals name="app_windows_title">
         <item quantity="one">%1$d app is open in a window on a PC</item>
@@ -712,6 +715,7 @@
     <string name="mirror_banner_subtitle_control_on">Tap, swipe and type from your PC</string>
     <string name="mirror_banner_subtitle_audio">Screen and audio · tap Stop anytime</string>
     <string name="mirror_banner_subtitle">Live screen stream · tap Stop anytime</string>
+    <string name="mirror_banner_subtitle_sound">Sound only · tap Stop anytime</string>
     <string name="mirror_allow_pc_control">Allow PC mouse control</string>
     <string name="action_open_controls">Controls</string>
     <string name="remote_input_requested_title">Your PC tried to control this phone</string>

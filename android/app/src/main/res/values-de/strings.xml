@@ -118,8 +118,11 @@
     <string name="channel_mirroring">Bildschirmspiegelung</string>
     <string name="channel_mirror_requests">Anfragen zur Bildschirmspiegelung</string>
     <string name="mirror_request_title">%1$s möchte deinen Bildschirm sehen</string>
+    <string name="mirror_request_title_sound">%1$s möchte den Ton deines Telefons abspielen</string>
     <string name="mirror_request_text">Tippe zum Teilen. Du kannst die Übertragung jederzeit beenden.</string>
+    <string name="mirror_request_text_sound">Tippe, um ihn zu teilen. Android fragt nach der Bildschirmfreigabe; nur der Ton geht an den PC.</string>
     <string name="mirror_sharing">Bildschirm wird mit %1$s geteilt</string>
+    <string name="mirror_sharing_sound">Ton deines Telefons wird mit %1$s geteilt</string>
     <string name="action_stop">Beenden</string>
     <plurals name="app_windows_title">
         <item quantity="one">%1$d App ist in einem Fenster auf einem PC geöffnet</item>
@@ -713,6 +716,7 @@
     <string name="mirror_banner_subtitle_control_on">Tippe, wische und schreibe von deinem PC aus</string>
     <string name="mirror_banner_subtitle_audio">Bildschirm und Audio · jederzeit auf Stopp tippen</string>
     <string name="mirror_banner_subtitle">Live-Bildschirmübertragung · jederzeit auf Stopp tippen</string>
+    <string name="mirror_banner_subtitle_sound">Nur Ton · jederzeit mit Stopp beenden</string>
     <string name="mirror_allow_pc_control">PC-Maussteuerung erlauben</string>
     <string name="action_open_controls">Steuerung</string>
     <string name="remote_input_requested_title">Dein PC hat versucht, dieses Gerät zu steuern</string>

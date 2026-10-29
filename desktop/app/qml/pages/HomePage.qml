@@ -2088,6 +2088,20 @@ Item {
                         onToggled: (on) => MediaList.setPlayOnPhone(on)
                     }
 
+                    // The phone's sound out of this PC's speakers, without a mirror window.
+                    SwitchBar {
+                        readonly property string sound: MediaList.phoneSoundState
+                        width: parent.width
+                        visible: sound !== "off" || MediaList.phoneSoundName.length > 0
+                        iconPath: Icons.music
+                        title: qsTr("Phone sound on this PC")
+                        checked: sound !== "off"
+                        caption: sound === "playing" ? qsTr("Playing %1's sound").arg(MediaList.phoneSoundName)
+                            : sound === "asking" ? qsTr("Allow it on %1").arg(MediaList.phoneSoundName)
+                            : ""
+                        onToggled: (on) => MediaList.setPhoneSound(on)
+                    }
+
                     LockChip {
                         visible: label.length > 0
                         feature: phoneControls.activeLockFeature

@@ -62,6 +62,7 @@ capability is missing.
 | `mirror.virtual_display` | Runs apps on displays of their own, shown in windows on the PC ([mirroring](mirror.md)) | Elevated, Android 11+ |
 | `mirror.audio` | Streams all audio while mirrored | Elevated |
 | `mirror.audio.playback` | Streams audio from apps that allow playback capture | app update |
+| `mirror.sound` | Streams its sound on its own, without the screen ([mirroring](mirror.md) §5) | app update |
 | `toggles.read` | Shares quick settings state ([toggles](toggles.md)) | app update |
 | `toggles.ringer` | Changes the ringer mode between `ring` and `vibrate` ([toggles](toggles.md)) | app update |
 | `toggles.volume` | Changes the media volume ([toggles](toggles.md)) | app update |

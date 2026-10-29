@@ -8,6 +8,12 @@ change things that need a step from you, and its notes say so.
 
 ### New
 
+- **Your phone's sound on the PC, without mirroring.** **Phone sound on this
+  PC** on Home plays what the phone plays through the PC's speakers or
+  headphones, with no mirror window. With Elevated it starts right away;
+  otherwise the phone asks once, as for mirroring. The phone's own speaker
+  keeps playing for now
+  ([#94](https://github.com/thtbee/nectarlink/issues/94)).
 - **Sharing your PC's screen with the phone uses H.265** when both sides
   can, and H.264 otherwise. Thanks to [@AS8148](https://github.com/AS8148)
   ([#66](https://github.com/thtbee/nectarlink/pull/66)).
