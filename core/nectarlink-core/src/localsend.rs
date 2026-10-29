@@ -625,22 +625,29 @@ async fn handle_udp_packet(shared: &Arc<Shared>, data: &[u8], src: SocketAddr) {
         port,
         protocol: protocol.clone(),
     };
+    let fingerprint = peer.fingerprint.clone();
     shared.localsend.upsert_peer(shared, peer);
 
     let is_announce = dto.announce.or(dto.announcement).unwrap_or(false);
     if is_announce && shared.localsend.receiving() {
         let shared = shared.clone();
         tokio::spawn(async move {
-            let _ = send_register_callback(&shared, &ip, port, &protocol).await;
+            let _ = send_register_callback(&shared, &ip, port, &protocol, &fingerprint).await;
         });
     }
 }
 
-async fn send_register_callback(shared: &Arc<Shared>, ip: &str, port: u16, protocol: &str) -> Result<()> {
+async fn send_register_callback(
+    shared: &Arc<Shared>,
+    ip: &str,
+    port: u16,
+    protocol: &str,
+    fingerprint: &str,
+) -> Result<()> {
     let our_port = shared.localsend.bound_port();
     let dto = build_our_multicast_dto(shared, our_port, false);
     let body = serde_json::to_vec(&dto).map_err(|e| Error::Internal(e.to_string()))?;
-    let mut stream = connect_peer_stream(shared, ip, port, protocol == "https").await?;
+    let mut stream = connect_peer_stream(shared, ip, port, protocol == "https", Some(fingerprint)).await?;
     write_http_request(
         &mut stream,
         "POST",
@@ -654,6 +661,7 @@ async fn send_register_callback(shared: &Arc<Shared>, ip: &str, port: u16, proto
     if (200..300).contains(&resp.status)
         && let Ok(info) = serde_json::from_slice::<InfoDto>(&resp.body)
         && info.fingerprint != shared.localsend.identity.fingerprint
+        && info.fingerprint.eq_ignore_ascii_case(fingerprint)
         && !info.alias.trim().is_empty()
     {
         let peer_port = info.port.unwrap_or(port);
@@ -683,7 +691,7 @@ async fn send_register_callback(shared: &Arc<Shared>, ip: &str, port: u16, proto
 pub(crate) async fn probe_peer(shared: &Arc<Shared>, host: &str, port: u16) -> Result<LocalSendPeer> {
     for use_tls in [true, false] {
         let protocol = if use_tls { "https" } else { "http" };
-        let Ok(mut stream) = connect_peer_stream(shared, host, port, use_tls).await else {
+        let Ok(mut stream) = connect_peer_stream(shared, host, port, use_tls, None).await else {
             continue;
         };
         let req_res = if shared.localsend.receiving() {
@@ -723,6 +731,11 @@ pub(crate) async fn probe_peer(shared: &Arc<Shared>, host: &str, port: u16) -> R
         };
         if info.fingerprint == shared.localsend.identity.fingerprint || info.alias.trim().is_empty() {
             return Err(Error::NotFound);
+        }
+        // Over HTTPS the fingerprint it claims must be its certificate's.
+        if use_tls && !stream.has_fingerprint(&info.fingerprint) {
+            tracing::warn!(%host, port, "LocalSend peer's certificate doesn't match its fingerprint");
+            continue;
         }
         let peer_port = info.port.unwrap_or(port);
         let peer_proto = info
@@ -1405,7 +1418,7 @@ async fn run_outgoing_transfer(
 
     let mut prep_stream = tokio::select! {
         _ = cancel.cancelled() => return Err(TransferState::Cancelled),
-        res = connect_peer_stream(shared, &peer.ip, peer.port, use_tls) => {
+        res = connect_peer_stream(shared, &peer.ip, peer.port, use_tls, Some(&peer.fingerprint)) => {
             res.map_err(|_| TransferState::Failed(TransferFailure::Unreachable))?
         }
     };
@@ -1467,7 +1480,7 @@ async fn run_outgoing_transfer(
                 let _ = send_cancel_request(shared, peer, use_tls, &prep.session_id).await;
                 return Err(TransferState::Cancelled);
             }
-            res = connect_peer_stream(shared, &peer.ip, peer.port, use_tls) => {
+            res = connect_peer_stream(shared, &peer.ip, peer.port, use_tls, Some(&peer.fingerprint)) => {
                 res.map_err(|_| TransferState::Failed(TransferFailure::Unreachable))?
             }
         };
@@ -1544,7 +1557,9 @@ async fn run_outgoing_transfer(
 }
 
 async fn send_cancel_request(shared: &Arc<Shared>, peer: &LocalSendPeer, use_tls: bool, session_id: &str) {
-    let Ok(mut stream) = connect_peer_stream(shared, &peer.ip, peer.port, use_tls).await else {
+    let Ok(mut stream) =
+        connect_peer_stream(shared, &peer.ip, peer.port, use_tls, Some(&peer.fingerprint)).await
+    else {
         return;
     };
     let path = format!("/api/localsend/v2/cancel?sessionId={}", crate::percent_encode(session_id));
@@ -1555,6 +1570,28 @@ async fn send_cancel_request(shared: &Arc<Shared>, peer: &LocalSendPeer, use_tls
 enum ClientStream {
     Plain(TcpStream),
     Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
+}
+
+impl ClientStream {
+    /// Whether the peer's TLS certificate has this LocalSend fingerprint.
+    fn has_fingerprint(&self, expected: &str) -> bool {
+        self.peer_fingerprint().is_some_and(|fp| fp.eq_ignore_ascii_case(expected.trim()))
+    }
+
+    /// The hex SHA-256 of the peer's TLS certificate (its LocalSend fingerprint).
+    fn peer_fingerprint(&self) -> Option<String> {
+        match self {
+            ClientStream::Plain(_) => None,
+            ClientStream::Tls(s) => {
+                s.get_ref().1.peer_certificates()?.first().map(|cert| cert_fingerprint(cert.as_ref()))
+            }
+        }
+    }
+}
+
+/// A LocalSend fingerprint: the lowercase hex SHA-256 of a certificate's DER bytes.
+fn cert_fingerprint(der: &[u8]) -> String {
+    data_encoding::HEXLOWER.encode(&Sha256::digest(der))
 }
 
 impl AsyncRead for ClientStream {
@@ -1603,7 +1640,16 @@ impl AsyncWrite for ClientStream {
     }
 }
 
-async fn connect_peer_stream(shared: &Shared, host: &str, port: u16, use_tls: bool) -> Result<ClientStream> {
+/// Connects to a LocalSend peer. Over HTTPS, with `expected_fingerprint`, the
+/// peer's certificate must have that fingerprint: anyone on the network can
+/// announce a known device's fingerprint with their own address.
+async fn connect_peer_stream(
+    shared: &Shared,
+    host: &str,
+    port: u16,
+    use_tls: bool,
+    expected_fingerprint: Option<&str>,
+) -> Result<ClientStream> {
     let addr = format!("{host}:{port}");
     let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addr))
         .await
@@ -1618,7 +1664,14 @@ async fn connect_peer_stream(shared: &Shared, host: &str, port: u16, use_tls: bo
             .await
             .map_err(|_| Error::Offline)?
             .map_err(|_| Error::Offline)?;
-        Ok(ClientStream::Tls(Box::new(tls)))
+        let stream = ClientStream::Tls(Box::new(tls));
+        if let Some(expected) = expected_fingerprint
+            && !stream.has_fingerprint(expected)
+        {
+            tracing::warn!(%host, port, "LocalSend peer's certificate doesn't match its fingerprint");
+            return Err(Error::Offline);
+        }
+        Ok(stream)
     } else {
         Ok(ClientStream::Plain(tcp))
     }
@@ -2056,7 +2109,7 @@ fn decode_stored_identity(stored: &StoredLocalSendState) -> Option<LocalSendIden
     if cert_der.is_empty() || key_pkcs8.is_empty() {
         return None;
     }
-    let fingerprint = data_encoding::HEXLOWER.encode(&Sha256::digest(&cert_der));
+    let fingerprint = cert_fingerprint(&cert_der);
     let id = LocalSendIdentity { cert_der, key_pkcs8, fingerprint };
     // Verify the stored key/cert builds a valid rustls ServerConfig.
     build_server_tls_config(&id).ok()?;
@@ -2116,7 +2169,7 @@ pub(crate) fn generate_self_signed_identity() -> Result<LocalSendIdentity> {
     let signature =
         key_pair.sign(&rng, &tbs).map_err(|_| Error::Internal("can't sign LocalSend certificate".into()))?;
     let cert_der = der_seq(&[tbs, sig_alg, der_bit_string(signature.as_ref())]);
-    let fingerprint = data_encoding::HEXLOWER.encode(&Sha256::digest(&cert_der));
+    let fingerprint = cert_fingerprint(&cert_der);
 
     Ok(LocalSendIdentity { cert_der, key_pkcs8, fingerprint })
 }
@@ -2249,10 +2302,13 @@ mod tests {
         let tcp = TcpStream::connect(addr).await.unwrap();
         let connector = TlsConnector::from(client_cfg);
         let domain = ServerName::try_from("localsend.org").unwrap();
-        let mut client_tls = connector.connect(domain, tcp).await.unwrap();
-        let peer_certs = client_tls.get_ref().1.peer_certificates().unwrap();
-        let peer_fp = data_encoding::HEXLOWER.encode(&Sha256::digest(peer_certs[0].as_ref()));
-        assert_eq!(peer_fp, id.fingerprint);
+        let client_tls = connector.connect(domain, tcp).await.unwrap();
+        let mut client_tls = ClientStream::Tls(Box::new(client_tls));
+        assert_eq!(client_tls.peer_fingerprint().as_deref(), Some(id.fingerprint.as_str()));
+        assert!(client_tls.has_fingerprint(&id.fingerprint.to_ascii_uppercase()));
+        // Another device's fingerprint, announced from this address, doesn't match.
+        assert!(!client_tls.has_fingerprint(&"ab".repeat(32)));
+        assert!(!client_tls.has_fingerprint(""));
 
         client_tls.write_all(b"ping").await.unwrap();
         let mut reply = [0u8; 4];
