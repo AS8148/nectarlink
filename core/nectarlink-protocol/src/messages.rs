@@ -448,6 +448,7 @@ impl Battery {
         self.cell_type =
             clean_text(self.cell_type.map(|s| s.chars().filter(|c| !c.is_control()).collect()), 8);
         self.wifi_bars = self.wifi_bars.map(|b| b.min(4));
+        self.plugged = self.plugged.filter(|p| matches!(p.as_str(), "ac" | "usb" | "wireless"));
         self
     }
 }
@@ -1001,8 +1002,8 @@ impl MediaPlayer {
         if self.title.is_none() && self.app.trim().is_empty() {
             return None;
         }
-        self.actions.retain(|a| media_actions::ALL.contains(&a.as_str()));
-        self.actions.dedup();
+        let mut seen = std::collections::HashSet::new();
+        self.actions.retain(|a| media_actions::ALL.contains(&a.as_str()) && seen.insert(a.clone()));
         if let (Some(position), Some(duration)) = (self.position, self.duration) {
             self.position = Some(position.min(duration));
         }
@@ -1062,7 +1063,7 @@ pub struct WatchFile {
 impl WatchFile {
     pub fn is_valid(&self) -> bool {
         (1..=media_limits::TEXT_CHARS).contains(&self.name.chars().count())
-            && !self.name.contains(['/', '\\'])
+            && is_valid_file_name(&self.name)
             && self.size > 0
     }
 }
@@ -1145,7 +1146,8 @@ pub fn parse_mac(s: &str) -> Option<[u8; 6]> {
         }
         *slot = u8::from_str_radix(part, 16).ok()?;
     }
-    if parts.next().is_some() || bytes == [0; 6] || bytes == [0xff; 6] {
+    // A multicast address (first octet's low bit set) is no adapter's own.
+    if parts.next().is_some() || bytes == [0; 6] || bytes[0] & 1 == 1 {
         return None;
     }
     Some(bytes)
@@ -2377,7 +2379,9 @@ impl std::fmt::Debug for CallDial {
 
 impl CallDial {
     pub fn is_valid(&self) -> bool {
-        !self.number.trim().is_empty() && self.number.len() <= calls::MAX_TEXT_BYTES
+        !self.number.trim().is_empty()
+            && self.number.len() <= calls::MAX_TEXT_BYTES
+            && !self.number.chars().any(char::is_control)
     }
 }
 
@@ -2672,15 +2676,15 @@ pub struct PhotoGet {
 }
 
 impl PhotoGet {
-    /// Requested item IDs in order (`ids` when non-empty, otherwise `[id]`).
+    /// Requested item IDs in order: `id` (when set), then `ids`, each once.
     pub fn requested_ids(&self) -> Vec<String> {
-        if !self.ids.is_empty() {
-            self.ids.clone()
-        } else if !self.id.is_empty() {
-            vec![self.id.clone()]
-        } else {
-            Vec::new()
+        let mut out: Vec<String> = Vec::with_capacity(self.ids.len() + 1);
+        for id in std::iter::once(&self.id).chain(&self.ids) {
+            if !id.is_empty() && !out.contains(id) {
+                out.push(id.clone());
+            }
         }
+        out
     }
 }
 
@@ -4246,6 +4250,44 @@ impl StorageChanged {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn audit_73_validation_rules() {
+        // A photo request with both `id` and `ids` asks for all of them, once.
+        let get = PhotoGet { id: "a".into(), ids: vec!["b".into(), "a".into(), "c".into()] };
+        assert_eq!(get.requested_ids(), ["a", "b", "c"]);
+        assert_eq!(PhotoGet { id: String::new(), ids: vec!["b".into()] }.requested_ids(), ["b"]);
+        assert!(PhotoGet { id: String::new(), ids: Vec::new() }.requested_ids().is_empty());
+
+        // Dialled numbers: pauses and waits are fine, control characters aren't.
+        assert!(CallDial { number: "+1 555 0100,,23#".into() }.is_valid());
+        assert!(CallDial { number: "555;1".into() }.is_valid());
+        assert!(!CallDial { number: "555\n0100".into() }.is_valid());
+
+        // `plugged` keeps only the documented values.
+        let battery = |plugged: &str| Battery {
+            level: 50,
+            charging: true,
+            plugged: Some(plugged.into()),
+            full_in: None,
+            cell_bars: None,
+            cell_type: None,
+            wifi_bars: None,
+        };
+        assert_eq!(battery("usb").sanitized().plugged.as_deref(), Some("usb"));
+        assert_eq!(battery("<b>dock</b>").sanitized().plugged, None);
+
+        // A wake target is a unicast adapter address.
+        assert!(parse_mac("aa:bb:cc:dd:ee:ff").is_some());
+        assert!(parse_mac("01:00:5e:00:00:01").is_none(), "multicast");
+        assert!(parse_mac("ff:ff:ff:ff:ff:ff").is_none(), "broadcast");
+
+        // An offered file's name is a plain file name.
+        let file = |name: &str| WatchFile { name: name.into(), size: 1, position: 0 };
+        assert!(file("Trip: day 1.mp4").is_valid());
+        assert!(!file("..").is_valid());
+        assert!(!file("a\u{7}b.mp4").is_valid());
+    }
+
     use super::*;
     use crate::Envelope;
 
