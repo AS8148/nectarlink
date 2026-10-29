@@ -348,7 +348,6 @@ object Elevated {
     /** Connects and starts the input helper (when set up; again after it stopped). */
     suspend fun start(): Boolean = withContext(Dispatchers.IO) {
         held = false
-        if (!paired() && !usesRoot()) return@withContext false
         // Paused for a banking app: debugging stays off until it's over
         // (BankingPause starts Elevated again then).
         if (BankingPause.isPaused(context)) {
@@ -362,6 +361,8 @@ object Elevated {
                 return@withLock true
             }
             if (!paired()) {
+                // No wireless debugging set up: a PC this phone is plugged into can start it.
+                if (startOverUsbLocked()) return@withLock true
                 _state.value = State.NotSetUp
                 return@withLock false
             }
@@ -383,6 +384,7 @@ object Elevated {
             }
             if (!connected) {
                 discardConnection()
+                if (startOverUsbLocked()) return@withLock true
                 _state.value = State.Waiting
                 return@withLock false
             }
@@ -635,6 +637,36 @@ object Elevated {
             }
         }
         return out.toString(Charsets.UTF_8.name())
+    }
+
+    /**
+     * Starts through a PC this phone is plugged into with USB debugging allowed
+     * (`docs/protocol/elevated-usb.md`), when Elevated isn't running. Called when
+     * a PC connects, so plugging in is enough.
+     */
+    suspend fun startOverUsb(): Boolean = withContext(Dispatchers.IO) {
+        if (held || running || BankingPause.isPaused(context)) return@withContext running
+        lock.withLock { running || startOverUsbLocked() }
+    }
+
+    /**
+     * Asks the PC this phone is plugged into to run the grants and start the
+     * helper over USB, then connects to it. The helper runs until the cable
+     * comes out (its socket then closes, see [connectSocketLocked]).
+     */
+    private suspend fun startOverUsbLocked(): Boolean {
+        val app = context.applicationContext as? app.nectarlink.android.NectarlinkApplication ?: return false
+        val token = ByteArray(24).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
+        val port = app.core.elevatedUsbStart(context.applicationInfo.sourceDir, token, grants()) ?: return false
+        return runCatching {
+            connectSocketLocked(port, token)
+            Log.i(TAG, "started over USB")
+            cancelRetry()
+            true
+        }.getOrElse {
+            Log.w(TAG, "the helper started over USB didn't answer", it)
+            false
+        }
     }
 
     /** Stops the helper and disconnects, and keeps it stopped until [start]. */

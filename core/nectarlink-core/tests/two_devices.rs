@@ -6442,3 +6442,23 @@ async fn notification_history_keeps_the_newest_thousand() {
     assert!(history.iter().all(|n| n.key.as_str() >= "app|0005"), "the oldest five are gone");
     phone.node.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn elevated_over_usb_is_refused_without_a_usb_connection() {
+    let mut pc = device("pc", DeviceKind::Desktop).await;
+    let mut phone = device("phone", DeviceKind::Phone).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let pc_id = pc.node.device_id();
+    let apk = "/data/app/~~a==/app.nectarlink-b==/base.apk".to_owned();
+    let token = "0123456789abcdef0123456789abcdef".to_owned();
+
+    // This PC doesn't watch adb, so it can't start anything over USB.
+    let refused = phone.node.elevated_usb_start(pc_id, apk.clone(), token.clone(), Vec::new()).await;
+    assert!(matches!(refused, Err(Error::Unsupported)), "{refused:?}");
+    // A request for anything but the app's own helper never leaves the phone.
+    let bad = phone.node.elevated_usb_start(pc_id, apk, token, vec!["reboot".into()]).await;
+    assert!(matches!(bad, Err(Error::Protocol(_))), "{bad:?}");
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}

@@ -15,6 +15,7 @@ mod config;
 mod contacts;
 pub mod continuity_camera;
 pub mod deck;
+pub(crate) mod elevated_usb;
 mod error;
 mod events;
 pub mod features;

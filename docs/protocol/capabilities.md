@@ -55,6 +55,7 @@ capability is missing.
 | `clip.share` | Sends the clipboard when the user taps "Send" | app update |
 | `clip.read.auto` | Sends clipboard changes automatically, in the background | Elevated |
 | `photos.read` | Announces new photos and screenshots, lists albums and items, serves thumbnails, and sends files on request ([photos](photos.md)) | photos permission |
+| `elevated.usb` | Starts a USB-connected phone's Elevated helper over adb ([Elevated over USB](elevated-usb.md)) | adb on the PC |
 | `mirror.capture` | Streams its screen (with the system's capture prompt at Basic; [mirroring](mirror.md)) | app update |
 | `mirror.input` | Accepts touch, key and scroll input while mirrored | Assist |
 | `mirror.virtual_display` | Runs apps on displays of their own, shown in windows on the PC ([mirroring](mirror.md)) | Elevated, Android 11+ |

@@ -8,6 +8,11 @@ change things that need a step from you, and its notes say so.
 
 ### New
 
+- **Elevated over USB.** Plug the phone into the PC with USB debugging
+  allowed and Elevated starts by itself, without setting up Wireless
+  debugging. It runs while the cable is in. The PC only starts NectarLink's
+  own helper, on the phone that asked
+  ([#70](https://github.com/thtbee/nectarlink/issues/70)).
 - **The PC app on Linux**, for Ubuntu 24.04 or newer, Debian 13, Fedora 40
   or newer and other distributions from 2024 on, as a `.deb`, an `.rpm`,
   an AppImage or a tarball. It does what the Windows app does: notifications with

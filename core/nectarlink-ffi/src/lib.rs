@@ -3375,6 +3375,20 @@ impl NectarlinkNode {
         self.run(async move { Ok(node.unpair(id).await?) }).await
     }
 
+    /// Asks a PC this phone is plugged into over USB to start this phone's
+    /// Elevated helper (`docs/protocol/elevated-usb.md`); returns its port.
+    pub async fn elevated_usb_start(
+        &self,
+        pc_id: String,
+        apk: String,
+        token: String,
+        grants: Vec<String>,
+    ) -> Result<u16> {
+        let id = parse_id(&pc_id)?;
+        let node = self.node.clone();
+        self.run(async move { Ok(node.elevated_usb_start(id, apk, token, grants).await?) }).await
+    }
+
     pub async fn ring(&self, id: String, on: bool) -> Result<()> {
         let id = parse_id(&id)?;
         let node = self.node.clone();
