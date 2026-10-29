@@ -317,7 +317,9 @@ fn show_ringing(device: DeviceId, call: &CallState, silenced: bool) {
         image: None,
         actions,
         reply: None,
-        silent: silenced,
+        // With Phone as speaker on, this PC's sound goes to the phone, so a
+        // ring here would only play again on a phone that's ringing already.
+        silent: silenced || crate::pc_audio_stream::is_enabled(),
         progress: None,
         call: true,
     });
