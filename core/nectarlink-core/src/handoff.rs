@@ -34,7 +34,7 @@ const SAFE_HANDOFF_EXTENSIONS: &[&str] = &[
     // Documents & text
     "pdf", "txt", "md", "rtf", "csv", "tsv", "json", "xml", "yaml", "yml", "doc", "docx", "xls", "xlsx",
     "ppt", "pptx", "odt", "ods", "odp", "epub", // Images
-    "png", "jpg", "jpeg", "webp", "gif", "bmp", "svg", // Audio & video
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", // Audio & video (not SVG: it can carry script)
     "mp3", "m4a", "wav", "flac", "ogg", "mp4", "mkv", "mov", "webm",
 ];
 
@@ -373,8 +373,11 @@ fn classify_link_token(url: &str) -> Option<HandoffLink> {
     })
 }
 
+/// The host of a link, without any `user:password@` in front of it: in
+/// `https://maps.google.com@example.com/` the host is `example.com`.
 fn link_host(url: &str) -> &str {
-    url.split("://").nth(1).unwrap_or(url).split(['/', '?', '#']).next().unwrap_or("")
+    let authority = url.split("://").nth(1).unwrap_or(url).split(['/', '?', '#']).next().unwrap_or("");
+    authority.rsplit('@').next().unwrap_or(authority)
 }
 
 fn is_map_url(host: &str, rest_after_scheme: &str) -> bool {
@@ -656,9 +659,17 @@ mod tests {
             "app.apk",
             "README",
             ".bashrc",
+            "drawing.svg",
         ] {
             assert!(!is_safe_handoff_document(unsafe_name), "{unsafe_name} must be rejected");
         }
+    }
+
+    #[test]
+    fn a_link_host_never_includes_user_info() {
+        assert_eq!(link_host("https://maps.google.com@example.com/place"), "example.com");
+        assert_eq!(link_host("https://user:pass@www.youtube.com/watch?v=1"), "www.youtube.com");
+        assert_eq!(link_host("https://www.youtube.com/watch?v=1"), "www.youtube.com");
     }
 
     #[test]
