@@ -344,8 +344,29 @@ pub struct DeviceInfo {
     pub install_id: Option<String>,
 }
 
+/// A device's name or model, at most, in characters.
+pub const MAX_DEVICE_NAME_CHARS: usize = 64;
+/// A device's OS name or version, at most, in characters.
+pub const MAX_DEVICE_OS_CHARS: usize = 32;
+
+/// `text` without control characters or the invisible marks that reorder
+/// text (a name could otherwise show reversed or disguised), cut to
+/// `max_chars` and trimmed.
+fn clean_device_text(text: &str, max_chars: usize) -> String {
+    let is_direction_mark = |c: char| matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+    let clean: String =
+        text.chars().filter(|c| !c.is_control() && !is_direction_mark(*c)).take(max_chars).collect();
+    clean.trim().to_owned()
+}
+
 impl DeviceInfo {
+    /// What another device says about itself, made safe to store and show.
     pub fn sanitized(mut self) -> Self {
+        self.name = clean_device_text(&self.name, MAX_DEVICE_NAME_CHARS);
+        self.os = clean_device_text(&self.os, MAX_DEVICE_OS_CHARS);
+        self.os_ver = clean_device_text(&self.os_ver, MAX_DEVICE_OS_CHARS);
+        self.model =
+            self.model.map(|m| clean_device_text(&m, MAX_DEVICE_NAME_CHARS)).filter(|m| !m.is_empty());
         self.screen = self.screen.and_then(ScreenShape::sanitized);
         self.install_id = self.install_id.filter(|id| is_valid_install_id(id));
         self
@@ -4158,6 +4179,24 @@ mod tests {
             screen: None,
             install_id: None,
         }
+    }
+
+    #[test]
+    fn device_names_are_cleaned_and_capped() {
+        assert_eq!(info().sanitized(), info(), "ordinary info is unchanged");
+
+        let mut dev = info();
+        // A right-to-left override would show "Pixel\u{202E}gnp.exe" as "Pixelexe.png".
+        dev.name = " Pixel\u{202E}gnp.exe\u{0007}\n ".into();
+        dev.os_ver = "1".repeat(100);
+        dev.model = Some("\u{2066}\u{2069}".into());
+        let clean = dev.sanitized();
+        assert_eq!(clean.name, "Pixelgnp.exe");
+        assert_eq!(clean.os_ver.chars().count(), MAX_DEVICE_OS_CHARS);
+        assert_eq!(clean.model, None);
+
+        let long = DeviceInfo { name: "é".repeat(200), ..info() }.sanitized();
+        assert_eq!(long.name.chars().count(), MAX_DEVICE_NAME_CHARS);
     }
 
     #[test]
