@@ -796,6 +796,8 @@ impl Store {
     }
 
     /// Removes a device. Returns whether it existed.
+    /// The device alone; the app unpairs with [`Store::remove_peer_with_queue`].
+    #[cfg(test)]
     pub fn remove_peer(&self, id: &DeviceId) -> Result<bool> {
         let peer_str = id.to_string();
         self.with(|c| {
@@ -806,6 +808,39 @@ impl Store {
             self.toggle_cache().remove(id);
             Ok(removed)
         })
+    }
+
+    /// Removes a device and its send queue together, so unpairing never drops
+    /// the queue but keeps the device (or the reverse). Returns whether it
+    /// existed and the queue items that went with it.
+    pub fn remove_peer_with_queue(&self, id: &DeviceId) -> Result<(bool, Vec<(String, QueuePayload)>)> {
+        let peer_str = id.to_string();
+        let (existed, rows) = self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            let rows: Vec<(String, String)> = {
+                let mut stmt =
+                    tx.prepare_cached("SELECT id, payload_json FROM send_queue WHERE peer_id = ?1")?;
+                stmt.query_map([&peer_str], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            tx.execute("DELETE FROM send_queue WHERE peer_id = ?1", [&peer_str])?;
+            tx.execute("DELETE FROM chat_messages WHERE peer = ?1", [&peer_str])?;
+            tx.execute("DELETE FROM chat_threads WHERE peer = ?1", [&peer_str])?;
+            let existed = tx.execute("DELETE FROM peers WHERE id = ?1", [id.as_bytes().as_slice()])? > 0;
+            tx.commit()?;
+            Ok((existed, rows))
+        })?;
+        // Its toggles went with it.
+        self.toggle_cache().remove(id);
+        let dropped: Vec<(String, QueuePayload)> = rows
+            .into_iter()
+            .filter_map(|(id, json)| serde_json::from_str::<QueuePayload>(&json).ok().map(|p| (id, p)))
+            .collect();
+        // After the commit: files are only removed once nothing refers to them.
+        for (id, payload) in &dropped {
+            cleanup_staged_payload(self.data_dir.as_deref(), id, Some(payload));
+        }
+        Ok((existed, dropped))
     }
 
     pub fn get_peer(&self, id: &DeviceId) -> Result<Option<PeerRecord>> {
@@ -1983,27 +2018,6 @@ impl Store {
             cleanup_staged_payload(self.data_dir.as_deref(), id, Some(payload));
         }
         Ok(removed)
-    }
-
-    /// Deletes all queue items (`'waiting'`, `'sending'`, `'failed'`, `'expired'`) for `peer`,
-    /// cleans up their staged files, and returns their `(id, payload)` pairs.
-    pub fn drop_all_queue_for_peer(&self, peer: &DeviceId) -> Result<Vec<(String, QueuePayload)>> {
-        let peer_str = peer.to_string();
-        let dropped: Vec<(String, QueuePayload)> = self.with(|c| {
-            let mut stmt = c.prepare_cached("SELECT id, payload_json FROM send_queue WHERE peer_id = ?1")?;
-            let rows: Vec<(String, String)> = stmt
-                .query_map([&peer_str], |r| Ok((r.get(0)?, r.get(1)?)))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            c.execute("DELETE FROM send_queue WHERE peer_id = ?1", [&peer_str])?;
-            Ok(rows
-                .into_iter()
-                .filter_map(|(id, json)| serde_json::from_str::<QueuePayload>(&json).ok().map(|p| (id, p)))
-                .collect())
-        })?;
-        for (id, payload) in &dropped {
-            cleanup_staged_payload(self.data_dir.as_deref(), id, Some(payload));
-        }
-        Ok(dropped)
     }
 }
 
@@ -3683,10 +3697,13 @@ mod tests {
         assert_eq!(store.expire_stale_queue_items(now_ms + 200).unwrap(), 1);
         assert!(!dir.path().join("queue_staging").join("q-expire").exists());
 
-        // Terminal path 5: Unpair (drop_all_queue_for_peer)
-        store.drop_all_queue_for_peer(&peer).unwrap();
+        // Terminal path 5: Unpair, which removes the device and its queue together.
+        let (existed, dropped) = store.remove_peer_with_queue(&peer).unwrap();
+        assert!(existed);
+        assert!(dropped.iter().any(|(id, _)| id == "q-unpair"));
         assert!(!dir.path().join("queue_staging").join("q-unpair").exists());
         assert!(store.list_send_queue(Some(&peer)).unwrap().is_empty());
+        assert!(store.get_peer(&peer).unwrap().is_none());
     }
 
     #[test]

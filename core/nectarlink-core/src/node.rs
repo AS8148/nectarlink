@@ -434,7 +434,8 @@ impl Shared {
 
     pub(crate) fn cancel_queue_or_transfer(self: &Arc<Self>, id: &str) -> Result<bool> {
         self.localsend.resolve_transfer_approval(id, false);
-        let removed_queue = self.store.remove_queue_item(id)?;
+        // The live transfer is cancelled first, so a database error can't
+        // leave it running.
         let target = {
             let mut map = lock(&self.transfers);
             if let Some(ctrl) = map.get_mut(id) {
@@ -448,6 +449,15 @@ impl Shared {
                 }
                 Some((peer, direction, paused, running))
             } else {
+                None
+            }
+        };
+        let removed_queue = match self.store.remove_queue_item(id) {
+            Ok(removed) => removed,
+            // Only an error when there was nothing live to cancel either.
+            Err(e) if target.is_none() => return Err(e),
+            Err(e) => {
+                tracing::warn!(error = %e, %id, "can't remove a cancelled send from the queue");
                 None
             }
         };
@@ -1015,12 +1025,11 @@ impl Shared {
         for id in active_transfer_ids {
             lock(&self.transfers).remove(&id);
         }
-        let dropped_queue = self.store.drop_all_queue_for_peer(peer).unwrap_or_default();
+        // One transaction: an error leaves both the device and its queue.
+        let (existed, dropped_queue) = self.store.remove_peer_with_queue(peer)?;
         for (id, _) in &dropped_queue {
             transfer::cleanup_staging_id(self, id);
         }
-
-        let existed = self.store.remove_peer(peer)?;
         if let Some(sup) = lock(&self.supervisors).remove(peer) {
             sup.cancel.cancel();
         }
