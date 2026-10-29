@@ -2043,18 +2043,20 @@ const fn bytes_from_len(len: usize) -> u64 {
 }
 
 fn cleanup_staged_payload(data_dir: Option<&Path>, id: &str, payload: Option<&QueuePayload>) {
-    if let Some(dir) = data_dir {
-        let _ = std::fs::remove_dir_all(dir.join("queue_staging").join(id));
+    // Staged copies live in `<data_dir>/queue_staging/<id>/` and nowhere else,
+    // so nothing outside it is deleted, whatever a (damaged) row says.
+    let Some(dir) = data_dir else { return };
+    if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\']) {
+        return;
     }
+    let stage = dir.join("queue_staging").join(id);
+    let _ = std::fs::remove_dir_all(&stage);
     if let Some(p) = payload {
         for spec in p.files_vec() {
-            if spec.staged {
+            let inside = spec.path.starts_with(&stage)
+                && !spec.path.components().any(|c| matches!(c, std::path::Component::ParentDir));
+            if spec.staged && inside {
                 let _ = std::fs::remove_file(&spec.path);
-                if let Some(parent) = spec.path.parent()
-                    && parent.file_name().and_then(|n| n.to_str()) == Some(id)
-                {
-                    let _ = std::fs::remove_dir_all(parent);
-                }
             }
         }
     }
@@ -3766,6 +3768,36 @@ mod tests {
         assert!(!dir.path().join("queue_staging").join("q-unpair").exists());
         assert!(store.list_send_queue(Some(&peer)).unwrap().is_empty());
         assert!(store.get_peer(&peer).unwrap().is_none());
+    }
+
+    #[test]
+    fn staging_cleanup_never_deletes_outside_the_items_staging_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("precious.txt");
+        std::fs::write(&outside, b"keep").unwrap();
+        let staged = dir.path().join("queue_staging").join("q1").join("a.txt");
+        std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        std::fs::write(&staged, b"x").unwrap();
+        let spec = |path: PathBuf| QueuedFileSpec {
+            path,
+            name: "a.txt".into(),
+            folder: None,
+            size: 1,
+            mtime_ms: 0,
+            staged: true,
+        };
+        // A damaged row: a staged file outside staging, and a path escaping it.
+        let payload = QueuePayload::Files {
+            files: vec![
+                spec(outside.clone()),
+                spec(dir.path().join("queue_staging").join("q1").join("..").join("..").join("precious.txt")),
+            ],
+        };
+        cleanup_staged_payload(Some(dir.path()), "q1", Some(&payload));
+        assert!(outside.exists());
+        assert!(!staged.exists(), "the item's own staging folder goes");
+        cleanup_staged_payload(Some(dir.path()), "..", None);
+        assert!(dir.path().join("queue_staging").exists(), "an id can't point at the parent");
     }
 
     #[test]
