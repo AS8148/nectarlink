@@ -395,17 +395,17 @@ mod imp {
     pub fn relative_path_under_root(root_path: &Path, full_path: &Path) -> Option<String> {
         let root_norm = normalize_win_path(root_path);
         let full_norm = normalize_win_path(full_path);
-        let root_lower = root_norm.to_lowercase();
-        let full_lower = full_norm.to_lowercase();
-        if full_lower == root_lower {
-            return Some(String::new());
-        }
-        let prefix = format!("{root_lower}\\");
-        if !full_lower.starts_with(&prefix) {
+        // Compared name by name, ignoring case. (Cutting the path at the length
+        // of a lowercased copy breaks on letters whose lowercase is longer,
+        // such as the Turkish "İ" in a phone's name.)
+        let root_parts: Vec<&str> = root_norm.split('\\').filter(|s| !s.is_empty()).collect();
+        let full_parts: Vec<&str> = full_norm.split('\\').filter(|s| !s.is_empty()).collect();
+        if full_parts.len() < root_parts.len()
+            || !root_parts.iter().zip(&full_parts).all(|(a, b)| a.to_lowercase() == b.to_lowercase())
+        {
             return None;
         }
-        let rel = &full_norm[prefix.len()..];
-        let parts: Vec<&str> = rel.split('\\').filter(|s| !s.is_empty()).collect();
+        let parts = &full_parts[root_parts.len()..];
         if parts.iter().any(|p| *p == "." || *p == "..") {
             return None;
         }
@@ -1371,6 +1371,19 @@ mod imp {
             assert_eq!(
                 relative_path_under_root(root, Path::new(r"C:\Users\alice\Nectarlink\Pixel 9 Pro\DCIM")),
                 None
+            );
+            // "İ" lowercases to two characters: the path still splits in the right place.
+            let turkish = Path::new(r"C:\Users\alice\Nectarlink\İpek's Phone");
+            assert_eq!(
+                relative_path_under_root(
+                    turkish,
+                    Path::new(r"C:\Users\alice\Nectarlink\İpek's Phone\DCIM\a.jpg")
+                ),
+                Some("DCIM/a.jpg".into())
+            );
+            assert_eq!(
+                relative_path_under_root(root, Path::new(r"c:\users\ALICE\nectarlink\pixel 9\Download")),
+                Some("Download".into())
             );
 
             assert_eq!(sanitize_folder_name("Pixel 9 (test)"), "Pixel 9 (test)");
