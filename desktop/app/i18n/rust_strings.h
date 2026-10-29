@@ -439,6 +439,9 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Setup", "Setup stopped with code %1."), // desktop/app/src/setup.rs
     QT_TRANSLATE_NOOP("Setup", "The uninstaller is missing. Reinstall NectarLink, then uninstall it."), // desktop/app/src/setup.rs
     QT_TRANSLATE_NOOP("Setup", "Uninstall stopped with code %1."), // desktop/app/src/setup.rs
+    QT_TRANSLATE_NOOP("Storage", "%1's files aren't shared with this PC"), // desktop/app/src/storage.rs
+    QT_TRANSLATE_NOOP("Storage", "On the phone, allow All files access for NectarLink."), // desktop/app/src/storage.rs
+    QT_TRANSLATE_NOOP("Storage", "On the phone, turn on Browse this phone's storage in File Explorer in NectarLink."), // desktop/app/src/storage.rs
     QT_TRANSLATE_NOOP("Timeline", "App window #%1"), // desktop/app/src/i18n.rs
     QT_TRANSLATE_NOOP("Timeline", "Clip (removed from clipboard history)"), // desktop/app/src/bridge/timeline.rs
     QT_TRANSLATE_NOOP("Timeline", "Copied image"), // desktop/app/src/bridge/timeline.rs
