@@ -2173,6 +2173,10 @@ fn prune_chat_conn(c: &Connection, peer_str: &str, thread_id: &str) -> rusqlite:
         .flatten();
     if let Some(latest_ms) = max_updated {
         let retention_ms = CHAT_RETENTION_SECS * 1000;
+        // Never later than now: one message stamped in the future (a phone
+        // whose clock is wrong) would otherwise age out every other thread.
+        let now_ms = crate::now_unix().saturating_mul(1000);
+        let latest_ms = latest_ms.min(now_ms);
         if latest_ms > retention_ms {
             let cutoff_ms = latest_ms - retention_ms;
             c.execute(
@@ -3307,6 +3311,46 @@ mod tests {
         store.upsert_peer(&DeviceId([0x03; 32]), &bad, 300).unwrap();
         store.upsert_peer(&DeviceId([0x04; 32]), &bad, 400).unwrap();
         assert_eq!(store.list_peers().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_chat_stamped_in_the_future_does_not_age_out_the_others() {
+        use nectarlink_protocol::messages::{NotificationChatMessage, NotificationConversation};
+        let store = Store::in_memory().unwrap();
+        let peer = DeviceId([7u8; 32]);
+        let now_ms = crate::now_unix() * 1000;
+        let chat = |title: &str, time: i64| Notification {
+            key: format!("chat|{title}"),
+            app: "com.whatsapp".into(),
+            app_name: "WhatsApp".into(),
+            title: Some(title.into()),
+            text: Some("hi".into()),
+            sub: None,
+            when: time,
+            actions: Vec::new(),
+            silent: false,
+            icon: None,
+            image: None,
+            live: None,
+            conversation: Some(NotificationConversation {
+                v: 1,
+                title: title.into(),
+                group: false,
+                avatar: None,
+                messages: vec![NotificationChatMessage {
+                    sender: Some(title.into()),
+                    text: "hi".into(),
+                    time,
+                    self_sent: false,
+                    avatar: None,
+                }],
+            }),
+        };
+        store.upsert_chat_notification(&peer, &chat("Maya", now_ms - 86_400_000), None, false).unwrap();
+        // A phone with its clock a year ahead.
+        store.upsert_chat_notification(&peer, &chat("Sam", now_ms + 365 * 86_400_000), None, false).unwrap();
+        let titles: Vec<String> = store.chat_threads(&peer).unwrap().into_iter().map(|t| t.title).collect();
+        assert!(titles.contains(&"Maya".to_owned()), "{titles:?}");
     }
 
     #[test]
