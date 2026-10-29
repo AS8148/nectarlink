@@ -1667,19 +1667,21 @@ impl Store {
     /// with the appropriate per-type expiry message and deletes any staged files.
     /// Returns how many items expired.
     pub fn expire_stale_queue_items(&self, now_ms: i64) -> Result<usize> {
-        let expired: Vec<(String, Option<QueuePayload>)> = self.with(|c| {
+        // Staged files stay, as for a failed item, so Retry still has them;
+        // clearing finished items removes them.
+        let expired: Vec<String> = self.with(|c| {
             let mut stmt = c.prepare_cached(
-                "SELECT id, kind, payload_json FROM send_queue WHERE status = 'waiting' AND expires_at <= ?1",
+                "SELECT id, kind FROM send_queue WHERE status = 'waiting' AND expires_at <= ?1",
             )?;
-            let stale: Vec<(String, String, String)> = stmt
-                .query_map([now_ms], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            let stale: Vec<(String, String)> = stmt
+                .query_map([now_ms], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             if stale.is_empty() {
                 return Ok(Vec::new());
             }
             let tx = c.unchecked_transaction()?;
             let mut out = Vec::with_capacity(stale.len());
-            for (id, kind_str, payload_json) in stale {
+            for (id, kind_str) in stale {
                 let kind = QueueKind::from_str_opt(&kind_str).unwrap_or(QueueKind::Files);
                 let msg = kind.expiry_error_message();
                 let updated = tx.execute(
@@ -1689,16 +1691,12 @@ impl Store {
                     params![id, msg],
                 )?;
                 if updated > 0 {
-                    let payload = serde_json::from_str::<QueuePayload>(&payload_json).ok();
-                    out.push((id, payload));
+                    out.push(id);
                 }
             }
             tx.commit()?;
             Ok(out)
         })?;
-        for (id, payload) in &expired {
-            cleanup_staged_payload(self.data_dir.as_deref(), id, payload.as_ref());
-        }
         Ok(expired.len())
     }
 
@@ -3695,6 +3693,11 @@ mod tests {
             })
             .unwrap();
         assert_eq!(store.expire_stale_queue_items(now_ms + 200).unwrap(), 1);
+        assert!(
+            dir.path().join("queue_staging").join("q-expire").exists(),
+            "an expired item keeps its staged file, so Retry still works"
+        );
+        store.clear_finished_queue_items(Some(&peer)).unwrap();
         assert!(!dir.path().join("queue_staging").join("q-expire").exists());
 
         // Terminal path 5: Unpair, which removes the device and its queue together.
