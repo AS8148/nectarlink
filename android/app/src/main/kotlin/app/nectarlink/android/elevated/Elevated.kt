@@ -171,8 +171,15 @@ object Elevated {
     private var retryJob: Job? = null
     @Volatile private var retryAttempt = 0
 
+    /**
+     * Stopped on purpose (the connection service was turned off): retries and
+     * network changes leave it stopped until something calls [start] again.
+     */
+    @Volatile private var held = false
+
     /** The network changed: try now, and keep trying from a short delay. */
     fun onNetworkChanged() {
+        if (held) return
         retryAttempt = 0
         scope.launch { start() }
     }
@@ -191,7 +198,7 @@ object Elevated {
 
     /** Tries again later, while it can still work: set up, not running, on Wi-Fi (or through root). */
     private fun scheduleRetry() {
-        if (!(paired() || usesRoot()) || running || BankingPause.isPaused(context)) return
+        if (held || !(paired() || usesRoot()) || running || BankingPause.isPaused(context)) return
         if (!usesRoot() && !onWifi()) return
         val wait = RETRY_MS[retryAttempt.coerceAtMost(RETRY_MS.lastIndex)]
         retryAttempt++
@@ -200,7 +207,7 @@ object Elevated {
             delay(wait)
             // So the attempt can schedule the next one without cancelling itself.
             retryJob = null
-            start()
+            if (!held) start()
         }
     }
 
@@ -283,6 +290,7 @@ object Elevated {
 
     /** Connects and starts the input helper (when set up; again after it stopped). */
     suspend fun start(): Boolean = withContext(Dispatchers.IO) {
+        held = false
         if (!paired() && !usesRoot()) return@withContext false
         // Paused for a banking app: debugging stays off until it's over
         // (BankingPause starts Elevated again then).
@@ -572,8 +580,12 @@ object Elevated {
         return out.toString(Charsets.UTF_8.name())
     }
 
-    /** Stops the helper and disconnects. */
-    suspend fun stop() = withContext(Dispatchers.IO) { lock.withLock { stopLocked() } }
+    /** Stops the helper and disconnects, and keeps it stopped until [start]. */
+    suspend fun stop() = withContext(Dispatchers.IO) {
+        held = true
+        cancelRetry()
+        lock.withLock { stopLocked() }
+    }
 
     private fun stopLocked() {
         screenOffRequested = false
