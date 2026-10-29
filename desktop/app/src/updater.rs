@@ -221,29 +221,21 @@ fn latest() -> Result<Option<Update>, String> {
 const INSTALLER_SUFFIX: &str =
     if cfg!(target_arch = "aarch64") { "-arm64-setup.exe" } else { "-x64-setup.exe" };
 
+// Each kind of install only takes its own kind of file: a .deb installed
+// under a running AppImage, say, leaves the AppImage as old as it was (and
+// the update is offered again), and a tarball beside a package is a second
+// copy in /opt.
 #[cfg(target_os = "linux")]
-const APPIMAGE_SUFFIXES: &[&str] = if cfg!(target_arch = "aarch64") {
-    &["-aarch64.AppImage", "_arm64.deb", "-linux-aarch64.tar.gz"]
-} else {
-    &["-x86_64.AppImage", "_amd64.deb", "-linux-x86_64.tar.gz"]
-};
+const APPIMAGE_SUFFIXES: &[&str] =
+    if cfg!(target_arch = "aarch64") { &["-aarch64.AppImage"] } else { &["-x86_64.AppImage"] };
 
 #[cfg(target_os = "linux")]
-const DEB_SUFFIXES: &[&str] = if cfg!(target_arch = "aarch64") {
-    &["_arm64.deb", "-aarch64.AppImage", "-linux-aarch64.tar.gz"]
-} else {
-    &["_amd64.deb", "-x86_64.AppImage", "-linux-x86_64.tar.gz"]
-};
+const DEB_SUFFIXES: &[&str] = if cfg!(target_arch = "aarch64") { &["_arm64.deb"] } else { &["_amd64.deb"] };
 
 #[cfg(target_os = "linux")]
-const TARBALL_SUFFIXES: &[&str] = if cfg!(target_arch = "aarch64") {
-    &["-linux-aarch64.tar.gz", "_arm64.deb", "-aarch64.AppImage"]
-} else {
-    &["-linux-x86_64.tar.gz", "_amd64.deb", "-x86_64.AppImage"]
-};
+const TARBALL_SUFFIXES: &[&str] =
+    if cfg!(target_arch = "aarch64") { &["-linux-aarch64.tar.gz"] } else { &["-linux-x86_64.tar.gz"] };
 
-// An RPM install only takes an RPM: a tarball would land in /opt as a
-// second copy beside the package.
 #[cfg(target_os = "linux")]
 const RPM_SUFFIXES: &[&str] =
     if cfg!(target_arch = "aarch64") { &[".aarch64.rpm"] } else { &[".x86_64.rpm"] };
@@ -276,9 +268,7 @@ fn detect_linux_install_kind() -> LinuxInstallKind {
     if rpm_installed() {
         return LinuxInstallKind::Rpm;
     }
-    if Path::new("/var/lib/dpkg/status").is_file() {
-        return LinuxInstallKind::Deb;
-    }
+    // No package owns this copy: it came from the tarball, wherever it was unpacked.
     LinuxInstallKind::Tarball
 }
 
@@ -1336,6 +1326,10 @@ mod tests {
             let mut no_rpm = release("v9.0.0");
             no_rpm.assets.retain(|a| !a.name.ends_with(".rpm"));
             assert!(newer_release_linux_kind(no_rpm, "0.0.1", LinuxInstallKind::Rpm).is_none());
+            // Nor does an AppImage take a .deb: it would stay as old as it was.
+            let mut no_appimage = release("v9.0.0");
+            no_appimage.assets.retain(|a| !a.name.ends_with(".AppImage"));
+            assert!(newer_release_linux_kind(no_appimage, "0.0.1", LinuxInstallKind::AppImage).is_none());
         }
     }
 
