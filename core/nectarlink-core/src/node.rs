@@ -1021,6 +1021,12 @@ impl Shared {
         self.toggles.remove_peer(peer);
         self.deck.remove_peer(peer);
         self.stop_webcam(peer);
+        // The session was removed above, so `on_session_end` won't clear these:
+        // a one-time "show my screen" must not outlive the pairing.
+        lock(&self.pc_mirror_sessions).remove(peer);
+        lock(&self.watch_offers).remove(peer);
+        self.stop_mic(peer);
+        self.stop_showing_all(peer);
         if !dropped_queue.is_empty() {
             self.emit(NodeEvent::QueueChanged);
             if dropped_count > 0 {
@@ -1050,6 +1056,12 @@ impl Shared {
         if !self.is_connection_allowed(&conn) {
             tracing::debug!(peer = %peer.short(), "refusing session on non-LAN path while away_mode is off");
             conn.close(VarInt::from_u32(CLOSE_NORMAL), b"away mode disabled");
+            return None;
+        }
+        // Unpaired while the handshake ran (both sides check before it).
+        if !self.store.is_paired(&peer).unwrap_or(false) {
+            tracing::debug!(peer = %peer.short(), "refusing session: no longer paired");
+            conn.close(VarInt::from_u32(ErrorCode::Unpaired.close_code()), b"unpaired");
             return None;
         }
         // Either side may have dialed: while the user has reconnecting off,

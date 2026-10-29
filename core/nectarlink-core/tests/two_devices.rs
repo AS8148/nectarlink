@@ -6374,3 +6374,42 @@ async fn a_reinstalled_phone_replaces_its_old_pairing() {
     pc.node.shutdown().await;
     new.node.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_time_screen_consent_ends_with_the_pairing() {
+    use nectarlink_core::{MIRROR_CAPTURE, MIRROR_INPUT, MIRROR_SCREEN, MirrorStart};
+
+    let mut pc = device_with("Desktop", DeviceKind::Desktop, &[MIRROR_CAPTURE, MIRROR_INPUT]).await;
+    let mut phone = device_with("Pixel", DeviceKind::Phone, &[nectarlink_core::MIRROR_VIEW]).await;
+    pair_qr(&mut pc, &mut phone).await;
+    let (pc_id, phone_id) = (pc.node.device_id(), phone.node.device_id());
+    let options = MirrorStart {
+        max_size: 1280,
+        fps: 30,
+        bitrate: 4_000_000,
+        audio: false,
+        session: MIRROR_SCREEN,
+        app: None,
+        stay_awake: false,
+        screen_off: false,
+        watch: None,
+    };
+
+    // "Allow once" lets the phone view the PC's screen during this connection
+    // (granted here before the phone starts, so nothing else clears it).
+    pc.node.set_pc_mirror_session_allowed(phone_id, true);
+
+    // After unpairing and pairing again, the phone has to be allowed again.
+    with_timeout("unpair", pc.node.unpair(phone_id)).await.unwrap();
+    wait_for(&mut phone, "phone forgets the PC", |e| match e {
+        NodeEvent::DeviceRemoved(device) if *device == pc_id => Some(()),
+        _ => None,
+    })
+    .await;
+    pair_qr(&mut pc, &mut phone).await;
+    let again = phone.node.mirror_start(pc_id, options).await;
+    assert!(matches!(again, Err(Error::Denied)), "expected Denied after re-pairing, got {again:?}");
+
+    pc.node.shutdown().await;
+    phone.node.shutdown().await;
+}
