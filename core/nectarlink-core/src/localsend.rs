@@ -77,6 +77,10 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(150);
 const UPLOAD_CHUNK: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const MAX_JSON_BODY_BYTES: usize = 4 * 1024 * 1024;
+/// An accepted upload session with no upload for this long is dropped.
+const SESSION_IDLE: Duration = Duration::from_secs(30 * 60);
+/// Connections served at once; more wait in the OS backlog.
+const MAX_CONNECTIONS: usize = 64;
 
 /// A LocalSend device discovered on the local network.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,6 +232,8 @@ struct IncomingFileSpec {
     sha256: Option<String>,
     part_path: PathBuf,
     uploaded: bool,
+    /// An upload of this file is under way (a second one is refused).
+    uploading: bool,
 }
 
 struct UploadSession {
@@ -239,6 +245,10 @@ struct UploadSession {
     saved_items: Vec<PathBuf>,
     cancel: CancellationToken,
     last_progress: Instant,
+    /// The last upload request or progress, for expiring idle sessions.
+    last_activity: Instant,
+    /// The sender's address; only it may cancel the session.
+    peer_ip: std::net::IpAddr,
 }
 
 struct RunningState {
@@ -291,7 +301,11 @@ impl LocalSendState {
                 let id = generate_self_signed_identity()?;
                 stored.cert_der_hex = data_encoding::HEXLOWER.encode(&id.cert_der);
                 stored.key_pkcs8_hex = data_encoding::HEXLOWER.encode(&id.key_pkcs8);
-                let _ = save_stored_state(data_dir, &*protector, &stored);
+                if let Err(e) = save_stored_state(data_dir, &*protector, &stored) {
+                    // Runs anyway; the next start makes a new identity, which
+                    // LocalSend peers see as a new device.
+                    tracing::warn!(error = %e, "can't save the LocalSend identity");
+                }
                 id
             }
         };
@@ -333,13 +347,14 @@ impl LocalSendState {
     }
 
     pub fn set_enabled(&self, shared: &Arc<Shared>, enabled: bool) -> Result<()> {
-        let prev = self.enabled.swap(enabled, Ordering::SeqCst);
         let stored = StoredLocalSendState {
             enabled,
             cert_der_hex: data_encoding::HEXLOWER.encode(&self.identity.cert_der),
             key_pkcs8_hex: data_encoding::HEXLOWER.encode(&self.identity.key_pkcs8),
         };
+        // Saved first, so memory never disagrees with disk.
         save_stored_state(&self.data_dir, &*self.protector, &stored)?;
+        let prev = self.enabled.swap(enabled, Ordering::SeqCst);
 
         if enabled && !prev {
             self.start(shared);
@@ -377,6 +392,9 @@ impl LocalSendState {
         }
         let changed = {
             let mut map = self.peers.lock().unwrap_or_else(|e| e.into_inner());
+            if downgrades(map.get(&peer.id), &peer) {
+                return false;
+            }
             map.insert(peer.id, peer.clone()).as_ref() != Some(&peer)
         };
         if changed {
@@ -459,7 +477,15 @@ impl LocalSendState {
             let tcp_cancel = cancel.child_token();
             tokio::spawn(async move {
                 let Ok(listener) = TcpListener::from_std(std_listener) else { return };
+                let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
                 loop {
+                    let slot = tokio::select! {
+                        _ = tcp_cancel.cancelled() => return,
+                        slot = slots.clone().acquire_owned() => match slot {
+                            Ok(slot) => slot,
+                            Err(_) => return,
+                        },
+                    };
                     let accepted = tokio::select! {
                         _ = tcp_cancel.cancelled() => return,
                         res = listener.accept() => res,
@@ -469,6 +495,7 @@ impl LocalSendState {
                     let conn_cancel = tcp_cancel.child_token();
                     tokio::spawn(async move {
                         handle_incoming_connection(shared, stream, remote_addr, conn_cancel).await;
+                        drop(slot);
                     });
                 }
             });
@@ -551,12 +578,75 @@ impl LocalSendState {
         for (_, tx) in self.pending_approvals.lock().unwrap_or_else(|e| e.into_inner()).drain() {
             let _ = tx.send(false);
         }
-        for (_, session) in self.sessions.lock().unwrap_or_else(|e| e.into_inner()).drain() {
-            let s = session.lock().unwrap_or_else(|e| e.into_inner());
-            s.cancel.cancel();
+        let sessions: Vec<_> = self.sessions.lock().unwrap_or_else(|e| e.into_inner()).drain().collect();
+        for (_, session) in sessions {
+            end_session(shared, &session, TransferState::Cancelled);
         }
         shared.emit(NodeEvent::LocalSendChanged);
     }
+
+    /// Ends sessions that have had no upload for [`SESSION_IDLE`].
+    fn sweep_idle_sessions(&self, shared: &Shared) {
+        let idle: Vec<_> = {
+            let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+            let ids: Vec<String> = sessions
+                .iter()
+                .filter(|(_, s)| {
+                    s.lock().unwrap_or_else(|e| e.into_inner()).last_activity.elapsed() >= SESSION_IDLE
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.into_iter().filter_map(|id| sessions.remove(&id)).collect()
+        };
+        for session in idle {
+            end_session(shared, &session, TransferState::Cancelled);
+        }
+    }
+}
+
+/// Whether `update` would move a peer known to speak HTTPS to plain HTTP. An
+/// unauthenticated announce claiming its fingerprint mustn't do that.
+fn downgrades(known: Option<&LocalSendPeer>, update: &LocalSendPeer) -> bool {
+    update.protocol == "http" && known.is_some_and(|known| known.protocol == "https")
+}
+
+/// Ends an upload session that's already out of the session map: stops it,
+/// removes its staged parts and reports it as `state`. Files it already saved
+/// stay, with a timeline entry saying so.
+fn end_session(shared: &Shared, session: &Arc<Mutex<UploadSession>>, state: TransferState) {
+    let (transfer, staging_dir) = {
+        let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
+        guard.cancel.cancel();
+        guard.transfer.state = state;
+        record_partial_delivery(shared, &guard);
+        (guard.transfer.clone(), guard.staging_dir.clone())
+    };
+    shared.unregister_transfer(&transfer.id);
+    let _ = fs::remove_dir_all(&staging_dir);
+    shared.emit(NodeEvent::Transfer(transfer));
+}
+
+/// A timeline entry for the files a session saved before it ended early.
+fn record_partial_delivery(shared: &Shared, session: &UploadSession) {
+    let saved_files = session.files.iter().filter(|f| f.uploaded).count();
+    if saved_files == 0 {
+        return;
+    }
+    let target =
+        session.saved_items.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\n");
+    let _ = shared.record_timeline(NewTimelineEntry {
+        kind: TimelineKind::File,
+        device_id: session.transfer.device,
+        device_name: session.peer_name.clone(),
+        incoming: true,
+        timestamp: crate::now_unix(),
+        title: transfer_timeline_title(&session.transfer.names),
+        detail: format!("Partly received · {saved_files} of {} files (LocalSend)", session.files.len()),
+        target,
+        size_bytes: session.files.iter().filter(|f| f.uploaded).map(|f| f.size).sum(),
+        duration_secs: 0,
+        ref_id: Some(session.transfer.id.clone()),
+    });
 }
 
 fn build_our_multicast_dto(shared: &Shared, port: u16, announce: bool) -> MulticastDto {
@@ -694,6 +784,8 @@ pub(crate) async fn probe_peer(shared: &Arc<Shared>, host: &str, port: u16) -> R
         let Ok(mut stream) = connect_peer_stream(shared, host, port, use_tls, None).await else {
             continue;
         };
+        // From here on it has answered over TLS: whatever fails next, it isn't
+        // tried again in cleartext.
         let req_res = if shared.localsend.receiving() {
             let dto = build_our_multicast_dto(shared, shared.localsend.bound_port(), false);
             let body = serde_json::to_vec(&dto).unwrap_or_default();
@@ -718,16 +810,16 @@ pub(crate) async fn probe_peer(shared: &Arc<Shared>, host: &str, port: u16) -> R
             .await
         };
         if req_res.is_err() {
-            continue;
+            if use_tls { return Err(Error::Offline) } else { continue }
         }
         let Ok(resp) = read_http_response(&mut stream).await else {
-            continue;
+            if use_tls { return Err(Error::Offline) } else { continue }
         };
         if !(200..300).contains(&resp.status) {
-            continue;
+            if use_tls { return Err(Error::Offline) } else { continue }
         }
         let Ok(info) = serde_json::from_slice::<InfoDto>(&resp.body) else {
-            continue;
+            if use_tls { return Err(Error::Offline) } else { continue }
         };
         if info.fingerprint == shared.localsend.identity.fingerprint || info.alias.trim().is_empty() {
             return Err(Error::NotFound);
@@ -735,7 +827,7 @@ pub(crate) async fn probe_peer(shared: &Arc<Shared>, host: &str, port: u16) -> R
         // Over HTTPS the fingerprint it claims must be its certificate's.
         if use_tls && !stream.has_fingerprint(&info.fingerprint) {
             tracing::warn!(%host, port, "LocalSend peer's certificate doesn't match its fingerprint");
-            continue;
+            if use_tls { return Err(Error::Offline) } else { continue }
         }
         let peer_port = info.port.unwrap_or(port);
         let peer_proto = info
@@ -881,7 +973,7 @@ async fn handle_incoming_connection(
             handle_upload(&shared, &mut stream, &head, query).await;
         }
         ("POST", "/api/localsend/v2/cancel" | "/api/localsend/v1/cancel") => {
-            handle_cancel(&shared, &mut stream, query).await;
+            handle_cancel(&shared, &mut stream, query, remote_addr).await;
         }
         _ => {
             let _ = write_http_response(&mut stream, 404, "Not Found", None, &[]).await;
@@ -905,6 +997,13 @@ async fn handle_prepare_upload(
         let _ = write_http_response(stream, 400, "Bad Request", None, &[]).await;
         return;
     }
+    // Each file is uploaded by its id, so two with one id could never both arrive.
+    let mut ids = std::collections::HashSet::with_capacity(req.files.len());
+    if !req.files.values().all(|f| ids.insert(f.id.as_str())) {
+        let _ = write_http_response(stream, 400, "Bad Request", None, &[]).await;
+        return;
+    }
+    shared.localsend.sweep_idle_sessions(shared);
 
     let ip = remote_addr.ip().to_string();
     let port = req.info.port.unwrap_or(LOCALSEND_DEFAULT_PORT);
@@ -970,6 +1069,7 @@ async fn handle_prepare_upload(
                 .map(|h| h.to_ascii_lowercase()),
             part_path: staging_dir.join(format!("{idx}.part")),
             uploaded: false,
+            uploading: false,
         });
     }
 
@@ -1031,6 +1131,8 @@ async fn handle_prepare_upload(
         saved_items: Vec::new(),
         cancel: cancel.clone(),
         last_progress: Instant::now() - PROGRESS_EVERY,
+        last_activity: Instant::now(),
+        peer_ip: remote_addr.ip(),
     }));
     shared.localsend.sessions.lock().unwrap_or_else(|e| e.into_inner()).insert(session_id.clone(), session);
 
@@ -1048,6 +1150,7 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
         return;
     };
 
+    shared.localsend.sweep_idle_sessions(shared);
     let Some(session_arc) =
         shared.localsend.sessions.lock().unwrap_or_else(|e| e.into_inner()).get(&session_id).cloned()
     else {
@@ -1062,18 +1165,27 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
     }
 
     let lookup = {
-        let guard = session_arc.lock().unwrap_or_else(|e| e.into_inner());
-        match guard.files.iter().enumerate().find(|(_, f)| f.file_id == file_id) {
+        let mut guard = session_arc.lock().unwrap_or_else(|e| e.into_inner());
+        guard.last_activity = Instant::now();
+        let cancel = guard.cancel.clone();
+        let transfer_id = guard.transfer.id.clone();
+        match guard.files.iter_mut().enumerate().find(|(_, f)| f.file_id == file_id) {
             None => UploadLookup::NotFound,
-            Some((_, spec)) if spec.token != token || spec.uploaded => UploadLookup::Forbidden,
-            Some((idx, spec)) => UploadLookup::Found(
-                idx,
-                spec.part_path.clone(),
-                spec.size,
-                spec.sha256.clone(),
-                guard.cancel.clone(),
-                guard.transfer.id.clone(),
-            ),
+            // Two uploads of one file at once would write the same part file.
+            Some((_, spec)) if spec.token != token || spec.uploaded || spec.uploading => {
+                UploadLookup::Forbidden
+            }
+            Some((idx, spec)) => {
+                spec.uploading = true;
+                UploadLookup::Found(
+                    idx,
+                    spec.part_path.clone(),
+                    spec.size,
+                    spec.sha256.clone(),
+                    cancel,
+                    transfer_id,
+                )
+            }
         }
     };
 
@@ -1096,6 +1208,7 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
 
     let stream_res = stream_body_to_file(stream, head, &mut out, expected_size, &cancel, |delta| {
         let mut guard = session_arc.lock().unwrap_or_else(|e| e.into_inner());
+        guard.last_activity = Instant::now();
         guard.transfer.done = guard.transfer.done.saturating_add(delta);
         if guard.last_progress.elapsed() >= PROGRESS_EVERY {
             guard.last_progress = Instant::now();
@@ -1122,14 +1235,8 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
 
     if let Err(err_state) = stream_res {
         shared.localsend.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(&session_id);
-        shared.unregister_transfer(&transfer_id);
-        let staging_dir = {
-            let mut guard = session_arc.lock().unwrap_or_else(|e| e.into_inner());
-            guard.transfer.state = err_state;
-            shared.emit(NodeEvent::Transfer(guard.transfer.clone()));
-            guard.staging_dir.clone()
-        };
-        let _ = tokio::fs::remove_dir_all(&staging_dir).await;
+        let (shared_ref, session) = (shared.clone(), session_arc.clone());
+        let _ = tokio::task::spawn_blocking(move || end_session(&shared_ref, &session, err_state)).await;
         let _ = write_http_response(stream, 500, "Upload Interrupted", None, &[]).await;
         return;
     }
@@ -1137,6 +1244,8 @@ async fn handle_upload(shared: &Arc<Shared>, stream: &mut ServerStream, head: &H
     // Move completed part file into downloads_dir.
     let finalize_res = finalize_uploaded_file(shared, &session_arc, spec_idx).await;
     if finalize_res.is_err() {
+        // The part file is still there: the sender may try this file again.
+        session_arc.lock().unwrap_or_else(|e| e.into_inner()).files[spec_idx].uploading = false;
         let _ = write_http_response(stream, 500, "Internal Server Error", None, &[]).await;
         return;
     }
@@ -1204,6 +1313,9 @@ async fn finalize_uploaded_file(
     let downloads_dir = shared.downloads_dir.clone();
     let session_arc = session_arc.clone();
     tokio::task::spawn_blocking(move || {
+        // Sessions finishing at once could pick the same free name.
+        static FINALIZE: Mutex<()> = Mutex::new(());
+        let _one_at_a_time = FINALIZE.lock().unwrap_or_else(|e| e.into_inner());
         fs::create_dir_all(&downloads_dir)?;
         let mut guard = session_arc.lock().unwrap_or_else(|e| e.into_inner());
         let folder = guard.files[spec_idx].folder.clone();
@@ -1240,27 +1352,35 @@ async fn finalize_uploaded_file(
             guard.saved_items.push(dest);
         }
         guard.files[spec_idx].uploaded = true;
+        guard.files[spec_idx].uploading = false;
         Ok(())
     })
     .await
     .map_err(std::io::Error::other)?
 }
 
-async fn handle_cancel(shared: &Arc<Shared>, stream: &mut ServerStream, query: &str) {
+async fn handle_cancel(
+    shared: &Arc<Shared>,
+    stream: &mut ServerStream,
+    query: &str,
+    remote_addr: SocketAddr,
+) {
     let params = parse_query(query);
     let removed = params.get("sessionId").and_then(|session_id| {
-        shared.localsend.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(session_id)
+        let mut sessions = shared.localsend.sessions.lock().unwrap_or_else(|e| e.into_inner());
+        // Only the sender cancels its session. Anyone else gets the same
+        // answer, so it doesn't learn which sessions exist.
+        let from_sender = sessions
+            .get(session_id)
+            .is_some_and(|s| s.lock().unwrap_or_else(|e| e.into_inner()).peer_ip == remote_addr.ip());
+        if from_sender { sessions.remove(session_id) } else { None }
     });
     if let Some(session_arc) = removed {
-        let (transfer_id, staging_dir, mut transfer) = {
-            let guard = session_arc.lock().unwrap_or_else(|e| e.into_inner());
-            guard.cancel.cancel();
-            (guard.transfer.id.clone(), guard.staging_dir.clone(), guard.transfer.clone())
-        };
-        shared.unregister_transfer(&transfer_id);
-        let _ = tokio::fs::remove_dir_all(&staging_dir).await;
-        transfer.state = TransferState::Cancelled;
-        shared.emit(NodeEvent::Transfer(transfer));
+        let shared_ref = shared.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            end_session(&shared_ref, &session_arc, TransferState::Cancelled)
+        })
+        .await;
     }
     let _ = write_http_response(stream, 200, "OK", None, &[]).await;
 }
@@ -2037,7 +2157,13 @@ fn split_localsend_file_name(raw: &str) -> (Option<String>, String) {
         [] => (None, "file".into()),
         [single] => (None, safe_file_name(single)),
         [folders @ .., last] => {
-            let folder = folders.iter().map(|s| storable_name(s)).collect::<Vec<_>>().join("/");
+            // As deep and as long as the protocol allows (files::MAX_FOLDER_DEPTH).
+            let folder = folders
+                .iter()
+                .take(files::MAX_FOLDER_DEPTH)
+                .map(|s| storable_name(&safe_file_name(s)))
+                .collect::<Vec<_>>()
+                .join("/");
             (Some(folder), safe_file_name(last))
         }
     }
@@ -2474,6 +2600,36 @@ mod tests {
         assert!(res.is_err());
         let (res, _) = stream_upload(upload_head(None, true), b"3\r\nhel\r\n", 5).await;
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn incoming_folders_are_capped_in_depth_and_name_length() {
+        let deep = (0..50).map(|i| format!("d{i}")).collect::<Vec<_>>().join("/") + "/f.txt";
+        let (folder, name) = split_localsend_file_name(&deep);
+        assert_eq!(folder.unwrap().split('/').count(), files::MAX_FOLDER_DEPTH);
+        assert_eq!(name, "f.txt");
+
+        let long = format!("{}/f.txt", "x".repeat(400));
+        let (folder, _) = split_localsend_file_name(&long);
+        assert_eq!(folder.unwrap().len(), files::MAX_NAME_BYTES);
+    }
+
+    #[test]
+    fn a_known_https_peer_isnt_moved_to_http() {
+        let peer = |protocol: &str| LocalSendPeer {
+            id: DeviceId([7; 32]),
+            alias: "Laptop".into(),
+            device_model: None,
+            device_type: "desktop".into(),
+            fingerprint: "fp".into(),
+            ip: "192.168.1.5".into(),
+            port: 53317,
+            protocol: protocol.into(),
+        };
+        assert!(downgrades(Some(&peer("https")), &peer("http")));
+        assert!(!downgrades(Some(&peer("http")), &peer("https")));
+        assert!(!downgrades(Some(&peer("https")), &peer("https")));
+        assert!(!downgrades(None, &peer("http")), "a new HTTP-only peer is fine");
     }
 
     #[test]

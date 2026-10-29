@@ -4680,6 +4680,146 @@ async fn localsend_discovers_peer_requires_accept_and_transfers_files_over_https
     receiver.node.shutdown().await;
 }
 
+/// One HTTP/1.1 request over plain TCP to a LocalSend server, as a LocalSend
+/// sender would send it; returns the status and the body.
+async fn localsend_request(port: u16, method: &str, target: &str, body: &[u8]) -> (u16, Vec<u8>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let head = format!(
+        "{method} {target} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    tcp.write_all(head.as_bytes()).await.unwrap();
+    tcp.write_all(body).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tcp.read_to_end(&mut out).await;
+    let text = String::from_utf8_lossy(&out);
+    let status = text.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
+    let split = out.windows(4).position(|w| w == b"\r\n\r\n").map_or(out.len(), |i| i + 4);
+    (status, out[split..].to_vec())
+}
+
+fn localsend_offer(files: &[(&str, &str, &str, u64)]) -> Vec<u8> {
+    let files: serde_json::Map<String, serde_json::Value> = files
+        .iter()
+        .map(|(key, id, name, size)| {
+            (
+                (*key).to_owned(),
+                serde_json::json!({ "id": id, "fileName": name, "size": size, "fileType": "text/plain" }),
+            )
+        })
+        .collect();
+    serde_json::to_vec(&serde_json::json!({
+        "info": { "alias": "Raw sender", "version": "2.1", "deviceType": "mobile", "fingerprint": "raw-sender-fp", "port": 1, "protocol": "http" },
+        "files": files,
+    }))
+    .unwrap()
+}
+
+fn part_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(part_files(&path));
+        } else if path.extension().is_some_and(|e| e == "part") {
+            found.push(path);
+        }
+    }
+    found
+}
+
+/// A sender that offers duplicate file ids is refused; one that sends one of
+/// two files and cancels leaves that file, a timeline entry saying it only
+/// partly arrived, no staged parts, and no session (#72 audit).
+#[tokio::test]
+async fn localsend_refuses_duplicate_ids_and_records_a_cancelled_partial_delivery() {
+    let port = free_tcp_port();
+    let mut receiver =
+        start_localsend_in(tempfile::tempdir().unwrap(), "PC Receiver", DeviceKind::Desktop, port).await;
+    receiver.node.set_localsend_enabled(true).unwrap();
+    for _ in 0..40 {
+        if receiver.node.localsend_receiving() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(receiver.node.localsend_receiving());
+
+    let (status, _) = localsend_request(
+        port,
+        "POST",
+        "/api/localsend/v2/prepare-upload",
+        &localsend_offer(&[("a", "same", "a.txt", 5), ("b", "same", "b.txt", 5)]),
+    )
+    .await;
+    assert_eq!(status, 400, "two files with one id could never both arrive");
+
+    let offer = localsend_offer(&[("f1", "f1", "first.txt", 5), ("f2", "f2", "second.txt", 6)]);
+    let prepare = tokio::spawn(async move {
+        localsend_request(port, "POST", "/api/localsend/v2/prepare-upload", &offer).await
+    });
+    let req: Transfer = wait_for(&mut receiver, "offer", |e| match e {
+        NodeEvent::Transfer(t) if t.state == TransferState::Requested => Some(t.clone()),
+        _ => None,
+    })
+    .await;
+    receiver.node.accept_transfer(&req.id);
+    let (status, body) = with_timeout("prepare-upload", prepare).await.unwrap();
+    assert_eq!(status, 200);
+    let answer: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let session = answer["sessionId"].as_str().unwrap().to_owned();
+    let token = answer["files"]["f1"].as_str().unwrap().to_owned();
+
+    let (status, _) = localsend_request(
+        port,
+        "POST",
+        &format!("/api/localsend/v2/upload?sessionId={session}&fileId=f1&token={token}"),
+        b"hello",
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (status, _) = localsend_request(
+        port,
+        "POST",
+        &format!("/api/localsend/v2/upload?sessionId={session}&fileId=f1&token={token}"),
+        b"again",
+    )
+    .await;
+    assert_eq!(status, 403, "a file that arrived isn't uploaded twice");
+
+    let (status, _) =
+        localsend_request(port, "POST", &format!("/api/localsend/v2/cancel?sessionId={session}"), b"").await;
+    assert_eq!(status, 200);
+    wait_for(&mut receiver, "cancelled", |e| match e {
+        NodeEvent::Transfer(t) if t.id == req.id && t.state == TransferState::Cancelled => Some(()),
+        _ => None,
+    })
+    .await;
+
+    let saved = receiver.dir.path().join("received").join("first.txt");
+    assert_eq!(std::fs::read(&saved).unwrap(), b"hello", "what arrived is kept");
+    let entries =
+        receiver.node.timeline_page(&nectarlink_core::timeline::TimelineQuery::default()).unwrap().entries;
+    assert!(
+        entries.iter().any(|e| e.detail.contains("1 of 2 files") && e.target.contains("first.txt")),
+        "{:?}",
+        entries.iter().map(|e| &e.detail).collect::<Vec<_>>()
+    );
+    assert!(part_files(receiver.dir.path()).is_empty(), "no staged parts are left");
+    let (status, _) = localsend_request(
+        port,
+        "POST",
+        &format!("/api/localsend/v2/upload?sessionId={session}&fileId=f2&token=x"),
+        b"second",
+    )
+    .await;
+    assert_eq!(status, 404, "the session is gone");
+
+    receiver.node.shutdown().await;
+}
+
 #[tokio::test]
 async fn localsend_declining_transfer_returns_denied_to_sender() {
     let sender_port = free_tcp_port();
