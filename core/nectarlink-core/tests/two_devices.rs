@@ -3556,6 +3556,26 @@ async fn pc_audio_volume_mute_output_devices_and_smart_clipboard_context_chips_f
         .await
         .unwrap();
 
+    // Phone as speaker needs the phone's `media` permission to start; stopping is always allowed.
+    pc.node.set_device_toggle(phone_id, "media", false).unwrap();
+    assert!(matches!(
+        phone.node.set_pc_audio(pc_id, Some(nectarlink_core::deck::PHONE_SPEAKER_ON), None).await,
+        Err(Error::Denied)
+    ));
+    with_timeout(
+        "phone speaker off while media is off",
+        phone.node.set_pc_audio(pc_id, Some(nectarlink_core::deck::PHONE_SPEAKER_OFF), None),
+    )
+    .await
+    .unwrap();
+    pc.node.set_device_toggle(phone_id, "media", true).unwrap();
+    with_timeout(
+        "phone speaker on",
+        phone.node.set_pc_audio(pc_id, Some(nectarlink_core::deck::PHONE_SPEAKER_ON), None),
+    )
+    .await
+    .unwrap();
+
     // Smart clipboard context chips: phone sends different text clips to PC,
     // and PC classifies each into at most 1 context chip (and None for OTP).
     let cases = [
