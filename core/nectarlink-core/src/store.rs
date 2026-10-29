@@ -688,8 +688,10 @@ impl Store {
     /// take over its pairing and history.
     pub fn update_info(&self, id: &DeviceId, info: &DeviceInfo) -> Result<()> {
         let screen = encode_screen(info.screen.as_ref());
+        // The device and its timeline name change together.
         self.with(|c| {
-            c.execute(
+            let tx = c.unchecked_transaction()?;
+            tx.execute(
                 "UPDATE peers SET name = ?2, kind = ?3, os = ?4, os_ver = ?5, model = ?6,
                     accent = COALESCE(?7, accent),
                     screen = CASE WHEN ?8 = '' THEN screen ELSE ?8 END
@@ -705,11 +707,11 @@ impl Store {
                     screen,
                 ],
             )?;
-            c.execute(
+            tx.execute(
                 "UPDATE timeline SET device_name = ?2 WHERE device_id = ?1",
                 params![id.as_bytes().as_slice(), info.name],
-            )
-            .map(drop)
+            )?;
+            tx.commit()
         })
     }
 
@@ -1167,12 +1169,19 @@ impl Store {
                  ON CONFLICT(peer, thread_id) DO UPDATE SET
                     app = excluded.app,
                     app_name = excluded.app_name,
-                    notification_key = excluded.notification_key,
-                    reply_action_id = excluded.reply_action_id,
-                    title = excluded.title,
+                    notification_key = CASE WHEN excluded.updated_ms >= chat_threads.updated_ms
+                        THEN excluded.notification_key ELSE chat_threads.notification_key END,
+                    reply_action_id = CASE WHEN excluded.updated_ms >= chat_threads.updated_ms
+                        THEN excluded.reply_action_id ELSE chat_threads.reply_action_id END,
+                    title = CASE WHEN excluded.updated_ms >= chat_threads.updated_ms
+                        THEN excluded.title ELSE chat_threads.title END,
                     is_group = excluded.is_group,
-                    snippet = excluded.snippet,
-                    last_sender = excluded.last_sender,
+                    -- An older notification (a replay after reconnecting) doesn't
+                    -- replace what the newest one said.
+                    snippet = CASE WHEN excluded.updated_ms >= chat_threads.updated_ms
+                        THEN excluded.snippet ELSE chat_threads.snippet END,
+                    last_sender = CASE WHEN excluded.updated_ms >= chat_threads.updated_ms
+                        THEN excluded.last_sender ELSE chat_threads.last_sender END,
                     updated_ms = MAX(chat_threads.updated_ms, excluded.updated_ms),
                     unread = CASE
                         WHEN ?15 != 0 THEN CASE
@@ -1379,22 +1388,27 @@ impl Store {
     pub fn delete_chat_thread(&self, peer: &DeviceId, thread_id: &str) -> Result<bool> {
         let peer_str = peer.to_string();
         self.with(|c| {
-            c.execute(
+            let tx = c.unchecked_transaction()?;
+            tx.execute(
                 "DELETE FROM chat_messages WHERE peer = ?1 AND thread_id = ?2",
                 params![peer_str, thread_id],
             )?;
-            c.execute(
+            let removed = tx.execute(
                 "DELETE FROM chat_threads WHERE peer = ?1 AND thread_id = ?2",
                 params![peer_str, thread_id],
-            )
-            .map(|n| n > 0)
+            )? > 0;
+            tx.commit()?;
+            Ok(removed)
         })
     }
 
     pub fn clear_chat_threads(&self) -> Result<usize> {
         self.with(|c| {
-            c.execute("DELETE FROM chat_messages", [])?;
-            c.execute("DELETE FROM chat_threads", [])
+            let tx = c.unchecked_transaction()?;
+            tx.execute("DELETE FROM chat_messages", [])?;
+            let removed = tx.execute("DELETE FROM chat_threads", [])?;
+            tx.commit()?;
+            Ok(removed)
         })
     }
 
@@ -3328,6 +3342,46 @@ mod tests {
         store.upsert_peer(&DeviceId([0x03; 32]), &bad, 300).unwrap();
         store.upsert_peer(&DeviceId([0x04; 32]), &bad, 400).unwrap();
         assert_eq!(store.list_peers().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn an_older_notification_doesnt_replace_the_newest_snippet() {
+        use nectarlink_protocol::messages::{NotificationChatMessage, NotificationConversation};
+        let store = Store::in_memory().unwrap();
+        let peer = DeviceId([8u8; 32]);
+        let now_ms = crate::now_unix() * 1000;
+        let chat = |text: &str, time: i64| Notification {
+            key: "chat|Maya".into(),
+            app: "com.whatsapp".into(),
+            app_name: "WhatsApp".into(),
+            title: Some("Maya".into()),
+            text: Some(text.into()),
+            sub: None,
+            when: time,
+            actions: Vec::new(),
+            silent: false,
+            icon: None,
+            image: None,
+            live: None,
+            conversation: Some(NotificationConversation {
+                v: 1,
+                title: "Maya".into(),
+                group: false,
+                avatar: None,
+                messages: vec![NotificationChatMessage {
+                    sender: Some("Maya".into()),
+                    text: text.into(),
+                    time,
+                    self_sent: false,
+                    avatar: None,
+                }],
+            }),
+        };
+        store.upsert_chat_notification(&peer, &chat("see you at 6", now_ms), None, false).unwrap();
+        // The same chat's older notification, replayed after a reconnect.
+        store.upsert_chat_notification(&peer, &chat("on my way", now_ms - 60_000), None, false).unwrap();
+        let thread = store.chat_threads(&peer).unwrap().into_iter().next().unwrap();
+        assert_eq!(thread.snippet, "see you at 6");
     }
 
     #[test]
