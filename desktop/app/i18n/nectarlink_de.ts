@@ -8801,11 +8801,16 @@ Voraussetzungen
     </message>
     <message>
         <location filename="rust_strings.h" line="485"/>
+        <source>The update is installed. Restart NectarLink to use it.</source>
+        <translation>Das Update ist installiert. Starte NectarLink neu, um es zu verwenden.</translation>
+    </message>
+    <message>
+        <location filename="rust_strings.h" line="486"/>
         <source>Update now, or later from Settings.</source>
         <translation>Jetzt oder später über die Einstellungen aktualisieren.</translation>
     </message>
     <message>
-        <location filename="rust_strings.h" line="486"/>
+        <location filename="rust_strings.h" line="487"/>
         <source>Your phone reconnects on its own.</source>
         <translation>Dein Gerät verbindet sich automatisch wieder.</translation>
     </message>
@@ -9016,12 +9021,12 @@ Voraussetzungen
 <context>
     <name>Webcam</name>
     <message>
-        <location filename="rust_strings.h" line="487"/>
+        <location filename="rust_strings.h" line="488"/>
         <source>Starting camera on %1…</source>
         <translation>Kamera auf %1 wird gestartet…</translation>
     </message>
     <message>
-        <location filename="rust_strings.h" line="488"/>
+        <location filename="rust_strings.h" line="489"/>
         <source>Streaming %1 × %2 · %3 fps from %4</source>
         <translation>Streamt %1 × %2 · %3 FPS von %4</translation>
     </message>
@@ -9052,17 +9057,17 @@ Voraussetzungen
 <context>
     <name>Widget</name>
     <message>
-        <location filename="rust_strings.h" line="489"/>
+        <location filename="rust_strings.h" line="490"/>
         <source>No phone connected</source>
         <translation>Kein Gerät verbunden</translation>
     </message>
     <message>
-        <location filename="rust_strings.h" line="490"/>
+        <location filename="rust_strings.h" line="491"/>
         <source>No recent clipboard items</source>
         <translation>Keine aktuellen Einträge in der Zwischenablage</translation>
     </message>
     <message>
-        <location filename="rust_strings.h" line="491"/>
+        <location filename="rust_strings.h" line="492"/>
         <source>Not available</source>
         <translation>Nicht verfügbar</translation>
     </message>

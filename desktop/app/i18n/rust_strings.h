@@ -482,6 +482,7 @@ static const char *const nectarlink_rust_strings[] = {
     QT_TRANSLATE_NOOP("Updater", "The update couldn't be saved. Check that there's free space and try again."), // desktop/app/src/updater.rs
     QT_TRANSLATE_NOOP("Updater", "The update couldn't be started. Try again."), // desktop/app/src/updater.rs
     QT_TRANSLATE_NOOP("Updater", "The update didn't install"), // desktop/app/src/updater.rs
+    QT_TRANSLATE_NOOP("Updater", "The update is installed. Restart NectarLink to use it."), // desktop/app/src/updater.rs
     QT_TRANSLATE_NOOP("Updater", "Update now, or later from Settings."), // desktop/app/src/updater.rs
     QT_TRANSLATE_NOOP("Updater", "Your phone reconnects on its own."), // desktop/app/src/updater.rs
     QT_TRANSLATE_NOOP("Webcam", "Starting camera on %1…"), // desktop/app/src/bridge/webcam.rs

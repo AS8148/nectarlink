@@ -771,7 +771,8 @@ pub fn run_service() -> ExitCode {
                 .stderr(std::process::Stdio::null())
                 .spawn()
         } else {
-            std::process::Command::new(&path).arg("/S").spawn()
+            // An AppImage replaces itself from the app; the service can't.
+            Err(std::io::Error::other(format!("{name} isn't installed by the update service")))
         }
     };
     match spawned {
@@ -796,23 +797,27 @@ fn unix_seconds_now() -> String {
 /// can change: Windows' `SystemTemp` (older Windows: the SYSTEM account's
 /// temp folder, whose new subfolders users can't write to). Earlier ones are
 /// removed first (in `SystemTemp` only, where nobody else can create them).
+/// Removes the folders earlier runs downloaded into. Links are left alone;
+/// only SYSTEM (or root) can create entries where these live.
+fn remove_old_service_dirs(parent: &Path) {
+    let Ok(entries) = std::fs::read_dir(parent) else { return };
+    for entry in entries.flatten() {
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir() && !t.is_symlink());
+        if is_dir && entry.file_name().to_string_lossy().starts_with("nectarlink-update-") {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 #[cfg(windows)]
 fn service_dir() -> std::io::Result<PathBuf> {
     let windows =
         std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
     let system_temp = windows.join("SystemTemp");
-    let parent = if system_temp.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&system_temp) {
-            for entry in entries.flatten() {
-                if entry.file_name().to_string_lossy().starts_with("nectarlink-update-") {
-                    let _ = std::fs::remove_dir_all(entry.path());
-                }
-            }
-        }
-        system_temp
-    } else {
-        std::env::temp_dir()
-    };
+    // Older Windows: the SYSTEM account's temp folder, whose subfolders users
+    // can't change either.
+    let parent = if system_temp.is_dir() { system_temp } else { std::env::temp_dir() };
+    remove_old_service_dirs(&parent);
     let mut random = [0u8; 8];
     if !crate::win::secure_random(&mut random) {
         return Err(std::io::Error::other("no secure random source"));
@@ -827,6 +832,7 @@ fn service_dir() -> std::io::Result<PathBuf> {
 fn service_dir() -> std::io::Result<PathBuf> {
     use std::os::unix::fs::DirBuilderExt;
     let parent = PathBuf::from("/var/cache");
+    remove_old_service_dirs(&parent);
     let mut random = [0u8; 8];
     if !crate::win::secure_random(&mut random) {
         return Err(std::io::Error::other("no secure random source"));
@@ -939,6 +945,17 @@ tar -C \"$dir\" -xzf \"$dst\"\n\
 set -- \"$dir\"/Nectarlink-*/install.sh\n\
 [ -x \"$1\" ] && \"$1\"\n";
 
+/// Starts the new version once this one has quit. If that can't be arranged
+/// the app stays open (it would otherwise just disappear) and says the update
+/// is in place.
+#[cfg(target_os = "linux")]
+fn relaunch_after_install(exe: &Path, version: &str) -> Result<(), String> {
+    spawn_relauncher(exe, version, true).map_err(|e| {
+        tracing::warn!(error = e, "installed, but can't start the new version");
+        tr!("Updater", "The update is installed. Restart NectarLink to use it.")
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn install_with_prompt(update: &Update, staged: &Path) -> Result<(), String> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -982,7 +999,7 @@ fn install_with_prompt(update: &Update, staged: &Path) -> Result<(), String> {
             return Err(failed(format!("privileged .deb install exited with status {code}")));
         }
         if let Ok(exe) = std::env::current_exe() {
-            let _ = spawn_relauncher(&exe, &update.version, true);
+            relaunch_after_install(&exe, &update.version)?;
         }
         crate::bridge::app::request_quit();
         return Ok(());
@@ -999,7 +1016,7 @@ fn install_with_prompt(update: &Update, staged: &Path) -> Result<(), String> {
             return Err(failed(format!("privileged .rpm install exited with status {code}")));
         }
         if let Ok(exe) = std::env::current_exe() {
-            let _ = spawn_relauncher(&exe, &update.version, true);
+            relaunch_after_install(&exe, &update.version)?;
         }
         crate::bridge::app::request_quit();
         return Ok(());
@@ -1047,7 +1064,7 @@ fn install_with_prompt(update: &Update, staged: &Path) -> Result<(), String> {
             }
         }
         if let Some(exe) = exe {
-            let _ = spawn_relauncher(&exe, &update.version, true);
+            relaunch_after_install(&exe, &update.version)?;
         }
         crate::bridge::app::request_quit();
         return Ok(());
